@@ -65,4 +65,4 @@ cannot place orders. Research & education only. **Not investment advice.**
 - `DEMO.md` — temporary public-URL demos (Cloudflare quick tunnel)
 - In-app **Guide** tab — user manual + full glossary
 
-License: intended Apache-2.0 — add the LICENSE file before publishing.
+License: Apache-2.0 (see LICENSE, NOTICE).

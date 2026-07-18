@@ -138,3 +138,38 @@ SCORE_DISCLAIMER = (
     "direction. Empirical evidence: 1-day direction prediction from these signals "
     "fails at ~50% accuracy across ~9,600 backtested predictions."
 )
+
+
+def reload() -> None:
+    """Re-read config.toml + .env and refresh module globals in place — lets
+    the setup wizard apply changes without a process restart. Only the values
+    a wizard can change are refreshed; structural constants stay put."""
+    global _CONFIG, USER_NAME, CONTACT_EMAIL, CAPABILITIES_CONFIG, PORTFOLIO_DB_PATH
+    cfg_path = os.path.join(TICKERLENS_HOME, "config.toml")
+    cfg: dict = {}
+    if os.path.exists(cfg_path):
+        try:
+            try:
+                import tomllib
+            except ImportError:
+                import tomli as tomllib
+            with open(cfg_path, "rb") as f:
+                cfg = tomllib.load(f)
+        except Exception as e:
+            print(f"[tickerlens] WARNING: config.toml unreadable ({e})")
+    _CONFIG = cfg
+    USER_NAME = (cfg.get("user", {}).get("name") or "the user").strip()
+    CONTACT_EMAIL = (cfg.get("user", {}).get("contact_email") or None)
+    CAPABILITIES_CONFIG.clear()
+    CAPABILITIES_CONFIG.update(CAPABILITY_DEFAULTS)
+    CAPABILITIES_CONFIG.update(
+        {k: str(v).lower() for k, v in (cfg.get("capabilities") or {}).items()})
+    PORTFOLIO_DB_PATH = os.path.expanduser(
+        (cfg.get("paths") or {}).get("portfolio_db") or "") or None
+    env_path = os.path.join(TICKERLENS_HOME, ".env")
+    if os.path.exists(env_path):
+        for line in open(env_path):
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, v = line.split("=", 1)
+                os.environ[k.strip()] = v.strip().strip('"').strip("'")

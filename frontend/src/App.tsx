@@ -1,11 +1,13 @@
 // App shell — routing + cross-cutting concerns only (thin by spec §6).
 import { AnimatePresence, motion } from 'framer-motion'
 import { useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { Toaster } from 'sonner'
 import { CommandPalette } from '@/components/layout/CommandPalette'
 import { Sidebar, TABS, type TabKey } from '@/components/layout/Sidebar'
 import { useDiscussionStream } from '@/hooks'
 import Analysis from '@/pages/Analysis'
+import Setup from '@/pages/Setup'
 import Discussions from '@/pages/Discussions'
 import Guide from '@/pages/Guide'
 import Portfolio from '@/pages/Portfolio'
@@ -14,10 +16,28 @@ import Watchlist from '@/pages/Watchlist'
 
 export default function App() {
   const [tab, setTab] = useState<TabKey>('analysis')
+  // First-run gate: no config → the setup wizard IS the app
+  const { data: setupStatus, refetch: refetchSetup } = useQuery({
+    queryKey: ['setup-status'],
+    queryFn: async () => (await fetch('/api/setup/status')).json(),
+  })
+  // Capability gating: tabs whose backing capability is off get hidden
+  const { data: caps } = useQuery({
+    queryKey: ['capabilities'],
+    queryFn: async () => (await fetch('/api/capabilities')).json(),
+    enabled: setupStatus?.configured === true,
+  })
   const [symbol, setSymbol] = useState<string | null>(null)
 
-  // SSE: discussions written by Claude CLI appear in the UI within a second.
+  // SSE: discussions written by the user's agent appear in the UI within a second.
   useDiscussionStream()
+
+  if (setupStatus && !setupStatus.configured) {
+    return (<><Setup onDone={() => refetchSetup()} />
+      <Toaster theme="dark" position="bottom-right" /></>)
+  }
+  const visibleTabs = TABS.filter((t) =>
+    t.key !== 'portfolio' || caps?.account?.available !== false)
 
   const analyze = (s: string) => {
     setSymbol(s.toUpperCase())
@@ -26,7 +46,7 @@ export default function App() {
 
   return (
     <div className="flex h-screen overflow-hidden">
-      <Sidebar tab={tab} setTab={setTab} />
+      <Sidebar tab={tab} setTab={setTab} tabs={visibleTabs} />
       <main className="flex flex-1 flex-col overflow-hidden">
         <div className="flex-1 overflow-y-auto px-6 py-5">
           {/* smooth page transitions between tabs (polish requirement) */}

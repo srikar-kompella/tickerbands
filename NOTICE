@@ -1,0 +1,7 @@
+TickerLens
+Local-first research tool for US stocks and options.
+
+This product is for research and education only and is not investment advice.
+It never predicts price direction and never places orders — by design.
+Validation receipts shipped in backend/analysis/ were computed on a specific
+20-ticker basket (2024–2026); regenerate them on your own symbols.

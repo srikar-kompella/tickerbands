@@ -13,7 +13,10 @@ export const TABS = [
 
 export type TabKey = (typeof TABS)[number]['key']
 
-export function Sidebar({ tab, setTab }: { tab: TabKey; setTab: (t: TabKey) => void }) {
+export function Sidebar({ tab, setTab, tabs = TABS }: {
+  tab: TabKey; setTab: (t: TabKey) => void
+  tabs?: ReadonlyArray<(typeof TABS)[number]>
+}) {
   return (
     <aside className="flex w-52 shrink-0 flex-col border-r border-border bg-surface max-md:w-14">
       <div className="flex items-center gap-2 px-4 py-5 max-md:justify-center max-md:px-0">
@@ -24,7 +27,7 @@ export function Sidebar({ tab, setTab }: { tab: TabKey; setTab: (t: TabKey) => v
         </div>
       </div>
       <nav className="flex flex-col gap-1 px-2" role="tablist" aria-label="Main navigation">
-        {TABS.map(({ key, label, icon: Icon }) => (
+        {tabs.map(({ key, label, icon: Icon }) => (
           <button
             key={key}
             role="tab"

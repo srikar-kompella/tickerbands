@@ -20,6 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 import config
 from api.routes import router
+from api.setup import router as setup_router
 from db import init_db
 from discussions_svc.stream import broadcaster
 from discussions_svc.watcher import catch_up_scan, start_watcher
@@ -97,3 +98,4 @@ app.add_middleware(
 )
 
 app.include_router(router)
+app.include_router(setup_router)
