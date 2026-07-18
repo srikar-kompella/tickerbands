@@ -1,0 +1,102 @@
+@import 'tailwindcss';
+
+/* ─── TickerLens dark theme (Q7: cyan accent; green/red RESERVED for P&L) ─── */
+@theme {
+  --color-bg: #0a0a0b;
+  --color-surface: #131316;
+  --color-surface-2: #1a1a1f;
+  --color-surface-3: #222228;
+  --color-border: #26262c;
+  --color-border-2: #34343c;
+  --color-text: #ececf1;
+  --color-muted: #8b8b96;
+  --color-faint: #5b5b66;
+
+  --color-up: #00c853;      /* P&L semantics ONLY */
+  --color-down: #ff5252;    /* P&L semantics ONLY */
+  --color-warn: #f5a623;
+  --color-accent: #22d3ee;  /* the maintainer's pick — identity, buttons, focus */
+  --color-accent-dim: #0e7490;
+
+  --font-sans: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
+html, body, #root { height: 100%; margin: 0; }
+
+body {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: #2a2a32; border-radius: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::selection { background: color-mix(in srgb, var(--color-accent) 30%, transparent); }
+
+/* money/figures always in tabular numerals so columns don't dance */
+.tnum { font-variant-numeric: tabular-nums; }
+
+/* focus ring for full keyboard navigation */
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* subtle lift on interactive cards (hover micro-interaction) */
+.card-hover {
+  transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
+}
+.card-hover:hover {
+  transform: translateY(-1px);
+  border-color: var(--color-border-2);
+  background: var(--color-surface-2);
+}
+
+/* rendered discussion markdown — readable typography, no plugin needed */
+.md-body { font-size: 0.875rem; line-height: 1.65; color: var(--color-text); }
+.md-body h1, .md-body h2, .md-body h3 {
+  margin: 1.1em 0 0.4em; font-weight: 650; color: var(--color-text);
+}
+.md-body h1 { font-size: 1.05rem; }
+.md-body h2 { font-size: 0.95rem; }
+.md-body h3 { font-size: 0.875rem; color: var(--color-muted); }
+.md-body p { margin: 0.5em 0; }
+.md-body ul, .md-body ol { margin: 0.5em 0; padding-left: 1.4em; }
+.md-body ul { list-style: disc; }
+.md-body ol { list-style: decimal; }
+.md-body li { margin: 0.25em 0; }
+.md-body strong { color: var(--color-text); font-weight: 650; }
+.md-body em { color: var(--color-muted); }
+.md-body a { color: var(--color-accent); text-decoration: underline; text-underline-offset: 2px; }
+.md-body code {
+  background: var(--color-surface-3); border-radius: 4px;
+  padding: 0.1em 0.35em; font-size: 0.8em;
+}
+.md-body pre { background: var(--color-bg); border: 1px solid var(--color-border);
+  border-radius: 8px; padding: 0.75em; overflow-x: auto; }
+.md-body blockquote { border-left: 3px solid var(--color-accent-dim);
+  margin: 0.5em 0; padding-left: 0.8em; color: var(--color-muted); }
+.md-body table { border-collapse: collapse; margin: 0.6em 0; width: 100%; }
+.md-body th, .md-body td { border: 1px solid var(--color-border);
+  padding: 0.35em 0.6em; text-align: left; font-size: 0.8rem; }
+.md-body th { background: var(--color-surface-2); }
+.md-body hr { border: none; border-top: 1px solid var(--color-border); margin: 1em 0; }
+
+/* skeleton shimmer */
+@keyframes shimmer { 100% { transform: translateX(100%); } }
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: var(--color-surface-2);
+  border-radius: 6px;
+}
+.skeleton::after {
+  content: '';
+  position: absolute; inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.04), transparent);
+  animation: shimmer 1.4s infinite;
+}

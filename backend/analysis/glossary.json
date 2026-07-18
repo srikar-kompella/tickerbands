@@ -1,0 +1,265 @@
+{
+  "_note": "Plain-English translations (Q9). Served via /api/glossary; edit this file, no rebuild needed. 'plain' = what it is; 'why' = why you'd care.",
+  "entries": {
+    "expected_range": {
+      "term": "80% expected range",
+      "plain": "The band tomorrow's close should land in about 4 days out of 5, based on how much this stock has actually moved over the last 20 sessions.",
+      "why": "It's the only number in this app with hard evidence behind it: this exact construction covered 80.5% of 9,620 historical next-day moves. It says nothing about direction — only size."
+    },
+    "daily_sigma": {
+      "term": "Typical daily move (1σ)",
+      "plain": "The stock's average-ish daily wiggle, from 20-day realized volatility de-annualized to one day.",
+      "why": "Everything range-related is built from this. A '2σ day' means a move twice the typical size."
+    },
+    "rv_20d": {
+      "term": "Realized volatility (20d)",
+      "plain": "How much the stock actually moved over the last 20 sessions, annualized. Backward-looking fact, not a forecast.",
+      "why": "High realized vol = wide expected range. This is measured, not implied by options prices."
+    },
+    "move_z": {
+      "term": "Today's move in σ",
+      "plain": "Today's move divided by the typical daily move. 0.5 = quiet day, 2.0 = unusually large day (rarer than ~95% of days).",
+      "why": "Answers 'is this drop actually a big deal for THIS stock?' — a 2% day is normal for COIN and wild for KO."
+    },
+    "band_coverage": {
+      "term": "Band coverage (backtest)",
+      "plain": "The percent of days in a 2-year, 9,620-row backtest where this exact band construction contained the next day's close. Target: 80%.",
+      "why": "This is the receipt. If coverage were 60% or 95%, the band would be miscalibrated. It's 77.5–83% across all 20 tested tickers, 80.5% overall."
+    },
+    "setup_score": {
+      "term": "Setup Score",
+      "plain": "A 0–100 rollup of observable signals (momentum, news, options positioning, analyst shifts, social chatter). 50 = neutral, higher = more bullishly aligned.",
+      "why": "A structured way to see how the usual signals line up. It does NOT predict tomorrow: the same signal families failed direction prediction across ~9,600 backtested calls."
+    },
+    "lean": {
+      "term": "Signal lean",
+      "plain": "The Setup Score collapsed to a word: BULLISH (≥60), NEUTRAL, or BEARISH (≤40). No confidence percentage on purpose.",
+      "why": "Direction-confidence numbers were empirically fiction in the parent experiment; the lean is a label, not a probability."
+    },
+    "momentum": {
+      "term": "Momentum alignment",
+      "plain": "Where price sits vs its own 20-day and 50-day averages, with extremes damped. Above both = positive; below both = negative.",
+      "why": "The classic trend snapshot. Note: at a 1-day horizon this signal predicted nothing in our backtest — it's context, not an edge."
+    },
+    "news_sentiment": {
+      "term": "News sentiment",
+      "plain": "Finnhub's bullish-vs-bearish split of the past week's news coverage, weighted by how many articles there were.",
+      "why": "A 90/10 bullish split on 3 articles is noise; on 40 articles it reflects the actual news tone."
+    },
+    "options_positioning": {
+      "term": "Options positioning (put/call)",
+      "plain": "Today's put volume divided by call volume. Below ~0.7: crowd leaning bullish (more calls). Above ~1.1: leaning bearish or hedging.",
+      "why": "Shows what option traders are paying for today. Session-volume based, so early-morning readings are thin."
+    },
+    "implied_move": {
+      "term": "Implied move",
+      "plain": "What the options market charges for an at-the-money straddle at the nearest expiry, as ±% of the stock price — its own version of an expected range.",
+      "why": "Compare with our 80% range: options pricing a much bigger move than realized vol usually means an event (earnings) is in the window."
+    },
+    "atm_iv": {
+      "term": "ATM implied volatility",
+      "plain": "The volatility the options market is pricing at the money, annualized.",
+      "why": "IV above realized vol = options expensive vs recent reality (event risk or fear premium); below = cheap."
+    },
+    "analyst_trend": {
+      "term": "Analyst recommendation trend",
+      "plain": "How the buy/hold/sell mix shifted vs last month. Shifts matter; the level is mostly already in the price.",
+      "why": "Rating CHANGES carry residual information (experiment decision D12). We deliberately don't show price targets — they weren't available from any secured source, and levels are stale anyway."
+    },
+    "social_buzz": {
+      "term": "Social buzz",
+      "plain": "StockTwits users self-tag posts bullish/bearish. This is that polarity, scaled by how active the stream is.",
+      "why": "A read on retail mood. Thin streams (a few tagged posts) are heavily discounted."
+    },
+    "vol_factor": {
+      "term": "Volatility conviction factor",
+      "plain": "When current 20-day vol is calmer than its 60-day baseline, signal alignment counts slightly more (×up to 1.15); in turbulence, less (×down to 0.85).",
+      "why": "Vol regime isn't bullish or bearish — it's how much to trust the other signals. That's why it scales the score instead of adding to it."
+    },
+    "pe_ttm": {
+      "term": "P/E (trailing 12m)",
+      "plain": "Price divided by the last year of earnings per share. How many dollars you pay per dollar of annual profit.",
+      "why": "The bluntest valuation yardstick. Only meaningful vs the company's own history and its sector."
+    },
+    "eps_ttm": {
+      "term": "EPS (trailing 12m)",
+      "plain": "Profit per share over the last four quarters.",
+      "why": "The E in P/E. Growth here is what earnings season is about."
+    },
+    "market_cap": {
+      "term": "Market cap",
+      "plain": "Share price × shares outstanding — the market's price for the whole company.",
+      "why": "Sets the size regime: mega-caps move on macro, small caps on their own news."
+    },
+    "revenue_growth": {
+      "term": "Revenue growth (TTM YoY)",
+      "plain": "Sales over the last 12 months vs the 12 before.",
+      "why": "Growth stories live and die on this line staying up and to the right."
+    },
+    "gross_margin": {
+      "term": "Gross margin",
+      "plain": "What's left of each revenue dollar after direct costs.",
+      "why": "The ceiling on profitability; erosion here is an early warning."
+    },
+    "operating_margin": {
+      "term": "Operating margin",
+      "plain": "Profit from actually running the business, per revenue dollar, before interest and taxes.",
+      "why": "Separates efficient operators from companies buying growth with losses."
+    },
+    "net_margin": {
+      "term": "Net margin",
+      "plain": "The bottom line: cents of profit per revenue dollar after everything.",
+      "why": "The number that eventually has to justify the valuation."
+    },
+    "dividend_yield": {
+      "term": "Dividend yield",
+      "plain": "Annual dividends as a % of today's price.",
+      "why": "Income context — relevant to your income-sleeve overlap checks."
+    },
+    "beta": {
+      "term": "Beta (vs SPY, 60d)",
+      "plain": "How much this stock tends to move when the market moves 1%. Beta 1.5 ≈ amplifies the market by half again.",
+      "why": "Distinguishes 'stock moved because the market moved' from stock-specific action. Computed from 60 days of daily returns."
+    },
+    "correlation": {
+      "term": "Correlation to SPY",
+      "plain": "How reliably this stock moves WITH the market, from −1 to +1 (60-day daily returns).",
+      "why": "High correlation means SPY is most of the story; low means idiosyncratic drivers dominate."
+    },
+    "week52_position": {
+      "term": "52-week range position",
+      "plain": "Where today's price sits between the 52-week low (0%) and high (100%).",
+      "why": "Instant context for 'is this beaten down or at highs?' before you read anything else."
+    },
+    "earnings_countdown": {
+      "term": "Days to earnings",
+      "plain": "Trading sessions until the next scheduled report.",
+      "why": "THE caveat on the expected range: the band is calibrated for normal days, and earnings days are exactly when ±1.28σ breaks. Treat the band as unreliable inside an earnings window."
+    },
+    "earnings_surprise": {
+      "term": "Earnings surprise history",
+      "plain": "Last four quarters: reported EPS vs the street's estimate, as a % beat or miss.",
+      "why": "Habitual beaters and missers behave differently into a print; also calibrates how seriously to take estimates."
+    },
+    "volume_z": {
+      "term": "Volume z-score",
+      "plain": "Yesterday's trading volume vs its 20-day average, in standard deviations.",
+      "why": "Abnormal attention. |z| > 2 means something drew a crowd — check the headlines."
+    },
+    "sma20_dist": {
+      "term": "Distance from 20-day average",
+      "plain": "How far price is above (+) or below (−) its 20-day moving average, in %.",
+      "why": "Short-term stretch: far above = extended, far below = washed out. Not predictive at 1 day — measured."
+    },
+    "sma50_dist": {
+      "term": "Distance from 50-day average",
+      "plain": "Same as above with a 50-day window — the medium-term trend line most chartists watch.",
+      "why": "Crossing it is a widely watched (and widely front-run) signal."
+    },
+    "put_call_none": {
+      "term": "Put/call unavailable",
+      "plain": "This ticker has no listed options (common for trust ETFs like PHYS/PSLV), or volume is still ~zero this session.",
+      "why": "Absence of options data is normal for some instruments — the score just reweights around it."
+    },
+    "buzz": {
+      "term": "News buzz",
+      "plain": "This week's article count vs the stock's weekly average. 2.0 = twice the usual coverage.",
+      "why": "Attention spikes precede volatility more reliably than they precede direction."
+    },
+    "stale_data": {
+      "term": "Stale data badge",
+      "plain": "The source failed on the last refresh, so you're seeing the previous successful fetch, with its age.",
+      "why": "Honest degradation: old-but-labeled beats blank, and beats silently-wrong."
+    },
+    "context_hash": {
+      "term": "Context hash",
+      "plain": "A fingerprint of the exact analysis snapshot a Claude discussion was based on.",
+      "why": "If the data has moved a lot since, the discussion is flagged as possibly stale."
+    },
+    "ownership": {
+      "term": "Position context",
+      "plain": "Your actual holding in this ticker, read (read-only) from the Portfolio app's database.",
+      "why": "Research with skin-in-the-game context: P&L, cost basis, and portfolio weight beside the analysis."
+    },
+    "watchlist_tags": {
+      "term": "Watchlist tags",
+      "plain": "Free-form labels on research targets (e.g. 'earnings-play', 'income-candidate').",
+      "why": "Slice the watchlist your way — separate from the Portfolio app's income-focused list."
+    },
+    "coverage_target": {
+      "term": "Coverage target (80%)",
+      "plain": "The band is built to contain the next close 80% of the time — no more, no less.",
+      "why": "A 100%-coverage band would be uselessly wide. 80% is the deliberate trade: tight enough to mean something, wide enough to be right 4 days in 5."
+    },
+    "asset_type": {
+      "term": "Asset type",
+      "plain": "Equity, ETF, or trust — drives which sections apply (ETFs skip fundamentals/analyst sections).",
+      "why": "An ETF with no earnings or analyst coverage isn't 'missing data' — those concepts don't apply."
+    },
+    "earnings_move": {
+      "term": "Expected earnings move",
+      "plain": "Two numbers side by side: what the options market charges for the next earnings reaction (implied), and what this stock actually did on its last ~8 earnings days (history).",
+      "why": "The ratio is the tell: options pricing 2× the stock's own history means the market smells an unusual event; well under 1× means complacency. Neither says WHICH direction."
+    },
+    "pead": {
+      "term": "Post-earnings drift (PEAD)",
+      "plain": "After a big earnings surprise, prices have historically kept drifting in the surprise's direction for roughly 60 trading days — one of the most-replicated patterns in finance research.",
+      "why": "Context for the weeks after a report: a big beat that's still drifting is behaving normally. A documented historical tendency — not a guarantee, and it can stop working."
+    },
+    "insiders_cluster": {
+      "term": "Insider cluster buy",
+      "plain": "Two or more different insiders bought stock on the open market within about two weeks — filtered to real purchases (code P), excluding stock awards, option exercises, and tax sales.",
+      "why": "Research (Cohen–Malloy–Pomorski) shows routine insider trades mean ~nothing, while clustered open-market buys carried real information — on a MULTI-MONTH horizon, not next week."
+    },
+    "short_interest": {
+      "term": "Short interest",
+      "plain": "How many shares are currently sold short, per FINRA's official bi-monthly report, shown as a % of shares outstanding (true 'float' data isn't freely available — we label honestly).",
+      "why": "High and rising short interest = a crowded bet against the stock; it can mean informed skepticism, squeeze fuel, or both. The data lags by days-to-weeks by design."
+    },
+    "days_to_cover": {
+      "term": "Days to cover",
+      "plain": "Short interest divided by average daily volume — how many normal trading days shorts would need to buy their way out.",
+      "why": "The squeeze-mechanics number: 5+ days means the exit is narrow if the crowd is ever forced to leave at once."
+    },
+    "band_engine": {
+      "term": "Band engine",
+      "plain": "Which volatility estimator builds the 80% range: flat 20-day (default), EWMA (weights recent days more), or conformal (empirical quantile, no distribution assumed).",
+      "why": "Each engine shows its measured backtest coverage in Settings. Flat-20d won the validation — the others are offered because the evidence is displayed, not hidden."
+    },
+    "diversification_ratio": {
+      "term": "Diversification ratio",
+      "plain": "The average volatility of your holdings divided by your portfolio's actual volatility. 2.0× means diversification is halving your risk; 1.0× means it's doing nothing.",
+      "why": "The one number that says whether owning 12 things is actually different from owning 3."
+    },
+    "premium_lens": {
+      "term": "Premium seller's lens",
+      "plain": "For each covered-call or cash-secured-put candidate: what the options market says the breach risk is (its delta) next to what this stock's own 2-year history says (validated to ±6–9.5pp at 1–5 week horizons). Positive edge = you're being paid more than the historical risk costs.",
+      "why": "This is the variance risk premium made visible per strike — the documented, persistent payment for BEARING risk. It is the opposite of predicting direction: assignment still happens, tails are worse than they look (measured, shown), and earnings windows void the math (flagged)."
+    },
+    "vrp": {
+      "term": "Variance risk premium (VRP)",
+      "plain": "The app records the options-implied move each time you analyze a ticker, then checks what actually happened. Ratio above 1 = options systematically overpaid realized moves (favorable climate for sellers); below 1 = underpaid.",
+      "why": "Nobody sells this history free — the app builds it by being used. Thin at first, honest about it, more valuable every week."
+    },
+    "skew_25d": {
+      "term": "25Δ skew",
+      "plain": "Implied volatility of a ~25-delta put minus a ~25-delta call. Positive = the crowd pays up for crash protection.",
+      "why": "A fear gauge per ticker: heavy skew makes put-selling richer (you're selling insurance at panic prices) and signals what the market worries about."
+    },
+    "rebalance_sandbox": {
+      "term": "Rebalance sandbox",
+      "plain": "Type hypothetical trades (−$3,000 MSFT, +$2,000 JEPQ) and see the WHOLE portfolio's before/after: tomorrow's dollar range, volatility, diversification, beta, projected income, cash. Nothing executes.",
+      "why": "Brokers show the order ticket; nothing shows what a trade does to your book's risk and income before you make it."
+    },
+    "research_stance": {
+      "term": "Claude research stance",
+      "plain": "Claude's reasoned buy/sell/hold/trim/watch call from your latest discussion session — with a horizon and one-line justification, dated, and marked stale when the data has moved since.",
+      "why": "The app itself never computes buy/sell/hold: its signals demonstrably can't call direction (~9,600 backtested predictions). A stance from a full research session — valuation, thesis, risk, news — is a different kind of judgment, and it ages in plain sight instead of pretending to be current."
+    },
+    "score_history": {
+      "term": "Score history",
+      "plain": "The Setup Score recorded each time you analyzed this ticker. Grows as you use the tool.",
+      "why": "There's no 30-day backfill because point-in-time sentiment/options history doesn't exist — a reconstructed 'history' would be fiction. This one is real."
+    }
+  }
+}

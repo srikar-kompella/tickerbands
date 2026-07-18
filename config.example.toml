@@ -1,0 +1,35 @@
+# TickerLens instance configuration — copy to ~/.tickerlens/config.toml
+# Secrets do NOT go here — they go in ~/.tickerlens/.env  (chmod 600)
+
+[user]
+name = "Your Name"                 # used in research-discussion prompts
+contact_email = "you@example.com"  # REQUIRED for SEC EDGAR (fair-use policy)
+
+# Map each data capability to a provider you have credentials for.
+# Bundled: schwab (broker; quotes/history/options/account), finnhub (free key),
+# stocktwits (no key), edgar (no key), finra (no key), yfinance (no key,
+# unofficial; pip install yfinance). "none" disables a capability — dependent
+# features hide/degrade cleanly.
+[capabilities]
+quotes         = "yfinance"   # zero-key start; switch to your broker later
+daily_history  = "yfinance"
+option_chain   = "none"       # schwab provides this (needs greeks)
+account        = "none"       # your broker, or "none" to hide the Portfolio tab
+fundamentals   = "finnhub"
+news_sentiment = "finnhub"
+news_headlines = "finnhub"
+analyst_recs   = "finnhub"
+earnings       = "finnhub"
+social         = "stocktwits"
+insiders       = "edgar"
+short_interest = "finra"
+symbol_search  = "finnhub"
+
+[paths]
+# schwab_token = "~/.tickerlens/schwab_token.json"   # default
+# portfolio_db = ""    # optional legacy sqlite to one-time-import watchlist from
+
+# ~/.tickerlens/.env example:
+#   FINNHUB_KEY=xxxxxxxx
+#   SCHWAB_APP_KEY=xxxxxxxx
+#   SCHWAB_APP_SECRET=xxxxxxxx

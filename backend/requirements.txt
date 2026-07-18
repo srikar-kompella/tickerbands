@@ -1,0 +1,15 @@
+# TickerLens backend — installed into ./.venv by run_app.sh on first launch.
+# Python 3.10+ (Homebrew python3.12 recommended, same as the Portfolio app).
+fastapi>=0.115
+uvicorn[standard]>=0.30
+schwab-py>=1.4
+requests>=2.31
+watchdog>=4.0
+python-frontmatter>=1.1
+pydantic>=2.7
+markdown>=3.6
+
+
+# tests
+pytest>=8.0
+httpx>=0.27

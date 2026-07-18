@@ -1,0 +1,91 @@
+{
+ "note": "Coverage of TickerLens's exact band construction (prev_close-centered, \u00b11.28\u03c3 from 20-day realized vol) replayed over the parent experiment's 9,620-row point-in-time backtest (2024-07-01..2026-06-01). Static evidence, not live data. The experiment's original point_est-centered variant scored 79.5%.",
+ "source": "claude-stock-prediction-experiment/data/backtest_cache/backtest_rows.csv (read-only)",
+ "construction": "abs(next_day_return) <= 1.28 * rv20d/sqrt(252)",
+ "overall": {
+  "covered_pct": 80.5,
+  "days": 9620
+ },
+ "per_ticker": {
+  "AAPL": {
+   "covered_pct": 81.7,
+   "days": 481
+  },
+  "AVGO": {
+   "covered_pct": 83.0,
+   "days": 481
+  },
+  "COIN": {
+   "covered_pct": 81.7,
+   "days": 481
+  },
+  "COST": {
+   "covered_pct": 79.0,
+   "days": 481
+  },
+  "GOOGL": {
+   "covered_pct": 80.7,
+   "days": 481
+  },
+  "HIMS": {
+   "covered_pct": 82.7,
+   "days": 481
+  },
+  "IWM": {
+   "covered_pct": 80.5,
+   "days": 481
+  },
+  "JPM": {
+   "covered_pct": 80.0,
+   "days": 481
+  },
+  "LLY": {
+   "covered_pct": 81.9,
+   "days": 481
+  },
+  "META": {
+   "covered_pct": 81.7,
+   "days": 481
+  },
+  "MSFT": {
+   "covered_pct": 81.9,
+   "days": 481
+  },
+  "NVDA": {
+   "covered_pct": 80.0,
+   "days": 481
+  },
+  "PHYS": {
+   "covered_pct": 78.0,
+   "days": 481
+  },
+  "PSLV": {
+   "covered_pct": 77.5,
+   "days": 481
+  },
+  "QQQ": {
+   "covered_pct": 80.0,
+   "days": 481
+  },
+  "SPY": {
+   "covered_pct": 80.2,
+   "days": 481
+  },
+  "TLT": {
+   "covered_pct": 80.9,
+   "days": 481
+  },
+  "TSLA": {
+   "covered_pct": 79.4,
+   "days": 481
+  },
+  "XLE": {
+   "covered_pct": 79.8,
+   "days": 481
+  },
+  "XOM": {
+   "covered_pct": 78.4,
+   "days": 481
+  }
+ }
+}

@@ -1,0 +1,382 @@
+{
+ "note": "Point-in-time replay over the parent experiment's bar cache (2024-01..2026-06). Same eval days for all engines. coverage target 80%; narrower mean width at same coverage = better.",
+ "z": 1.28,
+ "ewma_lambda": 0.94,
+ "conformal_window": 250,
+ "overall": {
+  "flat20": {
+   "coverage_pct": 80.63,
+   "mean_halfwidth_pct": 3.157,
+   "days": 7309
+  },
+  "ewma": {
+   "coverage_pct": 82.67,
+   "mean_halfwidth_pct": 3.244,
+   "days": 7309
+  },
+  "conformal": {
+   "coverage_pct": 79.14,
+   "mean_halfwidth_pct": 2.846,
+   "days": 7309
+  }
+ },
+ "per_ticker": {
+  "AAPL": {
+   "flat20": {
+    "coverage_pct": 82.2,
+    "days": 348,
+    "mean_halfwidth_pct": 2.174
+   },
+   "ewma": {
+    "coverage_pct": 83.3,
+    "days": 348,
+    "mean_halfwidth_pct": 2.239
+   },
+   "conformal": {
+    "coverage_pct": 78.4,
+    "days": 348,
+    "mean_halfwidth_pct": 1.903
+   }
+  },
+  "AVGO": {
+   "flat20": {
+    "coverage_pct": 82.5,
+    "days": 348,
+    "mean_halfwidth_pct": 3.847
+   },
+   "ewma": {
+    "coverage_pct": 83.9,
+    "days": 348,
+    "mean_halfwidth_pct": 4.011
+   },
+   "conformal": {
+    "coverage_pct": 79.9,
+    "days": 348,
+    "mean_halfwidth_pct": 3.468
+   }
+  },
+  "COIN": {
+   "flat20": {
+    "coverage_pct": 81.9,
+    "days": 348,
+    "mean_halfwidth_pct": 5.757
+   },
+   "ewma": {
+    "coverage_pct": 82.8,
+    "days": 348,
+    "mean_halfwidth_pct": 5.877
+   },
+   "conformal": {
+    "coverage_pct": 82.5,
+    "days": 348,
+    "mean_halfwidth_pct": 5.692
+   }
+  },
+  "COST": {
+   "flat20": {
+    "coverage_pct": 78.2,
+    "days": 348,
+    "mean_halfwidth_pct": 1.654
+   },
+   "ewma": {
+    "coverage_pct": 80.5,
+    "days": 348,
+    "mean_halfwidth_pct": 1.667
+   },
+   "conformal": {
+    "coverage_pct": 78.7,
+    "days": 348,
+    "mean_halfwidth_pct": 1.501
+   }
+  },
+  "GOOGL": {
+   "flat20": {
+    "coverage_pct": 80.2,
+    "days": 348,
+    "mean_halfwidth_pct": 2.458
+   },
+   "ewma": {
+    "coverage_pct": 82.2,
+    "days": 348,
+    "mean_halfwidth_pct": 2.516
+   },
+   "conformal": {
+    "coverage_pct": 77.3,
+    "days": 348,
+    "mean_halfwidth_pct": 2.203
+   }
+  },
+  "HIMS": {
+   "flat20": {
+    "coverage_pct": 83.3,
+    "days": 348,
+    "mean_halfwidth_pct": 7.905
+   },
+   "ewma": {
+    "coverage_pct": 85.9,
+    "days": 348,
+    "mean_halfwidth_pct": 8.203
+   },
+   "conformal": {
+    "coverage_pct": 79.6,
+    "days": 348,
+    "mean_halfwidth_pct": 6.93
+   }
+  },
+  "IWM": {
+   "flat20": {
+    "coverage_pct": 80.2,
+    "days": 348,
+    "mean_halfwidth_pct": 1.693
+   },
+   "ewma": {
+    "coverage_pct": 81.6,
+    "days": 348,
+    "mean_halfwidth_pct": 1.723
+   },
+   "conformal": {
+    "coverage_pct": 79.0,
+    "days": 348,
+    "mean_halfwidth_pct": 1.558
+   }
+  },
+  "JPM": {
+   "flat20": {
+    "coverage_pct": 79.3,
+    "days": 348,
+    "mean_halfwidth_pct": 1.868
+   },
+   "ewma": {
+    "coverage_pct": 82.5,
+    "days": 348,
+    "mean_halfwidth_pct": 1.918
+   },
+   "conformal": {
+    "coverage_pct": 77.0,
+    "days": 348,
+    "mean_halfwidth_pct": 1.637
+   }
+  },
+  "LLY": {
+   "flat20": {
+    "coverage_pct": 83.0,
+    "days": 348,
+    "mean_halfwidth_pct": 3.087
+   },
+   "ewma": {
+    "coverage_pct": 85.1,
+    "days": 348,
+    "mean_halfwidth_pct": 3.148
+   },
+   "conformal": {
+    "coverage_pct": 78.2,
+    "days": 348,
+    "mean_halfwidth_pct": 2.558
+   }
+  },
+  "META": {
+   "flat20": {
+    "coverage_pct": 81.9,
+    "days": 348,
+    "mean_halfwidth_pct": 2.873
+   },
+   "ewma": {
+    "coverage_pct": 87.1,
+    "days": 348,
+    "mean_halfwidth_pct": 2.954
+   },
+   "conformal": {
+    "coverage_pct": 79.9,
+    "days": 348,
+    "mean_halfwidth_pct": 2.375
+   }
+  },
+  "MSFT": {
+   "flat20": {
+    "coverage_pct": 81.9,
+    "days": 348,
+    "mean_halfwidth_pct": 1.98
+   },
+   "ewma": {
+    "coverage_pct": 82.2,
+    "days": 348,
+    "mean_halfwidth_pct": 2.032
+   },
+   "conformal": {
+    "coverage_pct": 74.7,
+    "days": 348,
+    "mean_halfwidth_pct": 1.585
+   }
+  },
+  "NVDA": {
+   "flat20": {
+    "coverage_pct": 80.2,
+    "days": 348,
+    "mean_halfwidth_pct": 3.447
+   },
+   "ewma": {
+    "coverage_pct": 82.2,
+    "days": 348,
+    "mean_halfwidth_pct": 3.488
+   },
+   "conformal": {
+    "coverage_pct": 84.2,
+    "days": 348,
+    "mean_halfwidth_pct": 3.541
+   }
+  },
+  "PHYS": {
+   "flat20": {
+    "coverage_pct": 77.6,
+    "days": 348,
+    "mean_halfwidth_pct": 1.867
+   },
+   "ewma": {
+    "coverage_pct": 81.0,
+    "days": 348,
+    "mean_halfwidth_pct": 1.915
+   },
+   "conformal": {
+    "coverage_pct": 72.4,
+    "days": 348,
+    "mean_halfwidth_pct": 1.465
+   }
+  },
+  "PSLV": {
+   "flat20": {
+    "coverage_pct": 76.7,
+    "days": 348,
+    "mean_halfwidth_pct": 3.445
+   },
+   "ewma": {
+    "coverage_pct": 78.2,
+    "days": 348,
+    "mean_halfwidth_pct": 3.493
+   },
+   "conformal": {
+    "coverage_pct": 71.8,
+    "days": 348,
+    "mean_halfwidth_pct": 2.561
+   }
+  },
+  "QQQ": {
+   "flat20": {
+    "coverage_pct": 81.3,
+    "days": 348,
+    "mean_halfwidth_pct": 1.57
+   },
+   "ewma": {
+    "coverage_pct": 81.6,
+    "days": 348,
+    "mean_halfwidth_pct": 1.633
+   },
+   "conformal": {
+    "coverage_pct": 79.3,
+    "days": 348,
+    "mean_halfwidth_pct": 1.443
+   }
+  },
+  "SPY": {
+   "flat20": {
+    "coverage_pct": 81.9,
+    "days": 348,
+    "mean_halfwidth_pct": 1.224
+   },
+   "ewma": {
+    "coverage_pct": 84.5,
+    "days": 348,
+    "mean_halfwidth_pct": 1.282
+   },
+   "conformal": {
+    "coverage_pct": 79.9,
+    "days": 348,
+    "mean_halfwidth_pct": 1.049
+   }
+  },
+  "TLT": {
+   "flat20": {
+    "coverage_pct": 80.7,
+    "days": 348,
+    "mean_halfwidth_pct": 0.905
+   },
+   "ewma": {
+    "coverage_pct": 82.2,
+    "days": 348,
+    "mean_halfwidth_pct": 0.908
+   },
+   "conformal": {
+    "coverage_pct": 86.8,
+    "days": 348,
+    "mean_halfwidth_pct": 0.989
+   }
+  },
+  "TSLA": {
+   "flat20": {
+    "coverage_pct": 79.0,
+    "days": 348,
+    "mean_halfwidth_pct": 4.357
+   },
+   "ewma": {
+    "coverage_pct": 81.0,
+    "days": 348,
+    "mean_halfwidth_pct": 4.44
+   },
+   "conformal": {
+    "coverage_pct": 86.8,
+    "days": 348,
+    "mean_halfwidth_pct": 4.642
+   }
+  },
+  "XLE": {
+   "flat20": {
+    "coverage_pct": 79.9,
+    "days": 348,
+    "mean_halfwidth_pct": 1.828
+   },
+   "ewma": {
+    "coverage_pct": 82.8,
+    "days": 348,
+    "mean_halfwidth_pct": 1.853
+   },
+   "conformal": {
+    "coverage_pct": 77.0,
+    "days": 348,
+    "mean_halfwidth_pct": 1.604
+   }
+  },
+  "XOM": {
+   "flat20": {
+    "coverage_pct": 78.7,
+    "days": 348,
+    "mean_halfwidth_pct": 1.981
+   },
+   "ewma": {
+    "coverage_pct": 79.6,
+    "days": 348,
+    "mean_halfwidth_pct": 1.979
+   },
+   "conformal": {
+    "coverage_pct": 76.1,
+    "days": 348,
+    "mean_halfwidth_pct": 1.739
+   }
+  },
+  "_VIX": {
+   "flat20": {
+    "coverage_pct": 82.5,
+    "days": 349,
+    "mean_halfwidth_pct": 10.348
+   },
+   "ewma": {
+    "coverage_pct": 86.0,
+    "days": 349,
+    "mean_halfwidth_pct": 10.816
+   },
+   "conformal": {
+    "coverage_pct": 82.2,
+    "days": 349,
+    "mean_halfwidth_pct": 9.303
+   }
+  }
+ }
+}

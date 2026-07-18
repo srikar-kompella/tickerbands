@@ -1,0 +1,25 @@
+# Personal data — never to a remote
+discussions/
+!discussions/.gitkeep
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Secrets / tokens (belt-and-suspenders; token lives outside the repo anyway)
+.env
+*token*.json
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Node
+node_modules/
+dist/
+
+# OS / editor
+.DS_Store
+*.log
