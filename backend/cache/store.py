@@ -18,11 +18,26 @@ Payloads are JSON — providers return plain dicts/lists by design.
 from __future__ import annotations
 
 import json
+import threading
 import time
 from typing import Any, Callable
 
 from db import connect
 from providers.base import ProviderError
+
+# In-flight dedupe: two concurrent requests for the same key must NOT both hit
+# the provider (double quota burn + write race). One fetches; the other waits
+# and reads the fresh cache. Locks are per-key, created lazily.
+_LOCKS: dict[str, threading.Lock] = {}
+_LOCKS_GUARD = threading.Lock()
+
+
+def _key_lock(key: str) -> threading.Lock:
+    with _LOCKS_GUARD:
+        lock = _LOCKS.get(key)
+        if lock is None:
+            lock = _LOCKS[key] = threading.Lock()
+        return lock
 
 
 def _get_row(key: str) -> tuple[Any, float] | None:
@@ -62,6 +77,17 @@ def get_or_fetch(key: str, ttl_seconds: int, fetch_fn: Callable[[], Any],
         return {"data": cached[0], "fetched_ts": cached[1],
                 "age_seconds": round(now - cached[1], 1), "source": "cache"}
 
+    with _key_lock(key):
+        # double-check: another thread may have fetched while we waited
+        cached = _get_row(key)
+        now = time.time()
+        if cached and not force and (now - cached[1]) < ttl_seconds:
+            return {"data": cached[0], "fetched_ts": cached[1],
+                    "age_seconds": round(now - cached[1], 1), "source": "cache"}
+        return _fetch_locked(key, ttl_seconds, fetch_fn, cached, now)
+
+
+def _fetch_locked(key, ttl_seconds, fetch_fn, cached, now):
     try:
         data = fetch_fn()
         ts = _put_row(key, data)

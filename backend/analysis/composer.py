@@ -125,43 +125,60 @@ def _position_section(symbol: str, force: bool) -> dict[str, dict]:
     }
 
 
+def _fetch_one(section: str, fn, ttl_key: str, symbol: str,
+               force: bool) -> tuple[str, dict]:
+    """One section's fetch+envelope — runs on a pool worker."""
+    try:
+        wrapped = get_or_fetch(
+            key=f"{section}:{symbol.upper()}",
+            ttl_seconds=config.TTL[ttl_key],
+            fetch_fn=lambda: fn(symbol),
+            force=force,
+        )
+        return section, {
+            "status": "stale" if wrapped["source"] == "stale" else "ok",
+            "data": wrapped["data"],
+            "fetched_ts": wrapped["fetched_ts"],
+            "age_seconds": wrapped["age_seconds"],
+            **({"error_reason": wrapped["error_reason"],
+                "error_detail": wrapped.get("error_detail", "")}
+               if wrapped["source"] == "stale" else {}),
+        }
+    except ProviderError as e:
+        return section, {"status": "unavailable",
+                         "error_reason": e.reason, "error_detail": e.detail}
+
+
 def _fetch_sections(symbol: str, force: bool) -> dict[str, dict]:
-    """Every section independently: one provider's failure never takes down the
-    page (Q12). Result per section:
-      {status: ok|stale|unavailable|disabled, data?, fetched_ts?, age_seconds?,
-       error_reason?, error_detail?}
+    """Every section independently AND CONCURRENTLY (step-1 speedup: cold-load
+    time = the slowest single provider, not the sum of all of them). The
+    cache's per-key in-flight lock prevents duplicate provider calls when
+    requests overlap. Per-section degradation contract unchanged.
     """
+    from concurrent.futures import ThreadPoolExecutor
+
     fns = _providers()
     out: dict[str, dict] = {}
+    jobs = []
     for section, fn in fns.items():
         ttl_key, flag = _SECTION_META[section]
         if flag is not None and not config.FEATURES.get(flag, True):
             out[section] = {"status": "disabled"}
             continue
-        if fn is None:  # capability not configured (config.toml) — honest gap
+        if fn is None:  # capability not configured — honest gap
             out[section] = {"status": "unavailable",
                             "error_reason": "no_provider",
                             "error_detail": "no provider configured for this capability"}
             continue
-        try:
-            wrapped = get_or_fetch(
-                key=f"{section}:{symbol.upper()}",
-                ttl_seconds=config.TTL[ttl_key],
-                fetch_fn=lambda fn=fn: fn(symbol),
-                force=force,
-            )
-            out[section] = {
-                "status": "stale" if wrapped["source"] == "stale" else "ok",
-                "data": wrapped["data"],
-                "fetched_ts": wrapped["fetched_ts"],
-                "age_seconds": wrapped["age_seconds"],
-                **({"error_reason": wrapped["error_reason"],
-                    "error_detail": wrapped.get("error_detail", "")}
-                   if wrapped["source"] == "stale" else {}),
-            }
-        except ProviderError as e:
-            out[section] = {"status": "unavailable",
-                            "error_reason": e.reason, "error_detail": e.detail}
+        jobs.append((section, fn, ttl_key))
+
+    if jobs:
+        with ThreadPoolExecutor(max_workers=min(6, len(jobs))) as pool:
+            futures = [pool.submit(_fetch_one, sec, fn, ttl, symbol, force)
+                       for sec, fn, ttl in jobs]
+            for fut in futures:
+                section, envelope = fut.result()
+                out[section] = envelope
     return out
 
 
