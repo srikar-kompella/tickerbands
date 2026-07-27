@@ -16,6 +16,7 @@ import pytest  # noqa: E402
 # Tests assert against empty watchlists; the production startup seed
 # (seed_watchlist.json) is opt-out via this env var. test_seed.py opts back in.
 os.environ.setdefault("TICKERLENS_SKIP_SEED", "1")
+os.environ.setdefault("TICKERLENS_NO_AUTOREFRESH", "1")
 
 import db as dbmod  # noqa: E402
 

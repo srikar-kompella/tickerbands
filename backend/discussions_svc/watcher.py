@@ -23,7 +23,7 @@ import time
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
-from config import DISCUSSIONS_DIR, DISCUSSIONS_FAILED_DIR
+from config import DISCOVERIES_DIR, DISCUSSIONS_DIR, DISCUSSIONS_FAILED_DIR
 from discussions_svc.parser import (ParseError, delete_discussion,
                                     parse_discussion_file, upsert_discussion)
 from discussions_svc.stream import broadcaster
@@ -136,6 +136,32 @@ class DiscussionHandler(FileSystemEventHandler):
                 {"type": "deleted", "ticker": removed["ticker"], "id": removed["id"]})
 
 
+def _ingest_discovery(path: str) -> None:
+    """discoveries/*.md → candidate upserts (web-sweep file contract)."""
+    if not _wait_until_stable(path):
+        return
+    try:
+        import frontmatter
+        from analysis.discovery import ingest_sweep_frontmatter
+        post = frontmatter.load(path)
+        day = str(post.metadata.get("date") or "")[:10] or None
+        n = ingest_sweep_frontmatter(post.metadata, day)
+        broadcaster.publish_threadsafe({"type": "discovery", "added": n})
+    except Exception as e:
+        broadcaster.publish_threadsafe(
+            {"type": "error", "file": os.path.basename(path), "detail": str(e)[:200]})
+
+
+class DiscoveryHandler(FileSystemEventHandler):
+    def on_created(self, event):
+        if not event.is_directory and event.src_path.endswith(".md"):
+            threading.Timer(DEBOUNCE_SECONDS, _ingest_discovery,
+                            args=(event.src_path,)).start()
+
+    def on_modified(self, event):
+        self.on_created(event)
+
+
 def catch_up_scan() -> int:
     """Ingest files written while the backend was down (startup reconciliation).
     Files already in the DB with an unchanged mtime are skipped by upsert
@@ -152,6 +178,18 @@ def catch_up_scan() -> int:
                     upsert_discussion(parse_discussion_file(path))
                 except ParseError:
                     pass  # leave in place; live edits will re-trigger ingestion
+    try:
+        import frontmatter
+        from analysis.discovery import ingest_sweep_frontmatter
+        for fname in sorted(os.listdir(DISCOVERIES_DIR)) if os.path.isdir(DISCOVERIES_DIR) else []:
+            if fname.endswith(".md"):
+                fp = os.path.join(DISCOVERIES_DIR, fname)
+                post = frontmatter.load(fp)
+                ingest_sweep_frontmatter(post.metadata,
+                                         str(post.metadata.get("date") or "")[:10] or None)
+                count += 1
+    except Exception:
+        pass
     return count
 
 
@@ -159,8 +197,10 @@ def start_watcher() -> Observer:
     """Start observing discussions/ (created if missing). Called from lifespan;
     returns the observer so shutdown can stop it cleanly."""
     os.makedirs(DISCUSSIONS_DIR, exist_ok=True)
+    os.makedirs(DISCOVERIES_DIR, exist_ok=True)
     observer = Observer()
     observer.schedule(DiscussionHandler(), DISCUSSIONS_DIR, recursive=True)
+    observer.schedule(DiscoveryHandler(), DISCOVERIES_DIR, recursive=False)
     observer.daemon = True
     observer.start()
     return observer

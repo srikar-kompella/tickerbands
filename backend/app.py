@@ -13,6 +13,7 @@ watcher (start + catch-up scan for files written while the app was down).
 from __future__ import annotations
 
 import asyncio
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -67,6 +68,32 @@ def _seed_watchlist_once() -> int:
         conn.close()
 
 
+async def _auto_refresh_loop():
+    """His #2: while the app is OPEN, keep watchlist scores fresh (~hourly).
+    No daemons — dies with the process. Staggered 6s/symbol for Finnhub's
+    60/min; TTL caches make repeat passes cheap. Every pass feeds the score
+    audit with real scored days."""
+    import asyncio as aio
+    from db import connect
+    await aio.sleep(180)   # let startup + first interactive use settle
+    while True:
+        try:
+            conn = connect()
+            syms = [r["symbol"] for r in conn.execute("SELECT symbol FROM watchlist")]
+            conn.close()
+            from analysis import composer as comp
+            for s in syms:
+                try:
+                    await aio.to_thread(comp.analyze, s)
+                except Exception:
+                    pass          # one bad symbol never stops the pass
+                await aio.sleep(6)
+            print(f"[tickerlens] auto-refresh pass done ({len(syms)} symbols)")
+        except Exception:
+            pass
+        await aio.sleep(3600)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
@@ -75,9 +102,14 @@ async def lifespan(app: FastAPI):
         print(f"[tickerlens] seeded watchlist with {seeded} symbols from seed_watchlist.json")
     broadcaster.bind_loop(asyncio.get_running_loop())
     observer = start_watcher()
+    refresh_task = None
+    if not os.environ.get("TICKERLENS_NO_AUTOREFRESH"):
+        refresh_task = asyncio.create_task(_auto_refresh_loop())
     scanned = catch_up_scan()
     print(f"[tickerlens] watcher up on discussions/ (catch-up scanned {scanned} files)")
     yield
+    if refresh_task:
+        refresh_task.cancel()
     observer.stop()
     observer.join(timeout=3)
 

@@ -238,6 +238,16 @@ export interface Position {
   as_of?: string | null
 }
 
+export interface BottomContext {
+  drawdown_pct: number
+  above_52w_low_pct: number
+  range_percentile: number
+  vs_sma200_pct: number
+  bottom_decile: boolean
+  insider_buys_into_drawdown: boolean
+  note: string
+}
+
 export interface BandCoverage {
   scope: 'this_ticker' | 'basket_overall'
   covered_pct: number
@@ -256,6 +266,7 @@ export interface Analysis {
   beta: { beta: number | null; correlation: number | null; window: number } | null
   week52: { low: number; high: number; position_pct: number } | null
   band_coverage: BandCoverage | null
+  bottom_context: BottomContext | null
   setup_score: SetupScore | null
   score_history: { ts: string; score: number; lean: string }[]
   chart: { date: string; close: number }[]

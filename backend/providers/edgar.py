@@ -109,6 +109,35 @@ def _parse_form4(xml_text: str) -> list[dict[str, Any]]:
     return out
 
 
+def fetch_form4_feed_counts(count: int = 200) -> dict[str, int]:
+    """EDGAR latest-filings ATOM feed: Form 4s market-wide -> {TICKER: n}.
+    Cheap cluster PROXY; the Analysis Insiders panel is the verification step."""
+    import re as _re
+    url = ("https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=4"
+           f"&company=&dateb=&owner=include&count={count}&output=atom")
+    try:
+        r = requests.get(url, headers=_ua(), timeout=12)
+        if r.status_code != 200:
+            raise ProviderError("unavailable", f"EDGAR feed {r.status_code}")
+    except ProviderError:
+        raise
+    except Exception as e:
+        raise ProviderError("unavailable", f"EDGAR feed: {e}")
+    ciks = _re.findall(r"CIK=(\d{10})", r.text) or _re.findall(r"data/(\d+)/", r.text)
+    try:
+        data = _get_json("https://www.sec.gov/files/company_tickers.json")
+    except ProviderError:
+        return {}
+    tick_map = {f"{int(v['cik_str']):010d}": (v.get("ticker") or "").upper()
+                for v in data.values()}
+    counts: dict[str, int] = {}
+    for c in ciks:
+        sym = tick_map.get(f"{int(c):010d}")
+        if sym:
+            counts[sym] = counts.get(sym, 0) + 1
+    return counts
+
+
 def fetch_insiders(symbol: str) -> dict[str, Any]:
     cik = _cik_for(symbol)
     txs: list[dict[str, Any]] = []

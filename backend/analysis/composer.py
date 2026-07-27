@@ -398,6 +398,29 @@ def analyze(symbol: str, force: bool = False) -> dict[str, Any]:
         )
         _persist_score(symbol, score)
 
+    # ── bottom context: descriptive proximity facts (his #5, honest version) ─
+    bottom_context = None
+    bars2y_bc = _bars_2y(symbol, False)
+    if bars2y_bc and len(bars2y_bc) >= 220 and quote:
+        c2 = [b["close"] for b in bars2y_bc][-252:]
+        last = quote["last"]
+        hi52, lo52 = max(c2), min(c2)
+        sma200_src = [b["close"] for b in bars2y_bc][-200:]
+        sma200 = sum(sma200_src) / len(sma200_src)
+        below = sum(1 for x in c2 if x < last) / len(c2)
+        ins = sections["insiders"].get("data") or {}
+        bottom_context = {
+            "drawdown_pct": round((last / hi52 - 1) * 100, 1),
+            "above_52w_low_pct": round((last / lo52 - 1) * 100, 1),
+            "range_percentile": round(below * 100, 0),   # 0 = at the yearly low
+            "vs_sma200_pct": round((last / sma200 - 1) * 100, 1),
+            "bottom_decile": below <= 0.10,
+            "insider_buys_into_drawdown": bool(
+                ins.get("cluster_buy") and (last / hi52 - 1) < -0.15),
+            "note": ("Where price sits — NOT whether this is the bottom "
+                     "(nothing can know that; ~9,600 predictions proved it)."),
+        }
+
     payload: dict[str, Any] = {
         "symbol": symbol,
         "generated_ts": dt.datetime.now().isoformat(timespec="seconds"),
@@ -408,6 +431,7 @@ def analyze(symbol: str, force: bool = False) -> dict[str, Any]:
         "beta": beta,
         "week52": week52,
         "band_coverage": _band_coverage(symbol),
+        "bottom_context": bottom_context,
         "setup_score": score,
         "score_history": _score_history(symbol),
         "chart": [{"date": b["date"], "close": b["close"]} for b in bars[-30:]],

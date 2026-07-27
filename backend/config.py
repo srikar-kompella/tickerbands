@@ -85,6 +85,7 @@ DB_PATH = os.environ.get("TICKERLENS_DB_PATH",
 DISCUSSIONS_DIR = os.environ.get(
     "TICKERLENS_DISCUSSIONS_DIR", os.path.join(TICKERLENS_HOME, "discussions"))
 DISCUSSIONS_FAILED_DIR = os.path.join(DISCUSSIONS_DIR, "_failed")
+DISCOVERIES_DIR = os.path.join(TICKERLENS_HOME, "discoveries")
 
 _paths_cfg = _CONFIG.get("paths") or {}
 SCHWAB_TOKEN_PATH = os.environ.get(
@@ -109,6 +110,7 @@ TTL = {
     "market_context": 300, "search": 24 * 3600, "history2y": 24 * 3600,
     "earnings_dates": 24 * 3600, "insiders": 12 * 3600,
     "short_interest": 24 * 3600, "shares_out": 7 * 24 * 3600,
+    "earnings_calendar_market": 6 * 3600,
 }
 
 # ─── feature flags (capability gating happens in providers/registry.py) ────────

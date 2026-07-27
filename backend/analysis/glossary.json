@@ -251,6 +251,11 @@
       "plain": "Type hypothetical trades (−$3,000 MSFT, +$2,000 JEPQ) and see the WHOLE portfolio's before/after: tomorrow's dollar range, volatility, diversification, beta, projected income, cash. Nothing executes.",
       "why": "Brokers show the order ticket; nothing shows what a trade does to your book's risk and income before you make it."
     },
+    "bottom_context": {
+      "term": "Bottom context",
+      "plain": "Descriptive facts about where price sits: drawdown from the 52-week high, position in the yearly range, stretch vs the 200-day average, and whether insiders are buying into the weakness.",
+      "why": "Nothing can validate 'the absolute bottom' — that IS direction prediction, the thing ~9,600 backtests killed. But you should never buy without seeing whether you're buying weakness or chasing strength; this panel guarantees you see it."
+    },
     "research_stance": {
       "term": "Claude research stance",
       "plain": "Claude's reasoned buy/sell/hold/trim/watch call from your latest discussion session — with a horizon and one-line justification, dated, and marked stale when the data has moved since.",

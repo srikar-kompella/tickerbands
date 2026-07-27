@@ -429,6 +429,23 @@ export function ContextPanel({ a, g }: { a: Analysis; g: G }) {
         <Row label="Volume z-score (prev. session)" value={fmtNum(a.signals?.volume_z, 2)}
           tip={g.volume_z}
           valueClass={Math.abs(a.signals?.volume_z ?? 0) > 2 ? 'text-warn' : undefined} />
+        {a.bottom_context && (
+          <>
+            <Row label="Drawdown from 52w high" value={fmtPct(a.bottom_context.drawdown_pct, 1)}
+              tip={g.bottom_context}
+              valueClass={a.bottom_context.drawdown_pct < -25 ? 'text-warn' : undefined} />
+            <Row label="Yearly range percentile"
+              value={`${fmtNum(a.bottom_context.range_percentile, 0)}%${a.bottom_context.bottom_decile ? ' · bottom decile' : ''}`}
+              valueClass={a.bottom_context.bottom_decile ? 'text-accent font-semibold' : undefined} />
+            <Row label="vs 200-day average" value={fmtPct(a.bottom_context.vs_sma200_pct, 1, true)} />
+            {a.bottom_context.insider_buys_into_drawdown && (
+              <p className="py-1.5 text-[11px] text-up">
+                Insiders are cluster-buying INTO this drawdown — the closest thing
+                to a validated bottom signal that exists (multi-month horizon).
+              </p>
+            )}
+          </>
+        )}
         <Row label="Realized vol (20d, ann.)" value={fmtPct(a.signals?.rv_20d, 1)} tip={g.rv_20d} />
         <Row label="vs 20d / 50d avg" value={`${fmtPct(a.signals?.sma20_dist, 1, true)} / ${fmtPct(a.signals?.sma50_dist, 1, true)}`} tip={g.sma20_dist} />
       </div>

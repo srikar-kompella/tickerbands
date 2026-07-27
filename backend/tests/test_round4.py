@@ -370,3 +370,83 @@ def test_morning_sheet_renders(client):
     assert "Morning sheet" in page and "NVDA" in page
     assert "TickerLens_MorningSheet_" in page      # print filename
     assert "no direction predictions" in page
+
+
+# ─── Discover (leads pipeline) ─────────────────────────────────────────────────
+
+def test_discovery_upsert_dedupe_and_dismiss_memory(tmp_db):
+    from analysis.discovery import upsert_candidate, list_candidates, is_obvious
+    assert is_obvious("AAPL") and is_obvious("XX", 90_000) and not is_obvious("CRDO", 5_000)
+    assert upsert_candidate("CRDO", "pead", "beat by 30%") is True
+    assert upsert_candidate("CRDO", "pead", "beat by 30%") is False        # exact dup
+    assert upsert_candidate("AAPL", "pead", "beat") is False               # obvious filtered
+    assert upsert_candidate("CRDO", "web-sweep", "optics thesis") is True  # merge new source
+    rows = list_candidates()
+    assert len(rows) == 1 and set(rows[0]["sources"]) == {"pead", "web-sweep"}
+    # dismiss → hidden; NEW source type later → returned flag
+    from db import connect
+    conn = connect(); conn.execute(
+        "UPDATE discovery_candidates SET status='dismissed' WHERE symbol='CRDO'")
+    conn.commit(); conn.close()
+    assert list_candidates() == []
+    upsert_candidate("CRDO", "insider-cluster", "3 filings")
+    rows = list_candidates(include_dismissed=True)
+    assert rows[0]["returned"] == 1 and rows[0]["status"] == "dismissed"
+
+
+def test_discovery_scan_and_endpoints(client, tmp_db):
+    r = client.post("/api/discovery/scan").json()
+    assert r["ok"] and r["total_added"] >= 3          # mock screens fire
+    rows = client.get("/api/discovery").json()
+    syms = {x["symbol"] for x in rows}
+    assert "CRDO" in syms and "AAPL" not in syms and "SPY" not in syms  # obvious excluded
+    assert "MILD" not in syms                          # SI change below threshold
+    crdo = next(x for x in rows if x["symbol"] == "CRDO")
+    assert len(crdo["sources"]) >= 2                   # pead + insider converge in mock
+    # promote → watchlist tagged discovery; patch dismiss round-trip
+    assert client.post("/api/discovery/CRDO/promote").json()["ok"]
+    wl = {w["symbol"]: w for w in client.get("/api/watchlist").json()}
+    assert "discovery" in wl["CRDO"]["tags"]
+    assert client.patch("/api/discovery/IONQ", json={"status": "dismissed"}).json()["ok"]
+    assert client.patch("/api/discovery/NOPE", json={"status": "dismissed"}).status_code == 404
+    assert "discoveries/" in client.get("/api/discovery/prompt").json()["prompt"]
+
+
+def test_discovery_sweep_ingest(tmp_db):
+    from analysis.discovery import ingest_sweep_frontmatter, list_candidates
+    n = ingest_sweep_frontmatter({"candidates": [
+        {"ticker": "adv", "thesis": "insider buys + buyback", "risk": "margin"},
+        {"ticker": "QQQ", "thesis": "obvious", "risk": ""},
+        {"ticker": "", "thesis": "no symbol"},
+    ]}, "2026-07-18")
+    assert n == 1
+    row = list_candidates()[0]
+    assert row["symbol"] == "ADV" and "Risk: margin" in row["reasons"][0]["reason"]
+
+
+# ─── rough-notes round: bottom context + logged export/import ──────────────────
+
+def test_bottom_context_in_payload(client):
+    a = client.get("/api/analysis/HIMS").json()
+    bc = a["bottom_context"]
+    assert bc is not None
+    assert -100 <= bc["drawdown_pct"] <= 0.01
+    assert bc["above_52w_low_pct"] >= 0
+    assert 0 <= bc["range_percentile"] <= 100
+    assert isinstance(bc["bottom_decile"], bool)
+    assert "NOT whether this is the bottom" in bc["note"]  # the honesty line ships
+
+
+def test_score_history_export_import_logged(client, tmp_db):
+    client.get("/api/analysis/AAPL")   # creates ≥1 score row
+    exp = client.get("/api/score-history/export").json()
+    assert exp["format"] == "tickerlens-score-history-v1" and len(exp["rows"]) >= 1
+    # import into same instance → full dedupe; foreign row → added
+    r = client.post("/api/score-history/import", json={"rows": exp["rows"]}).json()
+    assert r["imported"] == 0
+    r2 = client.post("/api/score-history/import", json={"rows": [
+        {"symbol": "ZZZZ", "ts": "2026-07-01T10:00:00", "score": 61.0, "lean": "BULLISH"}]}).json()
+    assert r2["imported"] == 1
+    log = client.get("/api/score-history/share-log").json()
+    assert len(log) == 3                                  # 1 export + 2 imports
+    assert {l["direction"] for l in log} == {"export", "import"}

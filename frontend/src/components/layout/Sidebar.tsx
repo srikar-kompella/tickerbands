@@ -1,10 +1,11 @@
-import { BookOpen, Briefcase, Eye, LineChart, MessagesSquare, Settings2, Telescope } from 'lucide-react'
+import { BookOpen, Briefcase, Compass, Eye, LineChart, MessagesSquare, Settings2, Telescope } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { cn } from '@/lib/utils'
 
 export const TABS = [
   { key: 'analysis', label: 'Analysis', icon: LineChart },
   { key: 'portfolio', label: 'Portfolio', icon: Briefcase },
+  { key: 'discover', label: 'Discover', icon: Compass },
   { key: 'watchlist', label: 'Watchlist', icon: Eye },
   { key: 'discussions', label: 'Discussions', icon: MessagesSquare },
   { key: 'settings', label: 'Settings', icon: Settings2 },

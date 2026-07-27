@@ -8,6 +8,7 @@ import { Sidebar, TABS, type TabKey } from '@/components/layout/Sidebar'
 import { useDiscussionStream } from '@/hooks'
 import Analysis from '@/pages/Analysis'
 import Setup from '@/pages/Setup'
+import Discover from '@/pages/Discover'
 import Discussions from '@/pages/Discussions'
 import Guide from '@/pages/Guide'
 import Portfolio from '@/pages/Portfolio'
@@ -60,6 +61,7 @@ export default function App() {
               className="h-full">
               {tab === 'analysis' && <Analysis symbol={symbol} setSymbol={analyze} />}
               {tab === 'portfolio' && <Portfolio onAnalyze={analyze} />}
+              {tab === 'discover' && <Discover onAnalyze={analyze} />}
               {tab === 'watchlist' && <Watchlist onAnalyze={analyze} />}
               {tab === 'discussions' && <Discussions />}
               {tab === 'settings' && <Settings />}

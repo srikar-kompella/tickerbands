@@ -271,6 +271,12 @@ def fetch_shares_outstanding(symbol: str) -> float | None:
     return float(v) if isinstance(v, (int, float)) and v > 0 else None
 
 
+def fetch_earnings_calendar_market(frm: str, to: str) -> list[dict]:
+    """Market-wide earnings events (no symbol filter) — the PEAD screen's feed."""
+    raw = _get("calendar/earnings", {"from": frm, "to": to})
+    return (raw or {}).get("earningsCalendar") or []
+
+
 def fetch(ticker: str) -> dict[str, Any]:
     return {
         "news_sentiment": fetch_news_sentiment(ticker),

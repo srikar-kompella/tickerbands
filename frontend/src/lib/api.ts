@@ -23,6 +23,12 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
     } catch { /* non-JSON error body */ }
     throw new ApiError(r.status, detail)
   }
+  // bug-hunt instrumentation: a non-JSON 200 (proxy hiccup, HTML page) must
+  // name itself instead of surfacing as a cryptic "parsing failed"
+  const ct = r.headers.get('content-type') ?? ''
+  if (!ct.includes('application/json')) {
+    throw new ApiError(r.status, `expected JSON from ${path} but got ${ct || 'unknown content'} — please report which tab you were on`)
+  }
   return r.json()
 }
 

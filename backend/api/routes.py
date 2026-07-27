@@ -407,6 +407,102 @@ def import_schwab_watchlist():
             "lists": [{"name": w["name"], "count": len(w["symbols"])} for w in lists]}
 
 
+@router.get("/discovery")
+def discovery_list(include_dismissed: bool = Query(False)):
+    from analysis.discovery import list_candidates
+    return list_candidates(include_dismissed)
+
+
+@router.post("/discovery/scan")
+def discovery_scan():
+    """Run all evidence screens on demand (each capped + defensive)."""
+    from analysis import discovery as d
+    m = registry.MODULES
+    mockm = registry.use_mock()
+    counts = {
+        "pead": d.screen_pead(
+            m["mock"].fetch_earnings_calendar_market if mockm else m["finnhub"].fetch_earnings_calendar_market,
+            (m["mock"].fetch_fundamentals if mockm else m["finnhub"].fetch_fundamentals)),
+        "insider": d.screen_insider_feed(
+            m["mock"].fetch_form4_feed_counts if mockm else m["edgar"].fetch_form4_feed_counts),
+        "short_interest": d.screen_short_interest(
+            m["mock"].fetch_si_top_changes if mockm else m["finra"].fetch_si_top_changes),
+    }
+    return {"ok": True, "added": counts, "total_added": sum(counts.values())}
+
+
+class DiscoveryPatch(BaseModel):
+    status: str  # reviewed / dismissed / new
+
+
+@router.patch("/discovery/{symbol}")
+def discovery_patch(symbol: str, body: DiscoveryPatch):
+    if body.status not in {"new", "reviewed", "dismissed"}:
+        raise HTTPException(422, "status must be new|reviewed|dismissed")
+    conn = connect()
+    try:
+        cur = conn.execute(
+            "UPDATE discovery_candidates SET status=?, returned=0 WHERE symbol=?",
+            (body.status, symbol.upper()))
+        conn.commit()
+        if cur.rowcount == 0:
+            raise HTTPException(404, "unknown candidate")
+        return {"ok": True}
+    finally:
+        conn.close()
+
+
+@router.post("/discovery/{symbol}/promote")
+def discovery_promote(symbol: str):
+    """Candidate → watchlist (tagged 'discovery'), status=promoted."""
+    sym = symbol.upper()
+    conn = connect()
+    try:
+        row = conn.execute("SELECT reasons FROM discovery_candidates WHERE symbol=?",
+                           (sym,)).fetchone()
+        if not row:
+            raise HTTPException(404, "unknown candidate")
+        reasons = json.loads(row["reasons"])
+        note = (reasons[-1]["reason"][:120] if reasons else "")
+        conn.execute(
+            "INSERT OR IGNORE INTO watchlist (symbol, note, tags, added_ts) VALUES (?,?,?,?)",
+            (sym, note, json.dumps(["discovery"]),
+             dt.datetime.now().isoformat(timespec="seconds")))
+        conn.execute("UPDATE discovery_candidates SET status='promoted' WHERE symbol=?", (sym,))
+        conn.commit()
+        return {"ok": True}
+    finally:
+        conn.close()
+
+
+@router.get("/discovery/prompt")
+def discovery_prompt():
+    """The web-sweep prompt: paste into any agent; it writes discoveries/*.md
+    which the watcher ingests (same file contract philosophy as discussions)."""
+    day = dt.date.today().isoformat()
+    return {"prompt": f"""# TickerLens discovery sweep — {day}
+Research CURRENT sources (news, filings, sector coverage) for 8-15 NON-OBVIOUS
+US stock/ETF candidates with early potential. EXCLUDE: Mag-7, S&P 500
+mainstays, mega-cap household names, flagship index ETFs. For each: a concrete
+thesis (what changed recently), and the main risk. No price predictions —
+theses about businesses/flows/events only.
+
+Write the result to `~/.tickerlens/discoveries/{day}.md` EXACTLY as:
+```markdown
+---
+date: {day}
+candidates:
+  - ticker: XYZ
+    thesis: <1-2 lines, concrete and recent>
+    risk: <1 line>
+  - ticker: ...
+---
+# Sweep notes {day}
+<brief method/source notes>
+```
+The app ingests it automatically; duplicates merge by symbol."""}
+
+
 @router.get("/lens/{symbol}")
 def premium_lens(symbol: str):
     """Premium-seller's lens: implied vs empirical breach probability per
@@ -553,6 +649,68 @@ def get_portfolio_risk():
             continue
     return portfolio_risk(account["positions"], closes_map,
                           account.get("cash") or 0.0, closes_map.get("SPY"))
+
+
+@router.get("/score-history/export")
+def score_history_export():
+    """Approved sharing path (LOGGED): a portable bundle of this instance's
+    score history — for another machine/instance, never a silent cloud."""
+    conn = connect()
+    try:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT symbol, ts, score, lean, components FROM setup_score_history")]
+        conn.execute("INSERT INTO score_share_log (ts, direction, rows, detail) "
+                     "VALUES (?, 'export', ?, 'api export')",
+                     (dt.datetime.now().isoformat(timespec="seconds"), len(rows)))
+        conn.commit()
+    finally:
+        conn.close()
+    return {"format": "tickerlens-score-history-v1",
+            "exported_at": dt.datetime.now().isoformat(timespec="seconds"),
+            "rows": rows}
+
+
+class ScoreImportBody(BaseModel):
+    rows: list[dict]
+
+
+@router.post("/score-history/import")
+def score_history_import(body: ScoreImportBody):
+    """Import a bundle (deduped by symbol+ts). Logged, like export."""
+    conn = connect()
+    added = 0
+    try:
+        for r in body.rows:
+            sym, ts = str(r.get("symbol", "")).upper(), str(r.get("ts", ""))
+            if not sym or not ts or r.get("score") is None:
+                continue
+            dup = conn.execute("SELECT 1 FROM setup_score_history WHERE symbol=? AND ts=?",
+                               (sym, ts)).fetchone()
+            if dup:
+                continue
+            conn.execute("INSERT INTO setup_score_history (symbol, ts, score, lean, components) "
+                         "VALUES (?,?,?,?,?)",
+                         (sym, ts, float(r["score"]), str(r.get("lean", "NEUTRAL")),
+                          str(r.get("components", "[]"))))
+            added += 1
+        conn.execute("INSERT INTO score_share_log (ts, direction, rows, detail) "
+                     "VALUES (?, 'import', ?, ?)",
+                     (dt.datetime.now().isoformat(timespec="seconds"), added,
+                      f"received {len(body.rows)} rows"))
+        conn.commit()
+    finally:
+        conn.close()
+    return {"ok": True, "imported": added, "received": len(body.rows)}
+
+
+@router.get("/score-history/share-log")
+def score_share_log():
+    conn = connect()
+    try:
+        return [dict(r) for r in conn.execute(
+            "SELECT * FROM score_share_log ORDER BY id DESC LIMIT 50")]
+    finally:
+        conn.close()
 
 
 @router.get("/score-audit")

@@ -72,6 +72,25 @@ CREATE TABLE IF NOT EXISTS settings (
 -- analyzed (one row/symbol/day). Once the horizon elapses, realized vs
 -- implied becomes a per-ticker variance-risk-premium report — the data no
 -- free API sells, built by using the app.
+CREATE TABLE IF NOT EXISTS discovery_candidates (
+    symbol      TEXT PRIMARY KEY,
+    first_seen  TEXT NOT NULL,
+    last_seen   TEXT NOT NULL,
+    sources     TEXT NOT NULL DEFAULT '[]',
+    reasons     TEXT NOT NULL DEFAULT '[]',
+    market_cap_m REAL,
+    status      TEXT NOT NULL DEFAULT 'new',
+    returned    INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS score_share_log (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts        TEXT NOT NULL,
+    direction TEXT NOT NULL,
+    rows      INTEGER NOT NULL,
+    detail    TEXT DEFAULT ''
+);
+
 CREATE TABLE IF NOT EXISTS implied_move_history (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     symbol       TEXT NOT NULL,

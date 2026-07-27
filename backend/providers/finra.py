@@ -39,6 +39,32 @@ def _field(row: dict, *names: str) -> Any:
     return None
 
 
+def fetch_si_top_changes(limit: int = 40) -> list[dict]:
+    """Largest period-over-period SI changes, market-wide (discovery screen).
+    Same defensiveness as the per-symbol fetch."""
+    body = {"limit": limit, "sortFields": ["-changePercent"]}
+    try:
+        r = requests.post(URL, json=body, headers=HEADERS, timeout=12)
+        if r.status_code != 200:
+            raise ProviderError("unavailable", f"FINRA HTTP {r.status_code}")
+        rows = r.json()
+    except ProviderError:
+        raise
+    except Exception as e:
+        raise ProviderError("unavailable", f"FINRA: {e}")
+    out = []
+    for row in rows if isinstance(rows, list) else []:
+        sym = _field(row, "issueSymbolIdentifier", "symbolCode")
+        cur = _field(row, "currentShortPositionQuantity", "shortInterest")
+        prev = _field(row, "previousShortPositionQuantity")
+        if not sym or not cur or not prev:
+            continue
+        out.append({"symbol": str(sym).upper(),
+                    "change_pct": round((float(cur) - float(prev)) / float(prev) * 100, 1),
+                    "days_to_cover": _field(row, "daysToCoverQuantity", "daysToCover")})
+    return out
+
+
 def fetch_short_interest(symbol: str) -> dict[str, Any]:
     body = {
         "limit": 2,  # newest two settlement periods → level + delta

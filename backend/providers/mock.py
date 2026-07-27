@@ -147,7 +147,7 @@ def fetch_fundamentals(symbol: str) -> dict[str, Any]:
         "available": True,
         "pe_ttm": round(8 + _seed(symbol, "pe") * 55, 1),
         "eps_ttm": round(1 + _seed(symbol, "eps") * 12, 2),
-        "market_cap_m": round(2_000 + _seed(symbol, "mc") * 2_800_000, 0),
+        "market_cap_m": round(2_000 + _seed(symbol, "mc") * 60_000, 0),
         "revenue_growth_ttm_pct": round((_seed(symbol, "rg") - 0.25) * 60, 1),
         "gross_margin_pct": round(20 + _seed(symbol, "gm") * 60, 1),
         "operating_margin_pct": round(5 + _seed(symbol, "om") * 35, 1),
@@ -354,6 +354,25 @@ def fetch_short_interest(symbol: str) -> dict[str, Any]:
             "change_pct": round((si - prev) / prev * 100, 1),
             "days_to_cover": round(0.5 + _seed(symbol, "dtc") * 8, 1),
             "pct_of_shares_out": None}
+
+
+def fetch_earnings_calendar_market(frm: str, to: str) -> list[dict]:
+    return [
+        {"symbol": "CRDO", "date": frm, "epsEstimate": 0.30, "epsActual": 0.41},
+        {"symbol": "TMDX", "date": frm, "epsEstimate": 0.25, "epsActual": 0.31},
+        {"symbol": "AAPL", "date": frm, "epsEstimate": 2.0, "epsActual": 2.6},  # obvious → filtered
+        {"symbol": "WEAK", "date": frm, "epsEstimate": 1.0, "epsActual": 0.7},
+    ]
+
+
+def fetch_form4_feed_counts(count: int = 200) -> dict:
+    return {"CRDO": 3, "IONQ": 2, "AAPL": 5, "SOLO": 1}
+
+
+def fetch_si_top_changes(limit: int = 40) -> list[dict]:
+    return [{"symbol": "CVNA", "change_pct": 34.0, "days_to_cover": 4.1},
+            {"symbol": "SPY", "change_pct": 40.0, "days_to_cover": 1.0},
+            {"symbol": "MILD", "change_pct": 8.0, "days_to_cover": 2.0}]
 
 
 def fetch_schwab_watchlists() -> list[dict[str, Any]]:

@@ -122,6 +122,15 @@ export function SnapshotHeader({ a, onRefresh, refreshing, onAskClaude, watched,
                 {a.claude_stance.created_ts.slice(5, 10)}
                 {a.claude_stance.context_hash && a.claude_stance.context_hash !== a.context_hash && ' · stale'}
               </span>
+              {a.claude_stance.stance === 'buy' && a.bottom_context && (
+                <Badge tone={a.bottom_context.bottom_decile ? 'accent' : 'warn'}
+                  className="text-[10px] tnum"
+                  title={`Where this buy sits: ${a.bottom_context.drawdown_pct}% off the 52w high, ${a.bottom_context.above_52w_low_pct}% above the low, cheaper than ${100 - a.bottom_context.range_percentile}% of the last year's closes. ${a.bottom_context.insider_buys_into_drawdown ? 'Insiders are buying this drawdown. ' : ''}${a.bottom_context.note}`}>
+                  {a.bottom_context.bottom_decile ? 'near yearly lows'
+                    : a.bottom_context.range_percentile >= 70 ? 'buying strength'
+                      : 'mid-range'}
+                </Badge>
+              )}
             </span>
           ) : (
             <button onClick={onAskClaude}
