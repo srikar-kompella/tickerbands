@@ -17,6 +17,8 @@ import pytest  # noqa: E402
 # (seed_watchlist.json) is opt-out via this env var. test_seed.py opts back in.
 os.environ.setdefault("TICKERLENS_SKIP_SEED", "1")
 os.environ.setdefault("TICKERLENS_NO_AUTOREFRESH", "1")
+# never let get_secret touch keyring / the OS Keychain from a test
+os.environ.setdefault("TICKERLENS_NO_KEYRING", "1")
 
 import db as dbmod  # noqa: E402
 

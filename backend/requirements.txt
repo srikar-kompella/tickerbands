@@ -8,6 +8,7 @@ watchdog>=4.0
 python-frontmatter>=1.1
 pydantic>=2.7
 markdown>=3.6
+keyring>=25.0
 
 
 # tests

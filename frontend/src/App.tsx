@@ -49,6 +49,13 @@ export default function App() {
     <div className="flex h-screen overflow-hidden">
       <Sidebar tab={tab} setTab={setTab} tabs={visibleTabs} />
       <main className="flex flex-1 flex-col overflow-hidden">
+        {setupStatus?.user_name && (
+          <div className="flex shrink-0 justify-end border-b border-border px-6 py-1.5">
+            <span className="rounded-full bg-surface-2 px-2.5 py-0.5 text-[11px] text-muted">
+              {setupStatus.user_name}&rsquo;s Portfolio
+            </span>
+          </div>
+        )}
         <div className="flex-1 overflow-y-auto px-6 py-5">
           {/* smooth page transitions between tabs (polish requirement) */}
           <AnimatePresence mode="wait">

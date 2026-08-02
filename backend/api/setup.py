@@ -16,25 +16,35 @@ from pydantic import BaseModel
 
 import config
 from providers import registry
+from providers.base import SUBSCRIPTIONS
 
 router = APIRouter(prefix="/api/setup")
 
+
+def _keys(provider: str) -> list[str]:
+    """Env-var names a provider needs — derived from providers.base.SUBSCRIPTIONS
+    (the single source of truth) so this file never hardcodes key names."""
+    return [env for _name, env in SUBSCRIPTIONS.get(provider, {}).get("secrets", [])]
+
+
 # What each bundled provider needs from the user (the wizard renders this).
+# Labels/notes are wizard copy; the key lists come from SUBSCRIPTIONS.
 PROVIDER_INFO = {
     "schwab": {"label": "Charles Schwab (broker — quotes/history/options/account)",
-               "keys": ["SCHWAB_APP_KEY", "SCHWAB_APP_SECRET"],
+               "keys": _keys("schwab"),
                "note": ("Create an app at developer.schwab.com. First OAuth "
                         "must run once in a terminal (schwab-py mints "
                         "~/.tickerlens/schwab_token.json; re-auth ~weekly).")},
     "finnhub": {"label": "Finnhub (free key — fundamentals/news/analyst/earnings)",
-                "keys": ["FINNHUB_KEY"],
+                "keys": _keys("finnhub"),
                 "note": "Free key at finnhub.io/register."},
     "yfinance": {"label": "yfinance (no key — unofficial price data)",
-                 "keys": [], "note": "pip install yfinance"},
-    "stocktwits": {"label": "StockTwits (no key — social sentiment)", "keys": [], "note": ""},
-    "edgar": {"label": "SEC EDGAR (no key — insider filings)", "keys": [],
+                 "keys": _keys("yfinance"), "note": "pip install yfinance"},
+    "stocktwits": {"label": "StockTwits (no key — social sentiment)",
+                   "keys": _keys("stocktwits"), "note": ""},
+    "edgar": {"label": "SEC EDGAR (no key — insider filings)", "keys": _keys("edgar"),
               "note": "Requires your contact email (SEC fair-use policy)."},
-    "finra": {"label": "FINRA (no key — short interest)", "keys": [], "note": ""},
+    "finra": {"label": "FINRA (no key — short interest)", "keys": _keys("finra"), "note": ""},
     "none": {"label": "None — disable this capability", "keys": [], "note": ""},
 }
 

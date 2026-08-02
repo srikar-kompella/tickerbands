@@ -11,7 +11,9 @@ OSS layout: ALL user data lives in an instance directory OUTSIDE the repo —
 `git pull` can never touch user data, and code never writes into the repo.
 
 Secrets resolution order (providers/base.get_secret):
-    process env → ~/.tickerlens/.env → OS keychain (macOS) → absent.
+    keyring ("tickerlens" service) → legacy macOS Keychain → process env
+    (which this module pre-seeds from ~/.tickerlens/.env) → absent.
+    TICKERLENS_NO_KEYRING=1 skips the two keychain steps.
 """
 from __future__ import annotations
 

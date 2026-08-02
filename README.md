@@ -44,6 +44,46 @@ news, …) mapped to a provider in `~/.tickerlens/config.toml`. Bundled:
 provider simply means no options features, not errors. Secrets live in
 `~/.tickerlens/.env`; the repo never sees them.
 
+## Subscriptions & API keys
+
+The registry of individual subscriptions lives in
+`backend/providers/base.py` → `SUBSCRIPTIONS` (single source of truth; the
+setup wizard derives its key prompts from it). What each bundled provider
+needs:
+
+| Provider | Secrets (name → env fallback) | Cost | Sign up |
+|---|---|---|---|
+| schwab | `schwab_app_key` → `SCHWAB_APP_KEY`, `schwab_app_secret` → `SCHWAB_APP_SECRET` | free with a Schwab brokerage account | developer.schwab.com |
+| finnhub | `finnhub_api_key` → `FINNHUB_KEY` | free tier (60 calls/min) | finnhub.io/register |
+| yfinance | none (tier-0) | free | `pip install yfinance` |
+| edgar | none — SEC requires a contact email (`user.contact_email` in config.toml) | free (fair-use) | — |
+| finra | none | free | — |
+| stocktwits | none | free | — |
+
+**Storing secrets — most secure first.** On any OS, put keys in the operating
+system's secret store via [keyring](https://pypi.org/project/keyring/) under
+the service name `tickerlens`:
+
+```bash
+backend/.venv/bin/python -m keyring set tickerlens <secret_name>   # macOS Keychain / Linux Secret Service
+```
+
+```bat
+backend\.venv\Scripts\python -m keyring set tickerlens <secret_name>   # Windows Credential Manager
+```
+
+Legacy macOS entries created with
+`security add-generic-password -s <secret_name> -a "$USER" -w` are still
+honored. Fallback: plain env vars, or `~/.tickerlens/.env` (written by the
+setup wizard, `chmod 600`) — config.py merges `.env` into the process
+environment at startup.
+
+**Precedence** (first hit wins): keyring → legacy macOS Keychain → environment
+(`.env` feeds the environment). Footgun: if you rotate a key in `.env` but a
+stale copy still sits in keyring, the stale keyring entry **wins** — delete it
+(`python -m keyring del tickerlens <secret_name>`) or set
+`TICKERLENS_NO_KEYRING=1` to bypass the OS stores entirely.
+
 **Different broker or data service?** Open this repo with an AI coding agent
 and point it at **`CLAUDE.md`** — it contains the full provider contract
 (capability shapes, conventions, tests) so the agent can implement your
@@ -60,7 +100,8 @@ cannot place orders. Research & education only. **Not investment advice.**
 
 ## Docs
 
-- `CLAUDE.md` — AI-session manual: architecture, provider contract, setup help
+- `CLAUDE.md` — AI-session manual: architecture, provider contract, setup help (canonical)
+- `GEMINI.md` — the same constitution + guides for Gemini CLI users
 - `OSS_DESIGN.md` — the architecture rationale
 - `DEMO.md` — temporary public-URL demos (Cloudflare quick tunnel)
 - In-app **Guide** tab — user manual + full glossary

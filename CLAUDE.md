@@ -41,7 +41,9 @@ backend/
   config.py            instance dir, config.toml, capability map, TTLs, flags
   providers/
     registry.py        capability → provider resolution  ← START HERE
-    base.py            ProviderError + get_secret (env → ~/.tickerlens/.env → keychain)
+    base.py            ProviderError + get_secret (keyring → legacy macOS
+                       Keychain → env; ~/.tickerlens/.env pre-seeds env via
+                       config.py) + SUBSCRIPTIONS (per-provider secrets registry)
     schwab.py finnhub.py stocktwits.py edgar.py finra.py yfinance.py mock.py
   analysis/            composer (per-section assembly), vol_bands (+engines),
                        setup_score, breach, premium_lens, earnings_moves,
@@ -76,7 +78,16 @@ User says: "I use Alpaca / Tradier / IBKR / Polygon / Tiingo / …". Steps:
    - errors: `raise ProviderError(reason, detail)` with reason ∈
      `auth_expired | rate_limited | not_found | no_data | unavailable`
    - secrets via `providers.base.get_secret("<keychain-service>", "<ENV_VAR>")`;
-     document the ENV_VAR name for the user's `~/.tickerlens/.env`
+     document the ENV_VAR name for the user's `~/.tickerlens/.env`.
+     Resolution precedence (first hit wins): keyring service `"tickerlens"` →
+     legacy macOS Keychain (`security`) → `os.environ` (config.py merges
+     `~/.tickerlens/.env` into the environment at import). A stale keyring
+     entry shadows a rotated .env key; `TICKERLENS_NO_KEYRING=1` skips both
+     keychain steps (tests set it in conftest.py).
+   - **add a `SUBSCRIPTIONS` entry** in `providers/base.py` — it is THE
+     registry of individual subscriptions (`label`, `secrets` as
+     `(secret_name, ENV_VAR)` pairs, `cost`, `signup`); the setup wizard and
+     README derive key lists from it, so never hardcode key names elsewhere
    - respect the service's rate limits (sleep/retry-once on 429 like finnhub.py)
    - heavy SDKs: import lazily inside functions (see yfinance.py) and keep
      them OUT of core requirements.txt — tell the user the pip install line
