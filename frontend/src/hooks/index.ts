@@ -275,8 +275,31 @@ export function useHealth() {
 export function useDiscussionStream() {
   const qc = useQueryClient()
   useEffect(() => {
-    const es = new EventSource('/api/discussions/stream')
-    es.onmessage = (e) => {
+    // EventSource does NOT retry after a CLOSED error (e.g. a backend
+    // restart/auto-reload) — without this loop the live stream dies silently
+    // and discussions/stances stop updating until a browser refresh.
+    let es: EventSource | null = null
+    let retryMs = 1000
+    let closed = false
+    let timer: ReturnType<typeof setTimeout> | null = null
+
+    const connect = () => {
+      if (closed) return
+      es = new EventSource('/api/discussions/stream')
+      es.onopen = () => {
+        retryMs = 1000
+        // events may have been missed while disconnected — resync everything
+        // the stream is responsible for
+        qc.invalidateQueries({ queryKey: ['discussions'] })
+        qc.invalidateQueries({ queryKey: ['decisions'] })
+      }
+      es.onerror = () => {
+        es?.close()
+        if (closed) return
+        timer = setTimeout(connect, retryMs)
+        retryMs = Math.min(retryMs * 2, 15000)
+      }
+      es.onmessage = (e) => {
       let event: StreamEvent
       try {
         event = JSON.parse(e.data)
@@ -299,7 +322,13 @@ export function useDiscussionStream() {
           description: event.detail,
         })
       }
+      }
     }
-    return () => es.close()
+    connect()
+    return () => {
+      closed = true
+      if (timer) clearTimeout(timer)
+      es?.close()
+    }
   }, [qc])
 }
