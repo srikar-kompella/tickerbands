@@ -12,7 +12,7 @@ brew install cloudflared
 ## Run a demo (recommended: mock data)
 
 ```bash
-cd ~/Code/tickerlens
+cd <your tickerlens checkout>
 TICKERLENS_MOCK=1 ./demo.sh
 ```
 

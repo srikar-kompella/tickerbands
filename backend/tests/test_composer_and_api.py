@@ -166,7 +166,9 @@ def test_api_prompt_contract(client):
     assert r.status_code == 200
     p = r.json()["prompt"]
     # the watcher's parser depends on these exact instructions:
-    assert "~/Code/tickerlens/discussions/AAPL/" in p
+    import config as _cfg
+    import os as _os
+    assert _os.path.join(_cfg.DISCUSSIONS_DIR, "AAPL") in p
     assert "ticker: AAPL" in p and "context_hash:" in p and "summary:" in p
     # honesty constraint baked into the prompt itself:
     assert "do NOT predict price direction" in p

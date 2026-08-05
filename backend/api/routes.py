@@ -9,6 +9,8 @@ from __future__ import annotations
 import datetime as dt
 import json
 
+import os
+
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -158,7 +160,7 @@ def build_claude_prompt(a: dict) -> str:
         "analysis only.",
         "",
         "## After the discussion — REQUIRED",
-        f"Write your analysis to `~/Code/tickerlens/discussions/{sym}/{now}.md` "
+        f"Write your analysis to `{os.path.join(config.DISCUSSIONS_DIR, sym, f'{now}.md')}` "
         "with EXACTLY this frontmatter structure (the app auto-ingests it).",
         "ALWAYS create a NEW file per discussion — never append to or edit a "
         "previous discussion file; each conversation is its own timeline entry.",
