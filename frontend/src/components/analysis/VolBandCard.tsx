@@ -49,7 +49,12 @@ export function VolBandCard({ a, glossary }: {
       priceLineVisible: false,
       lastValueVisible: true,
     })
-    line.setData(a.chart.map((p) => ({ time: p.date, value: p.close })))
+    // defensive: strictly-ascending unique times or setData throws and takes
+    // the whole card down — dedupe by date (last wins), sort ascending
+    const points = [...new Map(a.chart.map((p) => [p.date, p.close]))]
+      .sort(([a1], [b1]) => (a1 < b1 ? -1 : 1))
+      .map(([date, close]) => ({ time: date, value: close }))
+    line.setData(points)
 
     // Tomorrow's 80% range as labeled price lines off the last close.
     if (a.band) {

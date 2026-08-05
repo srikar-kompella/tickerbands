@@ -145,3 +145,42 @@ def test_stance_drift_small_move_stays_quiet():
 def test_stance_drift_none_passthrough():
     from analysis.composer import _stance_with_drift
     assert _stance_with_drift(None, [], None) is None
+
+
+# ── daily-candle normalization (duplicate-date crash regression) ──────────────
+
+def test_normalize_daily_collapses_duplicate_dates():
+    """Two Schwab candles mapping to the same date must collapse to ONE bar
+    (the later emission wins) — duplicates crashed the price chart."""
+    from providers.schwab import _normalize_daily
+    day_ms = 86_400_000
+    aug4 = 1_785_801_600_000  # 2026-08-04 00:00 UTC
+    candles = [
+        {"datetime": aug4 - day_ms, "close": 125.65, "open": 1, "high": 1, "low": 1, "volume": 10},
+        {"datetime": aug4, "close": 160.00, "open": 1, "high": 1, "low": 1, "volume": 10},
+        {"datetime": aug4 + 3_600_000, "close": 162.66, "open": 1, "high": 1, "low": 1, "volume": 20},
+    ]
+    out = _normalize_daily(candles, days=10)
+    dates = [b["date"] for b in out]
+    assert dates == sorted(set(dates)), "dates must be strictly ascending + unique"
+    assert out[-1]["date"] == "2026-08-04"
+    assert out[-1]["close"] == 162.66, "later candle for the same date wins"
+
+
+def test_normalize_daily_sorts_out_of_order_input():
+    from providers.schwab import _normalize_daily
+    candles = [
+        {"datetime": 1_785_801_600_000, "close": 2.0, "open": 0, "high": 0, "low": 0, "volume": 0},
+        {"datetime": 1_785_715_200_000, "close": 1.0, "open": 0, "high": 0, "low": 0, "volume": 0},
+    ]
+    out = _normalize_daily(candles, days=10)
+    assert [b["close"] for b in out] == [1.0, 2.0]
+
+
+def test_analyze_chart_dates_strictly_ascending(tmp_db, mock_mode):
+    """Contract the chart depends on, enforced end-to-end."""
+    from analysis import composer
+    chart = composer.analyze("NVDA")["chart"]
+    dates = [p["date"] for p in chart]
+    assert dates == sorted(dates)
+    assert len(dates) == len(set(dates))

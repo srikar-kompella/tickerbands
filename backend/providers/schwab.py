@@ -209,18 +209,27 @@ def fetch_history(symbol: str, days: int = HISTORY_DAYS) -> list[dict[str, Any]]
     if not candles:
         raise ProviderError("no_data", f"no history for {symbol}")
 
-    out = []
-    for c in candles[-days:]:
+    return _normalize_daily(candles, days)
+
+
+def _normalize_daily(candles: list[dict], days: int) -> list[dict[str, Any]]:
+    """Chronological, ONE bar per date. Schwab can emit a duplicate/partial
+    candle for the current session around the midnight rollover; two candles
+    collapsing to the same date crashed the chart (lightweight-charts rightly
+    asserts strictly-ascending unique times). Sort by raw epoch, keep the
+    LAST candle per date — the later emission is the settled one."""
+    by_date: dict[str, dict[str, Any]] = {}
+    for c in sorted(candles, key=lambda c: c.get("datetime", 0)):
         d = dt.datetime.fromtimestamp(c.get("datetime", 0) / 1000, dt.timezone.utc)
-        out.append({
+        by_date[d.date().isoformat()] = {
             "date": d.date().isoformat(),
             "open": float(c.get("open", 0.0)),
             "high": float(c.get("high", 0.0)),
             "low": float(c.get("low", 0.0)),
             "close": float(c.get("close", 0.0)),
             "volume": int(c.get("volume", 0)),
-        })
-    return out
+        }
+    return [by_date[k] for k in sorted(by_date)][-days:]
 
 
 # ─── options positioning ──────────────────────────────────────────────────────
