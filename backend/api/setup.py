@@ -39,7 +39,7 @@ PROVIDER_INFO = {
                 "keys": _keys("finnhub"),
                 "note": "Free key at finnhub.io/register."},
     "yfinance": {"label": "yfinance (no key — unofficial price data)",
-                 "keys": _keys("yfinance"), "note": "pip install yfinance"},
+                 "keys": _keys("yfinance"), "note": "bundled — works with zero setup"},
     "stocktwits": {"label": "StockTwits (no key — social sentiment)",
                    "keys": _keys("stocktwits"), "note": ""},
     "edgar": {"label": "SEC EDGAR (no key — insider filings)", "keys": _keys("edgar"),

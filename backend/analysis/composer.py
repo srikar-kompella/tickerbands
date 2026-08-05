@@ -296,7 +296,13 @@ def analyze(symbol: str, force: bool = False) -> dict[str, Any]:
     quote = sections["quote"].get("data") if sections["quote"].get("data") else None
     history = sections["history"].get("data") or []
     if quote is None and not history:
-        raise ProviderError("not_found", f"no data for '{symbol}'")
+        reasons = "; ".join(
+            f"{sec}: {sections[sec].get('error_reason', '?')}"
+            f" ({sections[sec].get('error_detail', '')[:120]})"
+            for sec in ("quote", "history")
+            if sections[sec].get("status") in ("unavailable", "disabled"))
+        raise ProviderError("not_found",
+                            f"no price data for '{symbol}' — {reasons or 'unknown'}")
 
     # ── news sentiment fallback chain (ask #3) ────────────────────────────────
     # Finnhub's aggregate endpoint (paid on some tiers) → else score the free

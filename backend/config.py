@@ -58,8 +58,10 @@ CONTACT_EMAIL = (_CONFIG.get("user", {}).get("contact_email") or None)
 # Override any of these in config.toml [capabilities]. "none" disables a
 # capability; dependent features degrade/hide via the per-section contract.
 CAPABILITY_DEFAULTS = {
-    "quotes": "schwab",
-    "daily_history": "schwab",
+    # Price data defaults to the KEYLESS tier-0 provider so a fresh clone
+    # works before any signup; the wizard upgrades these to a broker/feed.
+    "quotes": "yfinance",
+    "daily_history": "yfinance",
     "option_chain": "schwab",
     "account": "schwab",
     "fundamentals": "finnhub",

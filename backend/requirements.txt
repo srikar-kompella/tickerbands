@@ -9,6 +9,7 @@ python-frontmatter>=1.1
 pydantic>=2.7
 markdown>=3.6
 keyring>=25.0
+yfinance>=0.2.40   # tier-0 keyless quotes/history — the zero-signup first run
 
 
 # tests

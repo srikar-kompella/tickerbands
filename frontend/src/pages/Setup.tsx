@@ -50,8 +50,11 @@ export default function Setup({ onDone }: { onDone: () => void }) {
   if (!opts) return <div className="mx-auto max-w-2xl p-8"><Skeleton className="h-64 w-full" /></div>
 
   const chosenProviders = [...new Set(Object.values(caps))].filter((p) => p !== 'none')
+  // keys the current selection requires but the user hasn't typed — warn, don't block
+  // (they may already live in keyring / .env)
   const neededKeys = [...new Set(chosenProviders.flatMap(
     (p) => opts.provider_info[p]?.keys ?? []))]
+  const missingKeys = neededKeys.filter((k) => !(secrets[k] ?? '').trim())
 
   const runTest = async (p: string) => {
     setTests((t) => ({ ...t, [p]: null }))
@@ -129,7 +132,7 @@ export default function Setup({ onDone }: { onDone: () => void }) {
           {neededKeys.map((k) => (
             <input key={k} value={secrets[k] ?? ''} type="password"
               onChange={(e) => setSecrets({ ...secrets, [k]: e.target.value })}
-              placeholder={k}
+              placeholder={`${k} — paste your real key (there is no default)`}
               className="w-full rounded-lg border border-border bg-bg px-3 py-2 font-mono text-sm outline-none focus:border-accent/60" />
           ))}
         </div>
@@ -156,6 +159,15 @@ export default function Setup({ onDone }: { onDone: () => void }) {
           ))}
           <Badge className="text-[10px]">note: key-based tests pass only after Save (keys load then)</Badge>
         </div>
+        {missingKeys.length > 0 && (
+          <p className="mb-3 rounded-lg border border-yellow-500/30 bg-yellow-500/5 px-3 py-2 text-xs text-yellow-500">
+            No key entered for: <b>{missingKeys.join(', ')}</b>. You can still
+            save — but those providers will show as unavailable until you paste
+            a key here or store one via{' '}
+            <span className="font-mono">python -m keyring set tickerlens &lt;secret&gt;</span>.
+            Placeholders are NOT defaults.
+          </p>
+        )}
         <Button variant="accent" onClick={save}
           disabled={saving || !name.trim() || !email.includes('@')}>
           {saving ? 'Saving…' : 'Save & start researching'}

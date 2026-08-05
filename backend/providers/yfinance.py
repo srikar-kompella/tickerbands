@@ -61,14 +61,27 @@ def fetch_quote(symbol: str) -> dict[str, Any]:
         t = yf.Ticker(symbol)
         fi = getattr(t, "fast_info", None) or {}
         last = float(fi.get("last_price") or 0) or None
-        prev = float(fi.get("previous_close") or 0) or None
     except Exception:
-        last = prev = None
-    if last is None or prev is None:
-        bars = fetch_history(symbol, days=3)
-        if len(bars) < 2:
-            raise ProviderError("not_found", f"no quote for {symbol}")
-        last, prev = bars[-1]["close"], bars[-2]["close"]
+        last = None
+    # Previous close comes from the DAILY BARS, not fast_info — Yahoo's
+    # fast_info.previous_close is intermittently wrong (observed +29% fake
+    # day-changes). Bars are the same source the chart trusts.
+    bars = fetch_history(symbol, days=7)
+    if not bars and last is None:
+        raise ProviderError("not_found", f"no quote for {symbol}")
+    if last is None:
+        last = bars[-1]["close"]
+    import datetime as _dt
+    today = _dt.date.today().isoformat()
+    if len(bars) >= 2:
+        if bars[-1]["date"] == today:
+            prev = bars[-2]["close"]          # last belongs to today's session
+        elif abs(last - bars[-1]["close"]) / bars[-1]["close"] < 0.001:
+            prev = bars[-2]["close"]          # closed market: show last session's move
+        else:
+            prev = bars[-1]["close"]          # pre-market: vs latest completed close
+    else:
+        prev = last
     return {
         "symbol": symbol.upper(), "name": symbol.upper(), "last": last,
         "regular_last": last, "regular_change_pct": round((last / prev - 1) * 100, 2),

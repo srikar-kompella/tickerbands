@@ -35,7 +35,7 @@ def get_analysis(symbol: str, refresh: bool = Query(False)):
         return composer.analyze(symbol, force=refresh)
     except ProviderError as e:
         if e.reason == "not_found":
-            raise HTTPException(404, f"No data for '{symbol.upper()}'")
+            raise HTTPException(404, e.detail or f"No data for '{symbol.upper()}'")
         if e.reason == "auth_expired":
             raise HTTPException(503, f"Schwab auth: {e.detail} (run schwab-reauth)")
         raise HTTPException(502, f"{e.reason}: {e.detail}")
@@ -54,7 +54,7 @@ def get_report(symbol: str):
         analysis = composer.analyze(symbol)
     except ProviderError as e:
         if e.reason == "not_found":
-            raise HTTPException(404, f"No data for '{symbol.upper()}'")
+            raise HTTPException(404, e.detail or f"No data for '{symbol.upper()}'")
         raise HTTPException(502, f"{e.reason}: {e.detail}")
     discussions = list_discussions(symbol, limit=25)
     decisions = [d for d in decisions_review(_pv()["quote"])
