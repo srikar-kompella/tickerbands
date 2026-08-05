@@ -7,7 +7,10 @@ import './index.css'
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      refetchOnWindowFocus: false, // backend TTL cache is the freshness authority
+      // Refetch on focus: the backend TTL cache + per-key in-flight lock make
+      // these near-free (mostly server-side cache hits), and WITHOUT them a
+      // long-open tab freezes forever (the week-old-graph bug).
+      refetchOnWindowFocus: true,
       retry: 1,
     },
   },

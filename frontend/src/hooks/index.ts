@@ -14,6 +14,12 @@ export function useAnalysis(symbol: string | null) {
     enabled: !!symbol,
     staleTime: 30_000,     // backend cache is the real freshness authority (Q6)
     retry: 1,              // provider failures already degrade server-side
+    // Keep a mounted Analysis page alive: without this, a tab left open on a
+    // ticker never updates (focus refetch only fires on focus CHANGES).
+    // Backend TTLs absorb the cost — only quote (30s TTL) actually refetches
+    // upstream each minute; the rest are server-cache hits.
+    refetchInterval: 60_000,
+    refetchIntervalInBackground: false,
   })
 }
 
