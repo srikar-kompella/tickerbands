@@ -183,3 +183,11 @@ theme tokens in `index.css`; green/red are P&L-ONLY (accent is cyan);
 sections wrap in `SectionShell` (freshness + degradation for free). Keep
 `pytest` green and `npm run typecheck` clean; never commit anything from
 `~/.tickerlens/`. And re-read the constitution before shipping.
+
+## Session continuity (private notes)
+If `~/.tickerlens/notes/WORKLOG.md` exists, read it at session start and append
+a dated entry after meaningful work — it is the user's PRIVATE running log
+(lives in the instance dir, never in this public repo). Users migrating from
+another TickerLens installation bring it over via
+`backend/migrate_instance.py` (see README "Importing an existing instance").
+

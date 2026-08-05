@@ -107,3 +107,23 @@ cannot place orders. Research & education only. **Not investment advice.**
 - In-app **Guide** tab — user manual + full glossary
 
 License: Apache-2.0 (see LICENSE, NOTICE).
+
+## Importing an existing instance
+
+Moving from another TickerLens installation (or a private fork)? One command
+migrates your watchlist, score/portfolio/VRP history, discussions (with
+decision prices and stances intact), discovery candidates, settings, private
+notes, and your Schwab token — into `~/.tickerlens`, never into this repo:
+
+```bash
+cd backend
+python3 migrate_instance.py \
+  --source-db  /path/to/old/backend/tickerlens.db \
+  --source-discussions /path/to/old/discussions \
+  --source-discoveries /path/to/old/discoveries \
+  --source-repo /path/to/old \
+  --source-token /path/to/schwab_token.json
+```
+
+The source is opened read-only, the destination DB is backed up first, and
+reruns are idempotent. Add `--dry-run` to preview.
