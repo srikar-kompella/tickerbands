@@ -1,6 +1,6 @@
 // App shell — routing + cross-cutting concerns only (thin by spec §6).
 import { AnimatePresence, motion } from 'framer-motion'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Toaster } from 'sonner'
 import { CommandPalette } from '@/components/layout/CommandPalette'
@@ -15,8 +15,30 @@ import Portfolio from '@/pages/Portfolio'
 import Settings from '@/pages/Settings'
 import Watchlist from '@/pages/Watchlist'
 
+// URL ↔ state (survives refresh; ?symbol=PLTR&tab=analysis is shareable)
+const TAB_KEYS = new Set<string>(TABS.map((t) => t.key))
+
+function stateFromUrl(): { tab: TabKey; symbol: string | null } {
+  const q = new URLSearchParams(window.location.search)
+  const rawTab = q.get('tab') ?? 'analysis'
+  const rawSym = (q.get('symbol') ?? '').toUpperCase()
+  return {
+    tab: (TAB_KEYS.has(rawTab) ? rawTab : 'analysis') as TabKey,
+    symbol: /^[A-Z.\-]{1,10}$/.test(rawSym) ? rawSym : null,
+  }
+}
+
+function urlFor(tab: TabKey, symbol: string | null): string {
+  const q = new URLSearchParams()
+  if (tab !== 'analysis') q.set('tab', tab)
+  if (symbol) q.set('symbol', symbol)
+  const qs = q.toString()
+  return qs ? `?${qs}` : window.location.pathname
+}
+
 export default function App() {
-  const [tab, setTab] = useState<TabKey>('analysis')
+  const initial = stateFromUrl()
+  const [tab, setTabState] = useState<TabKey>(initial.tab)
   // First-run gate: no config → the setup wizard IS the app
   const { data: setupStatus, refetch: refetchSetup } = useQuery({
     queryKey: ['setup-status'],
@@ -28,7 +50,24 @@ export default function App() {
     queryFn: async () => (await fetch('/api/capabilities')).json(),
     enabled: setupStatus?.configured === true,
   })
-  const [symbol, setSymbol] = useState<string | null>(null)
+  const [symbol, setSymbol] = useState<string | null>(initial.symbol)
+
+  // tab switches replace (Back shouldn't walk every tab flip)
+  const setTab = (t: TabKey) => {
+    setTabState(t)
+    window.history.replaceState(null, '', urlFor(t, symbol))
+  }
+
+  // Back/Forward restore both tab and ticker
+  useEffect(() => {
+    const onPop = () => {
+      const st = stateFromUrl()
+      setTabState(st.tab)
+      setSymbol(st.symbol)
+    }
+    window.addEventListener('popstate', onPop)
+    return () => window.removeEventListener('popstate', onPop)
+  }, [])
 
   // SSE: discussions written by the user's agent appear in the UI within a second.
   useDiscussionStream()
@@ -41,8 +80,11 @@ export default function App() {
     t.key !== 'portfolio' || caps?.account?.available !== false)
 
   const analyze = (s: string) => {
-    setSymbol(s.toUpperCase())
-    setTab('analysis')
+    const sym = s.toUpperCase()
+    setSymbol(sym)
+    setTabState('analysis')
+    // push (not replace): Back walks your ticker research history
+    window.history.pushState(null, '', urlFor('analysis', sym))
   }
 
   return (
