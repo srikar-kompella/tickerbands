@@ -31,7 +31,9 @@ function stateFromUrl(): { tab: TabKey; symbol: string | null } {
 function urlFor(tab: TabKey, symbol: string | null): string {
   const q = new URLSearchParams()
   if (tab !== 'analysis') q.set('tab', tab)
-  if (symbol) q.set('symbol', symbol)
+  // symbol belongs to the Analysis view only — other tabs don't use it, so
+  // their URLs shouldn't claim it (it stays in memory for the tab-back trip)
+  if (symbol && tab === 'analysis') q.set('symbol', symbol)
   const qs = q.toString()
   return qs ? `?${qs}` : window.location.pathname
 }
@@ -63,7 +65,8 @@ export default function App() {
     const onPop = () => {
       const st = stateFromUrl()
       setTabState(st.tab)
-      setSymbol(st.symbol)
+      // only analysis URLs carry a symbol; keep the in-memory one otherwise
+      if (st.tab === 'analysis') setSymbol(st.symbol)
     }
     window.addEventListener('popstate', onPop)
     return () => window.removeEventListener('popstate', onPop)
