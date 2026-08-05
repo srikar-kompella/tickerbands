@@ -29,6 +29,16 @@ router = APIRouter(prefix="/api")
 
 # ─── analysis ──────────────────────────────────────────────────────────────────
 
+
+def _home_path(path: str) -> str:
+    """Display form of an instance path: '~/...' when under the user's home.
+    Portable across machines and — unlike a cwd-relative path — unambiguous
+    no matter which folder the CLI session runs in (a cwd-relative path once
+    sent a discussion into a repo checkout instead of the instance dir)."""
+    home = os.path.expanduser("~")
+    return "~" + path[len(home):] if path.startswith(home + os.sep) else path
+
+
 @router.get("/analysis/{symbol}")
 def get_analysis(symbol: str, refresh: bool = Query(False)):
     """The big one — every section for one ticker. `?refresh=true` = the
@@ -160,7 +170,9 @@ def build_claude_prompt(a: dict) -> str:
         "analysis only.",
         "",
         "## After the discussion — REQUIRED",
-        f"Write your analysis to `{os.path.join(config.DISCUSSIONS_DIR, sym, f'{now}.md')}` "
+        f"Write your analysis to `{_home_path(os.path.join(config.DISCUSSIONS_DIR, sym, f'{now}.md'))}` "
+        "(this path is under the TickerLens home — correct from ANY working "
+        "folder; do NOT write into a repo checkout) "
         "with EXACTLY this frontmatter structure (the app auto-ingests it).",
         "ALWAYS create a NEW file per discussion — never append to or edit a "
         "previous discussion file; each conversation is its own timeline entry.",

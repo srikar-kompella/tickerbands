@@ -168,7 +168,11 @@ def test_api_prompt_contract(client):
     # the watcher's parser depends on these exact instructions:
     import config as _cfg
     import os as _os
-    assert _os.path.join(_cfg.DISCUSSIONS_DIR, "AAPL") in p
+    full = _os.path.join(_cfg.DISCUSSIONS_DIR, "AAPL")
+    home = _os.path.expanduser("~")
+    shown = "~" + full[len(home):] if full.startswith(home + _os.sep) else full
+    assert shown in p, "prompt must show the home-anchored (~) instance path"
+    assert "ANY working folder" in p
     assert "ticker: AAPL" in p and "context_hash:" in p and "summary:" in p
     # honesty constraint baked into the prompt itself:
     assert "do NOT predict price direction" in p
