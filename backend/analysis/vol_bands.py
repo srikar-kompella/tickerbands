@@ -22,16 +22,42 @@ from typing import Any
 from config import BAND_Z, TRADING_DAYS
 
 
-def completed_bars(history: list[dict], today: dt.date | None = None) -> list[dict]:
-    """Drop any bar dated >= today.
+SESSION_END_NY = dt.time(16, 15)  # regular close 16:00 ET + settle buffer
+
+
+def completed_bars(history: list[dict], today: dt.date | None = None,
+                   now: dt.datetime | None = None) -> list[dict]:
+    """Drop IN-PROGRESS bars only.
 
     LOOKAHEAD_AUDIT F1: a partial same-day bar silently corrupts every derived
     signal (prev_close becomes a nowcast, volume_z collapses on the partial
-    bar). The experiment's pipeline never had this guard; TickerLens signals
-    are computed from completed sessions only, by construction.
+    bar). But a bar stops being partial when the session ends: after ~16:15
+    ET, today's bar IS a completed session and must count — before this fix,
+    every band/chart/score lagged a full session each evening (glaring on
+    earnings days: a +29% close with "tomorrow's range" still centered on
+    yesterday).
+
+    Semantics:
+      * explicit `today=` (tests/backtests) → strict `date < today`, unchanged.
+      * default (production) → bars before today always; today's bar included
+        once the NY clock passes SESSION_END_NY. Early closes (half-days) are
+        treated conservatively — today's bar waits until 16:15 ET regardless.
     """
-    cutoff = (today or dt.date.today()).isoformat()
-    return [b for b in history if b["date"] < cutoff]
+    if today is not None:
+        cutoff = today.isoformat()
+        return [b for b in history if b["date"] < cutoff]
+    try:
+        from zoneinfo import ZoneInfo
+        now_ny = now or dt.datetime.now(ZoneInfo("America/New_York"))
+    except Exception:              # zoneinfo/tzdata missing — fail safe (strict)
+        now_ny = None
+    if now_ny is None:
+        cutoff = dt.date.today().isoformat()
+        return [b for b in history if b["date"] < cutoff]
+    cutoff = now_ny.date().isoformat()
+    include_today = now_ny.time() >= SESSION_END_NY
+    return [b for b in history
+            if b["date"] < cutoff or (include_today and b["date"] == cutoff)]
 
 
 def realized_vol(closes: list[float], window: int) -> float:

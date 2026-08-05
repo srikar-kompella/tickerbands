@@ -76,3 +76,30 @@ def test_parallel_analyze_one_failure_degrades_alone(tmp_db, mock_mode, monkeypa
     assert s["social"]["error_reason"] == "rate_limited"
     assert s["quote"]["status"] == "ok"          # neighbors unharmed
     assert s["history"]["status"] == "ok"
+
+
+# ── completed_bars session-close semantics (the evening-lag fix) ──────────────
+
+def test_completed_bars_includes_today_after_close():
+    import datetime as dt
+    from zoneinfo import ZoneInfo
+    from analysis.vol_bands import completed_bars
+    ny = ZoneInfo("America/New_York")
+    bars = [{"date": "2026-08-03", "close": 125.65},
+            {"date": "2026-08-04", "close": 162.66}]
+    evening = dt.datetime(2026, 8, 4, 20, 0, tzinfo=ny)
+    out = completed_bars(bars, now=evening)
+    assert out[-1]["date"] == "2026-08-04", "post-close bar must count"
+    morning = dt.datetime(2026, 8, 4, 10, 30, tzinfo=ny)
+    out = completed_bars(bars, now=morning)
+    assert out[-1]["date"] == "2026-08-03", "intraday partial bar must drop"
+    just_before = dt.datetime(2026, 8, 4, 16, 14, tzinfo=ny)
+    assert completed_bars(bars, now=just_before)[-1]["date"] == "2026-08-03"
+
+
+def test_completed_bars_explicit_today_stays_strict():
+    import datetime as dt
+    from analysis.vol_bands import completed_bars
+    bars = [{"date": "2026-08-03"}, {"date": "2026-08-04"}]
+    out = completed_bars(bars, today=dt.date(2026, 8, 4))
+    assert [b["date"] for b in out] == ["2026-08-03"]
