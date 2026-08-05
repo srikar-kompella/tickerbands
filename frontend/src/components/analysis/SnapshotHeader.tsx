@@ -110,7 +110,7 @@ export function SnapshotHeader({ a, onRefresh, refreshing, onAskClaude, watched,
           </div>
           {a.claude_stance ? (
             <span className="mt-0.5 inline-flex items-center gap-1.5"
-              title={`${a.claude_stance.stance_note ?? ''}\n${a.claude_stance.created_ts.slice(0, 10)}${a.claude_stance.context_hash && a.claude_stance.context_hash !== a.context_hash ? ' — data has moved since this call' : ''}`}>
+              title={`${a.claude_stance.stance_note ?? ''}\n${a.claude_stance.created_ts.slice(0, 10)}${a.claude_stance.drift_material ? ' — price has moved beyond the expected range since this call' : ''}`}>
               <Badge tone={
                 a.claude_stance.stance === 'buy' ? 'up'
                   : a.claude_stance.stance === 'sell' || a.claude_stance.stance === 'trim' ? 'down'
@@ -120,7 +120,8 @@ export function SnapshotHeader({ a, onRefresh, refreshing, onAskClaude, watched,
               </Badge>
               <span className="text-[10px] text-faint tnum">
                 {a.claude_stance.created_ts.slice(5, 10)}
-                {a.claude_stance.context_hash && a.claude_stance.context_hash !== a.context_hash && ' · stale'}
+                {a.claude_stance.drift_material && a.claude_stance.drift_pct != null &&
+                  ` · price ${a.claude_stance.drift_pct > 0 ? '+' : ''}${a.claude_stance.drift_pct}% since`}
               </span>
               {a.claude_stance.stance === 'buy' && a.bottom_context && (
                 <Badge tone={a.bottom_context.bottom_decile ? 'accent' : 'warn'}

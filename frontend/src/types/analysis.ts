@@ -164,6 +164,8 @@ export interface ClaudeStance {
   stance_note: string | null
   context_hash: string | null
   created_ts: string
+  drift_pct?: number | null
+  drift_material?: boolean
 }
 
 export interface Headline {

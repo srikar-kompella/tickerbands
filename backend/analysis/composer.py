@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import math
 import json
 import os
 from typing import Any, Callable  # noqa: F401
@@ -466,7 +467,8 @@ def analyze(symbol: str, force: bool = False) -> dict[str, Any]:
         "options": sections["options"].get("data"),
         "news_sentiment": news_data,
         "claude_news": _latest_claude_news(symbol),
-        "claude_stance": _latest_claude_stance(symbol),
+        "claude_stance": _stance_with_drift(
+            _latest_claude_stance(symbol), bars, band),
         "headlines": sections["headlines"].get("data"),
         "earnings_move": earnings_move,
         "pead": pead,
@@ -482,6 +484,38 @@ def analyze(symbol: str, force: bool = False) -> dict[str, Any]:
 
     _touch_watchlist(symbol)
     return payload
+
+
+def _stance_with_drift(stance: dict | None, bars: list[dict],
+                       band: dict | None) -> dict | None:
+    """Materiality beats checksums: a hash-equality 'stale' flag fires on ANY
+    daily drift, so it is permanently on and therefore meaningless. Instead we
+    report how far price actually moved since the stance was recorded, and
+    flag it only when the move exceeds the band's own vol-scaled expectation
+    (halfwidth × √t trading days) — the same math the band is built on."""
+    if not stance or not bars:
+        return stance
+    try:
+        then_date = str(stance.get("created_ts") or "")[:10]
+        prior = [b for b in bars if b["date"] <= then_date]
+        if not prior or not then_date:
+            return stance
+        then_close, now_close = prior[-1]["close"], bars[-1]["close"]
+        if not then_close:
+            return stance
+        drift = (now_close / then_close - 1) * 100
+        cal_days = (dt.date.fromisoformat(bars[-1]["date"])
+                    - dt.date.fromisoformat(then_date)).days
+        tdays = max(1, round(cal_days * 5 / 7))
+        halfwidth_pct = (band or {}).get("half_width_pct")
+        stance = dict(stance)
+        stance["drift_pct"] = round(drift, 1)
+        stance["drift_material"] = (
+            abs(drift) > halfwidth_pct * math.sqrt(tdays)
+            if halfwidth_pct else abs(drift) > 5.0)
+    except Exception:
+        return stance
+    return stance
 
 
 def _latest_claude_stance(symbol: str) -> dict | None:

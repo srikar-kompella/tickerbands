@@ -103,3 +103,45 @@ def test_completed_bars_explicit_today_stays_strict():
     bars = [{"date": "2026-08-03"}, {"date": "2026-08-04"}]
     out = completed_bars(bars, today=dt.date(2026, 8, 4))
     assert [b["date"] for b in out] == ["2026-08-03"]
+
+
+# ── stance drift materiality (replaces checksum staleness) ────────────────────
+
+def test_stance_drift_same_day_not_material():
+    """A stance recorded after today's close shows ~0 drift — the checksum
+    approach wrongly flagged it 'stale' the moment the band recentered."""
+    from analysis.composer import _stance_with_drift
+    bars = [{"date": "2026-08-03", "close": 125.65},
+            {"date": "2026-08-04", "close": 162.66}]
+    band = {"half_width_pct": 3.77}
+    st = _stance_with_drift({"stance": "hold", "created_ts": "2026-08-04T23:51:04"},
+                            bars, band)
+    assert st["drift_pct"] == 0.0
+    assert st["drift_material"] is False
+
+
+def test_stance_drift_material_when_beyond_band():
+    from analysis.composer import _stance_with_drift
+    bars = [{"date": "2026-07-19", "close": 100.0},
+            {"date": "2026-08-04", "close": 120.0}]
+    band = {"half_width_pct": 2.0}
+    st = _stance_with_drift({"stance": "hold", "created_ts": "2026-07-19T10:00:00"},
+                            bars, band)
+    # 20% move vs 2%×√11 ≈ 6.6% expectation → clearly material
+    assert st["drift_pct"] == 20.0
+    assert st["drift_material"] is True
+
+
+def test_stance_drift_small_move_stays_quiet():
+    from analysis.composer import _stance_with_drift
+    bars = [{"date": "2026-07-28", "close": 100.0},
+            {"date": "2026-08-04", "close": 101.5}]
+    band = {"half_width_pct": 2.0}
+    st = _stance_with_drift({"stance": "buy", "created_ts": "2026-07-28T10:00:00"},
+                            bars, band)
+    assert st["drift_material"] is False  # 1.5% < 2%×√5
+
+
+def test_stance_drift_none_passthrough():
+    from analysis.composer import _stance_with_drift
+    assert _stance_with_drift(None, [], None) is None
