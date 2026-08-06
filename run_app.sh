@@ -39,7 +39,7 @@ fi
 # the ports bound and the next start dies with "Address already in use" —
 # these ports are ours by contract, so clear them before starting.
 for PORT in 8001 5174; do
-  STALE=$(lsof -ti :$PORT 2>/dev/null || true)
+  STALE=$(lsof -ti tcp:$PORT -sTCP:LISTEN 2>/dev/null || true)  # LISTEN only — never kill clients (a browser holds sockets here too)
   if [ -n "$STALE" ]; then
     echo "▶ clearing stale process on :$PORT (pid $STALE)"
     kill $STALE 2>/dev/null || true
