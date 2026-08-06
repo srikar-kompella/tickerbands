@@ -3,7 +3,7 @@
 // — every row carries its evidence, reasoning, and dates. Click → Analysis.
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Check, Compass, Eye, RefreshCw, TerminalSquare, X as XIcon } from 'lucide-react'
+import { FileDown, Check, Compass, Eye, RefreshCw, TerminalSquare, X as XIcon } from 'lucide-react'
 import { toast } from 'sonner'
 import { fmtDate, fmtMarketCap } from '@/lib/format'
 import { cn } from '@/lib/utils'
@@ -70,6 +70,10 @@ export default function Discover({ onAnalyze }: { onAnalyze: (s: string) => void
         </Button>
         <Button onClick={() => setPromptOpen(true)}>
           <TerminalSquare className="h-4 w-4" /> Web-sweep prompt
+        </Button>
+        <Button onClick={() => window.open('/api/discovery/report', '_blank')}
+          title="Export the candidate digest as a printable PDF">
+          <FileDown className="h-4 w-4" /> Export
         </Button>
         <label className="ml-auto flex items-center gap-1.5 text-xs text-muted">
           <input type="checkbox" checked={showDismissed}

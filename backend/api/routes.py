@@ -12,7 +12,7 @@ import json
 import os
 
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import StreamingResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 import config
@@ -419,6 +419,15 @@ def import_schwab_watchlist():
         added += _add_watch_symbols(wl["symbols"], f"schwab:{wl['name'][:20]}")
     return {"ok": True, "added": added,
             "lists": [{"name": w["name"], "count": len(w["symbols"])} for w in lists]}
+
+
+@router.get("/discovery/report")
+def discovery_report():
+    """Printable Discover digest (same open-in-tab → auto-print flow as the
+    analysis report)."""
+    from analysis.discovery import list_candidates
+    from api.report import build_discover_html
+    return HTMLResponse(build_discover_html(list_candidates()))
 
 
 @router.get("/discovery")

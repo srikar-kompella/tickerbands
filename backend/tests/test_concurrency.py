@@ -184,3 +184,29 @@ def test_analyze_chart_dates_strictly_ascending(tmp_db, mock_mode):
     dates = [p["date"] for p in chart]
     assert dates == sorted(dates)
     assert len(dates) == len(set(dates))
+
+
+# ── Discover digest export ────────────────────────────────────────────────────
+
+def test_discover_report_html_lists_candidates(tmp_db):
+    from analysis.discovery import upsert_candidate, list_candidates
+    from api.report import build_discover_html
+    upsert_candidate("ERII", "insider_cluster", "2 insiders bought within 14d",
+                     market_cap_m=1200)
+    upsert_candidate("ERII", "short_interest", "SI fell 22% period-over-period")
+    html = build_discover_html(list_candidates())
+    assert "ERII" in html and "$1.2B" in html
+    assert "convergence" in html          # ≥2 sources badge
+    assert "not" in html.lower() and "recommendation" in html.lower()
+    assert "TickerLens_Discover_" in html  # save-as-PDF filename via <title>
+
+
+def test_discover_report_route_empty_ok(tmp_db, mock_mode, tmp_discussions, monkeypatch):
+    import config as cfg
+    monkeypatch.setattr(cfg, "DISCUSSIONS_DIR", str(tmp_discussions))
+    from fastapi.testclient import TestClient
+    from app import app
+    with TestClient(app) as client:
+        r = client.get("/api/discovery/report")
+        assert r.status_code == 200
+        assert "No active candidates" in r.text
