@@ -35,6 +35,18 @@ if [ ! -f "$NODE_STAMP" ] || [ "$ROOT/frontend/package.json" -nt "$NODE_STAMP" ]
   touch "$NODE_STAMP"
 fi
 
+# A previous instance that wasn't Ctrl-C'd (e.g. terminal window closed) keeps
+# the ports bound and the next start dies with "Address already in use" —
+# these ports are ours by contract, so clear them before starting.
+for PORT in 8001 5174; do
+  STALE=$(lsof -ti :$PORT 2>/dev/null || true)
+  if [ -n "$STALE" ]; then
+    echo "▶ clearing stale process on :$PORT (pid $STALE)"
+    kill $STALE 2>/dev/null || true
+    sleep 1
+  fi
+done
+
 echo "▶ Backend  : http://localhost:8001  (docs at /docs)"
 echo "▶ Frontend : http://localhost:5174"
 [ -n "$TICKERLENS_MOCK" ] && echo "▶ MOCK MODE — deterministic fake data, no live APIs"
@@ -57,5 +69,5 @@ if [ -z "$TICKERLENS_NO_OPEN" ] && command -v open >/dev/null; then
     done ) &
 fi
 
-trap 'echo; echo "stopping…"; kill $BACK $FRONT 2>/dev/null' INT TERM
+trap 'echo; echo "stopping…"; kill $BACK $FRONT 2>/dev/null' INT TERM EXIT
 wait
