@@ -38,13 +38,18 @@ fi
 # A previous instance that wasn't Ctrl-C'd (e.g. terminal window closed) keeps
 # the ports bound and the next start dies with "Address already in use" —
 # these ports are ours by contract, so clear them before starting.
+# Kill by command pattern FIRST: killing only the listener leaves uvicorn's
+# reloader parent alive, which instantly respawns it (observed in the wild).
+pkill -f "uvicorn app:app --port 8001" 2>/dev/null && sleep 1 || true
 for PORT in 8001 5174; do
-  STALE=$(lsof -ti tcp:$PORT -sTCP:LISTEN 2>/dev/null || true)  # LISTEN only — never kill clients (a browser holds sockets here too)
-  if [ -n "$STALE" ]; then
-    echo "▶ clearing stale process on :$PORT (pid $STALE)"
+  for _try in 1 2 3; do
+    STALE=$(lsof -ti tcp:$PORT -sTCP:LISTEN 2>/dev/null || true)  # LISTEN only — never kill clients
+    [ -z "$STALE" ] && break
+    echo "▶ clearing stale process on :$PORT (pid $STALE, attempt $_try)"
     kill $STALE 2>/dev/null || true
     sleep 1
-  fi
+    [ "$_try" = 3 ] && kill -9 $STALE 2>/dev/null || true
+  done
 done
 
 echo "▶ Backend  : http://localhost:8001  (docs at /docs)"

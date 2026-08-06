@@ -80,21 +80,58 @@ def get_secret(keychain_service: str, env_name: str) -> str | None:
     (tests do this so no test ever touches an OS secret store).
     """
     if not _no_keyring():
-        try:
-            import keyring  # lazy: optional dependency
-        except ImportError:
-            keyring = None
-        if keyring is not None:
-            try:
-                val = keyring.get_password("tickerlens", keychain_service)
-                if val:
-                    return val
-            except Exception:
-                pass  # locked/absent backend — fall through
-        val = from_keychain(keychain_service)
+        if keychain_service in _SECRET_CACHE:
+            return _SECRET_CACHE[keychain_service]
+        val = _timed(lambda: _keyring_get(keychain_service))
         if val:
+            _SECRET_CACHE[keychain_service] = val
+            return val
+        val = _timed(lambda: from_keychain(keychain_service))
+        if val:
+            _SECRET_CACHE[keychain_service] = val
             return val
     return os.environ.get(env_name)
+
+
+# Secrets are static per process — hit the OS store once per key, then serve
+# from memory. (Before this cache, EVERY api call re-queried the Keychain.)
+_SECRET_CACHE: dict[str, str] = {}
+_STORE_BLOCKED = False
+_STORE_TIMEOUT_S = 2.0
+
+
+def _keyring_get(name: str) -> str | None:
+    try:
+        import keyring  # lazy: optional dependency
+    except ImportError:
+        return None
+    try:
+        return keyring.get_password("tickerlens", name)
+    except Exception:
+        return None  # locked/absent backend — fall through
+
+
+def _timed(fn) -> str | None:
+    """OS secret stores can BLOCK on a hidden permission dialog (macOS: "Python
+    wants to access key ... in your keychain"), hanging every request that
+    resolves a secret. Run the lookup on a worker thread with a hard timeout;
+    on the first stall, disable the store layers for this process (env still
+    works) rather than freezing the app. A restart re-enables them."""
+    global _STORE_BLOCKED
+    if _STORE_BLOCKED:
+        return None
+    import queue as _q
+    import threading as _t
+    box: _q.Queue = _q.Queue(maxsize=1)
+    _t.Thread(target=lambda: box.put(fn()), daemon=True).start()
+    try:
+        return box.get(timeout=_STORE_TIMEOUT_S)
+    except _q.Empty:
+        _STORE_BLOCKED = True
+        print("[tickerlens] WARNING: OS secret store not answering (hidden "
+              "keychain permission dialog?) — falling back to env for this "
+              "run. Approve the dialog and restart to re-enable.")
+        return None
 
 
 # ─── SUBSCRIPTIONS — THE registry of individual subscriptions ──────────────────

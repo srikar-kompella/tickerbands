@@ -56,3 +56,14 @@ def write_md(dirpath, ticker, name, frontmatter_lines, body="# Analysis\n\nSolid
     fm = "\n".join(frontmatter_lines)
     path.write_text(f"---\n{fm}\n---\n{body}\n")
     return str(path)
+
+
+@pytest.fixture(autouse=True)
+def _clean_secret_store_state():
+    """The in-process secret cache + stall flag must never leak between tests."""
+    from providers import base
+    base._SECRET_CACHE.clear()
+    base._STORE_BLOCKED = False
+    yield
+    base._SECRET_CACHE.clear()
+    base._STORE_BLOCKED = False

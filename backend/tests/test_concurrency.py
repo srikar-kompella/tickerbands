@@ -210,3 +210,54 @@ def test_discover_report_route_empty_ok(tmp_db, mock_mode, tmp_discussions, monk
         r = client.get("/api/discovery/report")
         assert r.status_code == 200
         assert "No active candidates" in r.text
+
+
+# ── secret-store stall protection ─────────────────────────────────────────────
+
+def test_hanging_secret_store_cannot_stall_requests(monkeypatch):
+    """A blocked OS keychain (hidden permission dialog) must degrade to env
+    within the timeout — and disable itself for the rest of the process."""
+    import sys
+    import time as _time
+    from providers import base
+
+    class HangingKeyring:
+        @staticmethod
+        def get_password(service, name):
+            _time.sleep(30)  # simulates a blocking permission dialog
+
+    monkeypatch.setitem(sys.modules, "keyring", HangingKeyring())
+    monkeypatch.setattr(base, "from_keychain", lambda n: None)
+    monkeypatch.delenv("TICKERLENS_NO_KEYRING", raising=False)
+    monkeypatch.setenv("STALL_ENV_KEY", "from-env")
+    monkeypatch.setattr(base, "_STORE_BLOCKED", False)
+    monkeypatch.setattr(base, "_STORE_TIMEOUT_S", 0.3)
+
+    t0 = _time.monotonic()
+    assert base.get_secret("stall_key", "STALL_ENV_KEY") == "from-env"
+    assert _time.monotonic() - t0 < 2.0, "must not wait on the store"
+    # second call: layer disabled, instant
+    t0 = _time.monotonic()
+    assert base.get_secret("stall_key2", "STALL_ENV_KEY") == "from-env"
+    assert _time.monotonic() - t0 < 0.1
+
+
+def test_secret_cache_hits_store_once(monkeypatch):
+    import sys
+    from providers import base
+    calls = []
+
+    class CountingKeyring:
+        @staticmethod
+        def get_password(service, name):
+            calls.append(name)
+            return "sekret"
+
+    monkeypatch.setitem(sys.modules, "keyring", CountingKeyring())
+    monkeypatch.delenv("TICKERLENS_NO_KEYRING", raising=False)
+    monkeypatch.setattr(base, "_STORE_BLOCKED", False)
+    base._SECRET_CACHE.pop("cache_key", None)
+    assert base.get_secret("cache_key", "X") == "sekret"
+    assert base.get_secret("cache_key", "X") == "sekret"
+    assert calls == ["cache_key"], "keychain must be consulted exactly once"
+    base._SECRET_CACHE.pop("cache_key", None)
