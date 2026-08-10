@@ -4,6 +4,7 @@
 // carries prior-discussion continuity from the backend).
 import { Scale, TerminalSquare } from 'lucide-react'
 import { useMemo, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { AskClaudeModal } from '@/components/discussions/AskClaudeModal'
 import { DiscussionTimeline } from '@/components/discussions/DiscussionTimeline'
 import { Badge, Button, Card, CardTitle, EmptyState, SkeletonCard } from '@/components/ui'
@@ -12,6 +13,93 @@ import { cn } from '@/lib/utils'
 import { useDecisions, useDiscussions } from '@/hooks'
 
 // ─── P3: the decision journal — your calls vs what actually happened ───────────
+
+async function j<T>(path: string, init?: RequestInit): Promise<T> {
+  const r = await fetch(path, init)
+  if (!r.ok) throw new Error(`${path}: HTTP ${r.status}`)
+  return r.json()
+}
+
+interface ScorecardRow {
+  ticker: string; stance: string; horizon: string | null; note: string | null
+  date: string; days_elapsed: number | null
+  price_then: number | null; price_now: number | null
+  return_pct: number | null; spy_return_pct: number | null
+  excess_pct: number | null; working: boolean | null
+}
+interface Scorecard {
+  rows: ScorecardRow[]
+  summary: Record<string, { n: number; avg_excess_pct: number; median_excess_pct: number }>
+  n_scored: number
+  caveat: string
+}
+
+function ScorecardView() {
+  const { data, isLoading } = useQuery({
+    queryKey: ['stance-scorecard'],
+    queryFn: () => j<Scorecard>('/api/stances/scorecard'),
+    staleTime: 60_000,
+  })
+  if (isLoading) return <SkeletonCard lines={5} />
+  if (!data?.rows.length) {
+    return (
+      <EmptyState icon={<Scale className="h-7 w-7" />} title="No stances to score yet"
+        body="Each research session's stance (buy / hold / watch / trim / sell) is tracked here against what price and SPY did afterwards — the only honest way to audit research judgment." />
+    )
+  }
+  const tone = (st: string) =>
+    st === 'buy' ? 'up' : st === 'sell' || st === 'trim' ? 'down' : 'neutral'
+  return (
+    <Card>
+      <CardTitle>Stance scorecard — every call vs what happened (excess over SPY)</CardTitle>
+      <div className="mb-3 flex flex-wrap gap-4">
+        {(Object.entries(data.summary) as [string, { n: number; avg_excess_pct: number; median_excess_pct: number }][]).map(([st, sm]) => (
+          <div key={st} className="rounded-lg border border-border px-3 py-1.5 text-xs">
+            <Badge tone={tone(st)}>{st}</Badge>
+            <span className="ml-2 text-muted">n={sm.n}</span>
+            <span className={cn('ml-2 font-semibold tnum', plColor(sm.avg_excess_pct))}>
+              {fmtPct(sm.avg_excess_pct, 1, true)} avg excess
+            </span>
+          </div>
+        ))}
+      </div>
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="text-left text-[10px] uppercase tracking-wide text-faint">
+            <th className="pb-2 font-medium">When</th>
+            <th className="pb-2 font-medium">Ticker</th>
+            <th className="pb-2 font-medium">Stance</th>
+            <th className="pb-2 text-right font-medium">Then</th>
+            <th className="pb-2 text-right font-medium">Now</th>
+            <th className="pb-2 text-right font-medium">Return</th>
+            <th className="pb-2 text-right font-medium">SPY</th>
+            <th className="pb-2 text-right font-medium">Excess</th>
+          </tr>
+        </thead>
+        <tbody>
+          {data.rows.map((r: ScorecardRow, i: number) => (
+            <tr key={i} className="border-t border-border/60" title={r.note ?? ''}>
+              <td className="py-2 text-muted tnum">{r.date}
+                {r.days_elapsed != null && <span className="text-faint"> · {r.days_elapsed}d</span>}</td>
+              <td className="py-2 font-bold">{r.ticker}</td>
+              <td className="py-2"><Badge tone={tone(r.stance)}>{r.stance}</Badge>
+                {r.horizon && <span className="ml-1 text-[10px] text-faint">{r.horizon}</span>}</td>
+              <td className="tnum py-2 text-right">{fmtMoney(r.price_then)}</td>
+              <td className="tnum py-2 text-right">{fmtMoney(r.price_now)}</td>
+              <td className={cn('tnum py-2 text-right', plColor(r.return_pct))}>{fmtPct(r.return_pct, 1, true)}</td>
+              <td className="tnum py-2 text-right text-muted">{fmtPct(r.spy_return_pct, 1, true)}</td>
+              <td className={cn('tnum py-2 text-right font-semibold', plColor(r.excess_pct))}>
+                {fmtPct(r.excess_pct, 1, true)}
+                {r.working != null && (r.working ? ' ✓' : ' ✗')}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="mt-2 text-[10px] text-faint">{data.caveat}</p>
+    </Card>
+  )
+}
 
 function DecisionsView() {
   const { data: rows, isLoading } = useDecisions()
@@ -65,7 +153,7 @@ export default function Discussions() {
   const { data, isLoading } = useDiscussions()
   const [ticker, setTicker] = useState<string | null>(null)
   const [promptOpen, setPromptOpen] = useState(false)
-  const [view, setView] = useState<'timeline' | 'decisions'>('timeline')
+  const [view, setView] = useState<'timeline' | 'decisions' | 'scorecard'>('timeline')
 
   const tickers = useMemo(
     () => Array.from(new Set((data ?? []).map((d) => d.ticker))).sort(),
@@ -80,7 +168,7 @@ export default function Discussions() {
     <div>
       {/* Timeline | Decisions segmented toggle (P3) */}
       <div className="mb-4 inline-flex rounded-lg border border-border bg-surface p-0.5">
-        {(['timeline', 'decisions'] as const).map((v) => (
+        {(['timeline', 'decisions', 'scorecard'] as const).map((v) => (
           <button key={v} onClick={() => setView(v)}
             className={cn('rounded-md px-3 py-1 text-sm capitalize transition-colors',
               view === v ? 'bg-surface-3 text-text' : 'text-muted hover:text-text')}>
@@ -90,6 +178,7 @@ export default function Discussions() {
       </div>
 
       {view === 'decisions' && <DecisionsView />}
+      {view === 'scorecard' && <ScorecardView />}
 
       {view === 'timeline' && <>
       {tickers.length > 0 && (

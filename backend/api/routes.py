@@ -261,6 +261,44 @@ def portfolio_income_view(refresh: bool = Query(False)):
     return portfolio_income(account, _pv()["fundamentals"], force=refresh)
 
 
+@router.get("/stances/scorecard")
+def stances_scorecard():
+    """Forward outcome audit of every recorded research stance vs SPY.
+    The honest answer to "is the algorithm accurate": there is no algorithm —
+    stances are dated judgments, and this tracks how each aged."""
+    from analysis.scorecard import score_stances
+    from cache.store import get_or_fetch
+    from db import connect
+
+    conn = connect()
+    try:
+        stances = [dict(r) for r in conn.execute(
+            "SELECT ticker, stance, stance_horizon, stance_note, created_ts "
+            "FROM claude_discussions WHERE stance IS NOT NULL "
+            "ORDER BY created_ts")]
+    finally:
+        conn.close()
+    if not stances:
+        return {"rows": [], "summary": {}, "n_scored": 0,
+                "caveat": "No stances recorded yet — run research sessions."}
+
+    hist = _pv()["history"]
+    bars_by_symbol: dict = {}
+    for sym in sorted({s["ticker"].upper() for s in stances}):
+        try:
+            bars_by_symbol[sym] = get_or_fetch(
+                f"history:{sym}", config.TTL["history"],
+                lambda sym=sym: hist(sym))["data"]
+        except ProviderError:
+            bars_by_symbol[sym] = []
+    try:
+        spy = get_or_fetch(f"history:SPY", config.TTL["history"],
+                           lambda: hist("SPY"))["data"]
+    except ProviderError:
+        spy = []
+    return score_stances(stances, bars_by_symbol, spy)
+
+
 @router.get("/decisions")
 def decisions():
     """P3: every recorded decision + price then vs now."""

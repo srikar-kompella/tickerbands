@@ -261,3 +261,65 @@ def test_secret_cache_hits_store_once(monkeypatch):
     assert base.get_secret("cache_key", "X") == "sekret"
     assert calls == ["cache_key"], "keychain must be consulted exactly once"
     base._SECRET_CACHE.pop("cache_key", None)
+
+
+# ── stance scorecard (forward audit) ──────────────────────────────────────────
+
+def _mk_bars(*pairs):
+    return [{"date": d, "close": c} for d, c in pairs]
+
+
+def test_scorecard_excess_and_working_flags():
+    from analysis.scorecard import score_stances
+    stances = [
+        {"ticker": "AAA", "stance": "buy", "stance_horizon": "3-6mo",
+         "stance_note": "n", "created_ts": "2026-07-01T10:00:00"},
+        {"ticker": "BBB", "stance": "sell", "stance_horizon": "3-6mo",
+         "stance_note": "n", "created_ts": "2026-07-01T10:00:00"},
+        {"ticker": "CCC", "stance": "watch", "stance_horizon": None,
+         "stance_note": None, "created_ts": "2026-07-01T10:00:00"},
+    ]
+    bars = {
+        "AAA": _mk_bars(("2026-07-01", 100.0), ("2026-08-01", 120.0)),  # +20%
+        "BBB": _mk_bars(("2026-07-01", 100.0), ("2026-08-01", 95.0)),   # -5%
+        "CCC": _mk_bars(("2026-07-01", 100.0), ("2026-08-01", 103.0)),  # +3%
+    }
+    spy = _mk_bars(("2026-07-01", 100.0), ("2026-08-01", 102.0))        # +2%
+    out = score_stances(stances, bars, spy)
+    by = {r["ticker"]: r for r in out["rows"]}
+    assert by["AAA"]["excess_pct"] == 18.0 and by["AAA"]["working"] is True
+    assert by["BBB"]["excess_pct"] == -7.0 and by["BBB"]["working"] is True  # sell + underperform = working
+    assert by["CCC"]["working"] is None       # watch has no directional claim
+    assert out["summary"]["buy"]["n"] == 1
+    assert "noise" in out["caveat"]
+
+
+def test_scorecard_missing_bars_degrades():
+    from analysis.scorecard import score_stances
+    stances = [{"ticker": "GONE", "stance": "buy", "stance_horizon": None,
+                "stance_note": None, "created_ts": "2026-07-01T00:00:00"}]
+    out = score_stances(stances, {}, [])
+    assert out["rows"][0]["excess_pct"] is None
+    assert out["n_scored"] == 0
+
+
+def test_scorecard_route_mock(tmp_db, mock_mode, tmp_discussions, monkeypatch):
+    import config as cfg
+    monkeypatch.setattr(cfg, "DISCUSSIONS_DIR", str(tmp_discussions))
+    from discussions_svc.parser import upsert_discussion
+    from fastapi.testclient import TestClient
+    from app import app
+    with TestClient(app) as client:
+        upsert_discussion({
+            "ticker": "NVDA", "file_path": str(tmp_discussions) + "/NVDA/x.md",
+            "prompt": None, "response_markdown": "body", "summary": "s",
+            "tags": "[]", "context_hash": None, "context_snapshot": None,
+            "news_view": None, "news_note": None, "decision": None,
+            "stance": "buy", "stance_horizon": "3-6mo", "stance_note": "n",
+            "created_ts": "2026-07-01T10:00:00", "file_mtime": "2026-07-01T10:00:00",
+        })
+        r = client.get("/api/stances/scorecard")
+        assert r.status_code == 200
+        data = r.json()
+        assert data["rows"] and data["rows"][0]["ticker"] == "NVDA"
+        assert data["rows"][0]["price_then"] is not None
