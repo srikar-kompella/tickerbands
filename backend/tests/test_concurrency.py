@@ -323,3 +323,25 @@ def test_scorecard_route_mock(tmp_db, mock_mode, tmp_discussions, monkeypatch):
         data = r.json()
         assert data["rows"] and data["rows"][0]["ticker"] == "NVDA"
         assert data["rows"][0]["price_then"] is not None
+
+
+# ── stale-data honesty in the research prompt ─────────────────────────────────
+
+def test_prompt_warns_when_core_sections_stale(tmp_db, mock_mode):
+    from analysis import composer
+    from api.routes import build_claude_prompt
+    a = composer.analyze("AAPL")
+    # simulate a provider that has been failing for ~4 days
+    a["sections"]["quote"] = {"status": "stale", "error_reason": "auth_expired",
+                              "age_seconds": 4 * 24 * 3600}
+    p = build_claude_prompt(a)
+    assert "STALE DATA" in p
+    assert "96.0h" in p and "auth_expired" in p
+    assert "verify the live price" in p
+
+
+def test_prompt_no_warning_when_fresh(tmp_db, mock_mode):
+    from analysis import composer
+    from api.routes import build_claude_prompt
+    p = build_claude_prompt(composer.analyze("AAPL"))
+    assert "STALE DATA" not in p

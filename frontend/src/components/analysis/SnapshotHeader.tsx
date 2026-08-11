@@ -30,11 +30,29 @@ export function SnapshotHeader({ a, onRefresh, refreshing, onAskClaude, watched,
   const chg = showAH ? (q!.ah_change_pct ?? null)
     : (q?.regular_change_pct ?? q?.net_change_pct ?? null)
 
+  // A stale quote wearing a live face is the worst lie this header can tell —
+  // surface it where the eye lands, not in a corner chip.
+  const staleEnv = ['quote', 'history']
+    .map((k) => a.sections?.[k])
+    .find((e) => e && ['stale', 'unavailable'].includes(e.status))
+  const staleAgeH = staleEnv?.age_seconds ? (staleEnv.age_seconds / 3600).toFixed(1) : null
+
   return (
     <motion.div
       layout
       className="sticky top-0 z-30 -mx-6 border-b border-border bg-bg/85 px-6 py-3 backdrop-blur-md"
       initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}>
+      {staleEnv && (
+        <div className="mb-2 flex items-center gap-2 rounded-lg border border-yellow-500/40 bg-yellow-500/10 px-3 py-1.5 text-xs text-yellow-500">
+          <span className="font-semibold">PRICES ARE STALE</span>
+          <span>
+            provider failing ({staleEnv.error_reason ?? 'error'})
+            {staleAgeH ? ` — showing data from ${staleAgeH}h ago` : ''}
+            {staleEnv.error_reason === 'auth_expired' &&
+              ' · fix: backend/.venv/bin/python backend/schwab_reauth.py'}
+          </span>
+        </div>
+      )}
       <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
         <div>
           <div className="flex items-baseline gap-2">

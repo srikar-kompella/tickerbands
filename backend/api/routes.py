@@ -84,6 +84,24 @@ def get_prompt(symbol: str):
             "context_hash": analysis["context_hash"]}
 
 
+def _stale_warnings(a: dict) -> list[str]:
+    """If core sections are being served stale (provider failing → cached data),
+    the prompt must SAY SO — a research session once anchored its narrative on
+    a 4-day-old price because the snapshot looked fresh."""
+    warns = []
+    for sec in ("quote", "history"):
+        env = (a.get("sections") or {}).get(sec) or {}
+        if env.get("status") in ("stale", "unavailable"):
+            age_h = round((env.get("age_seconds") or 0) / 3600, 1)
+            reason = env.get("error_reason", "?")
+            warns.append(
+                f"- ⚠ STALE DATA: the {sec} below is {age_h}h old (provider "
+                f"error: {reason}). Do NOT trust these prices as current — "
+                "verify the live price independently before reasoning about "
+                "today's move, and say in your analysis that the snapshot was stale.")
+    return warns
+
+
 def build_claude_prompt(a: dict) -> str:
     """Assemble the markdown prompt: analysis context + prior-discussion
     continuity + a strict writing contract + exact frontmatter (the watcher's
@@ -106,6 +124,7 @@ def build_claude_prompt(a: dict) -> str:
         "predictions). Ranges and risk framing are fine; directional calls are not.",
         "",
         "## Current analysis snapshot (context for YOU — do not repeat it back)",
+        *_stale_warnings(a),
         f"- Price: ${q.get('last')} ({q.get('net_change_pct')}% today), prev close ${q.get('close_prev')}",
     ]
     if band:

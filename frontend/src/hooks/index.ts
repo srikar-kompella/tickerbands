@@ -30,7 +30,20 @@ export function useRefreshAnalysis(symbol: string | null) {
     mutationFn: () => api.analysis(symbol!, true),
     onSuccess: (data) => {
       qc.setQueryData(['analysis', symbol], data)
-      toast.success(`${symbol} refreshed`)
+      // "refreshed" while serving days-old cache is a lie — check what came back
+      const bad = ['quote', 'history'].filter(
+        (k) => ['stale', 'unavailable'].includes(data.sections?.[k]?.status ?? ''))
+      if (bad.length) {
+        const env = data.sections?.[bad[0]]
+        const ageH = env?.age_seconds ? (env.age_seconds / 3600).toFixed(1) : '?'
+        const hint = env?.error_reason === 'auth_expired'
+          ? ' — Schwab token expired: run backend/schwab_reauth.py'
+          : ` (${env?.error_reason ?? 'provider error'})`
+        toast.warning(`${symbol}: provider failing — showing ${ageH}h-old cached data${hint}`,
+          { duration: 8000 })
+      } else {
+        toast.success(`${symbol} refreshed`)
+      }
     },
     onError: (e: Error) => toast.error(`Refresh failed: ${e.message}`),
   })
