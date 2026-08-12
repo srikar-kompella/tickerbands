@@ -330,6 +330,17 @@ export function useDiscussionStream() {
         qc.invalidateQueries({ queryKey: ['discussions', '__all__'] })
         qc.invalidateQueries({ queryKey: ['analysis', event.ticker] })
         qc.invalidateQueries({ queryKey: ['decisions'] })
+      } else if (event.type === 'discovery') {
+        // a sweep file landed in ~/.tickerlens/discoveries/ — refresh the tab
+        qc.invalidateQueries({ queryKey: ['discovery'] })
+        if (event.added > 0) {
+          toast.success(`Discovery sweep ingested — ${event.added} new candidate${event.added > 1 ? 's' : ''}`)
+        } else {
+          toast.message('Discovery sweep ingested — 0 new candidates', {
+            description: 'All were duplicates, dismissed earlier, over the size cap, ' +
+              'or the file\'s frontmatter lacked a candidates: [{ticker, thesis}] list.',
+          })
+        }
       } else if (event.type === 'error') {
         toast.error(`Discussion file failed to parse: ${event.file}`, {
           description: event.detail,

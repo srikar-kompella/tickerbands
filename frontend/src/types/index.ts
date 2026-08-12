@@ -225,3 +225,4 @@ export type StreamEvent =
   | { type: 'created'; ticker: string; id: number }
   | { type: 'deleted'; ticker: string; id: number }
   | { type: 'error'; file: string; detail: string }
+  | { type: 'discovery'; added: number }
