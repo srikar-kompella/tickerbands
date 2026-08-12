@@ -1,7 +1,14 @@
 // Discover: deduped candidate LEADS from evidence screens (insider clusters,
 // PEAD, short-interest deltas) + agent web sweeps. Leads, not recommendations
 // — every row carries its evidence, reasoning, and dates. Click → Analysis.
-import { useState } from 'react'
+//
+// Organization: three fixed sections, strongest evidence first —
+//   1. Convergence (≥2 independent evidence types — the interesting kind)
+//   2. New this week (fresh single-source leads)
+//   3. Older leads (aging; dismiss or promote them)
+// plus source-filter chips and a sort control. Order inside each section is
+// user-chosen (newest activity by default).
+import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { FileDown, Check, Compass, Eye, RefreshCw, TerminalSquare, X as XIcon } from 'lucide-react'
 import { toast } from 'sonner'
@@ -25,11 +32,107 @@ async function j<T>(path: string, init?: RequestInit): Promise<T> {
   return r.json()
 }
 
+const FRESH_DAYS = 7
+
+function daysAgo(iso: string): number {
+  return Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000)
+}
+
+type SortBy = 'recent' | 'cap'
+
+function CandidateRow({ r, expanded, onToggle, onAnalyze, onPromote, onPatch }: {
+  r: Candidate; expanded: boolean; onToggle: () => void
+  onAnalyze: (s: string) => void
+  onPromote: (s: string) => void
+  onPatch: (s: string, status: string) => void
+}) {
+  return (
+    <Card hover className={cn(r.status === 'dismissed' && 'opacity-50')}>
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <button onClick={() => onAnalyze(r.symbol)}
+              className="text-base font-bold hover:text-accent">{r.symbol}</button>
+            {r.sources.map((s) => (
+              <Badge key={s} tone={SOURCE_TONE[s] ?? 'neutral'} className="text-[10px]">{s}</Badge>
+            ))}
+            {r.status === 'promoted' && (
+              <Badge tone="up" className="text-[10px]" title="Already on your watchlist">watching</Badge>
+            )}
+            {!!r.returned && (
+              <Badge tone="warn" className="text-[10px]" title="Dismissed before, but NEW evidence arrived">returned</Badge>
+            )}
+            <span className="text-[11px] text-faint tnum">
+              {fmtMarketCap(r.market_cap_m)} · seen {fmtDate(r.first_seen)}
+              {r.last_seen !== r.first_seen && ` → ${fmtDate(r.last_seen)}`}
+            </span>
+          </div>
+          <button className="mt-1 block text-left text-sm text-muted hover:text-text"
+            onClick={onToggle}>
+            {r.reasons.at(-1)?.reason}
+            {r.reasons.length > 1 && (
+              <span className="ml-1 text-[10px] text-faint">
+                ({r.reasons.length - 1} more — click)
+              </span>
+            )}
+          </button>
+          {expanded && r.reasons.length > 1 && (
+            <ul className="mt-1.5 space-y-1 border-t border-border pt-1.5">
+              {r.reasons.slice(0, -1).reverse().map((re, i) => (
+                <li key={i} className="text-xs text-faint">
+                  <Badge className="mr-1.5 text-[9px]">{re.source}</Badge>
+                  {re.reason} <span className="tnum">({fmtDate(re.date)})</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+        <div className="flex shrink-0 gap-1">
+          <Button variant="accent" onClick={() => onAnalyze(r.symbol)}>Analyze</Button>
+          {r.status !== 'promoted' && (
+            <Button variant="ghost" onClick={() => onPromote(r.symbol)} title="Add to watchlist">
+              <Eye className="h-4 w-4" />
+            </Button>
+          )}
+          {r.status === 'dismissed' ? (
+            <Button variant="ghost" onClick={() => onPatch(r.symbol, 'new')} title="Restore">
+              <Check className="h-4 w-4" />
+            </Button>
+          ) : (
+            <Button variant="ghost" onClick={() => onPatch(r.symbol, 'dismissed')} title="Dismiss (remembered)">
+              <XIcon className="h-4 w-4" />
+            </Button>
+          )}
+        </div>
+      </div>
+    </Card>
+  )
+}
+
+function Section({ title, hint, rows, render }: {
+  title: string; hint: string; rows: Candidate[]
+  render: (r: Candidate) => React.ReactNode
+}) {
+  if (!rows.length) return null
+  return (
+    <div className="mb-5">
+      <div className="mb-2 flex items-baseline gap-2">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">{title}</h3>
+        <span className="text-[11px] text-faint">{rows.length} · {hint}</span>
+      </div>
+      <div className="space-y-2">{rows.map(render)}</div>
+    </div>
+  )
+}
+
 export default function Discover({ onAnalyze }: { onAnalyze: (s: string) => void }) {
   const qc = useQueryClient()
   const [showDismissed, setShowDismissed] = useState(false)
   const [promptOpen, setPromptOpen] = useState(false)
   const [expanded, setExpanded] = useState<string | null>(null)
+  const [sourceFilter, setSourceFilter] = useState<string | null>(null)
+  const [sortBy, setSortBy] = useState<SortBy>('recent')
+
   const { data: rows, isLoading } = useQuery({
     queryKey: ['discovery', showDismissed],
     queryFn: () => j<Candidate[]>(`/api/discovery?include_dismissed=${showDismissed}`),
@@ -61,9 +164,37 @@ export default function Discover({ onAnalyze }: { onAnalyze: (s: string) => void
       toast.success(`${symbol} promoted to watchlist`)
     })
 
+  // every source present in the data → filter chips (names always exact)
+  const allSources = useMemo(
+    () => [...new Set((rows ?? []).flatMap((r) => r.sources))].sort(),
+    [rows])
+
+  const { convergence, fresh, older } = useMemo(() => {
+    let list = rows ?? []
+    if (sourceFilter) list = list.filter((r) => r.sources.includes(sourceFilter))
+    const bySort = (a: Candidate, b: Candidate) =>
+      sortBy === 'cap'
+        ? (a.market_cap_m ?? Infinity) - (b.market_cap_m ?? Infinity)
+        : (a.last_seen < b.last_seen ? 1 : -1)
+    const conv = list.filter((r) => r.sources.length >= 2).sort(bySort)
+    const single = list.filter((r) => r.sources.length < 2)
+    return {
+      convergence: conv,
+      fresh: single.filter((r) => daysAgo(r.last_seen) <= FRESH_DAYS).sort(bySort),
+      older: single.filter((r) => daysAgo(r.last_seen) > FRESH_DAYS).sort(bySort),
+    }
+  }, [rows, sourceFilter, sortBy])
+
+  const renderRow = (r: Candidate) => (
+    <CandidateRow key={r.symbol} r={r}
+      expanded={expanded === r.symbol}
+      onToggle={() => setExpanded(expanded === r.symbol ? null : r.symbol)}
+      onAnalyze={onAnalyze} onPromote={promote} onPatch={patch} />
+  )
+
   return (
     <div>
-      <div className="mb-4 flex flex-wrap items-center gap-2">
+      <div className="mb-3 flex flex-wrap items-center gap-2">
         <Button variant="accent" onClick={() => scan.mutate()} disabled={scan.isPending}>
           <RefreshCw className={cn('h-4 w-4', scan.isPending && 'animate-spin')} />
           {scan.isPending ? 'Screening…' : 'Run evidence screens'}
@@ -82,72 +213,45 @@ export default function Discover({ onAnalyze }: { onAnalyze: (s: string) => void
         </label>
       </div>
 
+      {/* filter + sort bar */}
+      {!!rows?.length && (
+        <div className="mb-4 flex flex-wrap items-center gap-1.5">
+          <button onClick={() => setSourceFilter(null)}
+            className={cn('rounded-full border px-2.5 py-1 text-[11px]',
+              sourceFilter === null
+                ? 'border-accent/60 bg-accent/10 text-accent'
+                : 'border-border text-muted hover:text-text')}>
+            all · {rows.length}
+          </button>
+          {allSources.map((s) => (
+            <button key={s} onClick={() => setSourceFilter(sourceFilter === s ? null : s)}
+              className={cn('rounded-full border px-2.5 py-1 text-[11px]',
+                sourceFilter === s
+                  ? 'border-accent/60 bg-accent/10 text-accent'
+                  : 'border-border text-muted hover:text-text')}>
+              {s} · {rows.filter((r) => r.sources.includes(s)).length}
+            </button>
+          ))}
+          <select value={sortBy} onChange={(e) => setSortBy(e.target.value as SortBy)}
+            className="ml-auto rounded-md border border-border bg-bg px-2 py-1 text-[11px] text-muted outline-none focus:border-accent/60">
+            <option value="recent">newest activity</option>
+            <option value="cap">smallest cap first</option>
+          </select>
+        </div>
+      )}
+
       {isLoading && <Card><Skeleton className="h-40 w-full" /></Card>}
       {!isLoading && !rows?.length && (
         <EmptyState icon={<Compass className="h-7 w-7" />} title="No leads yet"
           body="Run the evidence screens (insider clusters · earnings-surprise drift · short-interest moves), or copy the web-sweep prompt into your agent — its file lands here automatically." />
       )}
 
-      <div className="space-y-2">
-        {rows?.map((r) => (
-          <Card key={r.symbol} hover className={cn(r.status === 'dismissed' && 'opacity-50')}>
-            <div className="flex flex-wrap items-start justify-between gap-2">
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <button onClick={() => onAnalyze(r.symbol)}
-                    className="text-base font-bold hover:text-accent">{r.symbol}</button>
-                  {r.sources.map((s) => (
-                    <Badge key={s} tone={SOURCE_TONE[s] ?? 'neutral'} className="text-[10px]">{s}</Badge>
-                  ))}
-                  {r.sources.length > 1 && (
-                    <Badge tone="accent" className="text-[10px]" title="Multiple independent evidence types — the interesting kind">
-                      convergence
-                    </Badge>
-                  )}
-                  {!!r.returned && (
-                    <Badge tone="warn" className="text-[10px]" title="Dismissed before, but NEW evidence arrived">returned</Badge>
-                  )}
-                  <span className="text-[11px] text-faint tnum">
-                    {fmtMarketCap(r.market_cap_m)} · seen {fmtDate(r.first_seen)}
-                    {r.last_seen !== r.first_seen && ` → ${fmtDate(r.last_seen)}`}
-                  </span>
-                </div>
-                <button className="mt-1 block text-left text-sm text-muted hover:text-text"
-                  onClick={() => setExpanded(expanded === r.symbol ? null : r.symbol)}>
-                  {r.reasons.at(-1)?.reason}
-                </button>
-                {expanded === r.symbol && r.reasons.length > 1 && (
-                  <ul className="mt-1.5 space-y-1 border-t border-border pt-1.5">
-                    {r.reasons.slice(0, -1).reverse().map((re, i) => (
-                      <li key={i} className="text-xs text-faint">
-                        <Badge className="mr-1.5 text-[9px]">{re.source}</Badge>
-                        {re.reason} <span className="tnum">({fmtDate(re.date)})</span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-              <div className="flex shrink-0 gap-1">
-                <Button variant="accent" onClick={() => onAnalyze(r.symbol)}>Analyze</Button>
-                {r.status !== 'promoted' && (
-                  <Button variant="ghost" onClick={() => promote(r.symbol)} title="Add to watchlist">
-                    <Eye className="h-4 w-4" />
-                  </Button>
-                )}
-                {r.status === 'dismissed' ? (
-                  <Button variant="ghost" onClick={() => patch(r.symbol, 'new')} title="Restore">
-                    <Check className="h-4 w-4" />
-                  </Button>
-                ) : (
-                  <Button variant="ghost" onClick={() => patch(r.symbol, 'dismissed')} title="Dismiss (remembered)">
-                    <XIcon className="h-4 w-4" />
-                  </Button>
-                )}
-              </div>
-            </div>
-          </Card>
-        ))}
-      </div>
+      <Section title="Convergence" rows={convergence} render={renderRow}
+        hint="≥2 independent evidence types — the interesting kind" />
+      <Section title="New this week" rows={fresh} render={renderRow}
+        hint={`single-source leads active in the last ${FRESH_DAYS} days`} />
+      <Section title="Older leads" rows={older} render={renderRow}
+        hint="no new evidence lately — promote or dismiss to keep this shelf short" />
 
       <p className="mt-4 text-[11px] text-faint">
         Leads, not recommendations: each row is one or more pieces of documented
