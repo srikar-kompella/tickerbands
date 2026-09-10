@@ -25,10 +25,11 @@ import os
 from typing import Any, Callable  # noqa: F401
 
 import config
-from analysis import earnings_moves, news_lex, setup_score, vol_bands
+from analysis import earnings_moves, fundamentals_ttm, news_lex, setup_score, vol_bands
 from cache.store import get_or_fetch
 from db import connect
 from providers import registry
+from providers import mock
 from providers.base import ProviderError
 
 
@@ -124,6 +125,31 @@ def _position_section(symbol: str, force: bool) -> dict[str, dict]:
         **({"error_reason": wrapped["error_reason"]}
            if wrapped["source"] == "stale" else {}),
     }
+
+
+def _dividends(symbol: str, force: bool) -> dict | None:
+    """Distribution history (ex-dates + amounts) via the cache. Powers the TTM
+    yield AND the dividend-adjusted move/σ/band (BUG A + B). None = degrade."""
+    fn = mock.fetch_dividends if use_mock() else registry.resolve("dividend_history")
+    if fn is None:
+        return None
+    try:
+        return get_or_fetch(f"dividends:{symbol.upper()}", config.TTL["dividends"],
+                            lambda: fn(symbol), force=force)["data"]
+    except ProviderError:
+        return None
+
+
+def _eps_check(symbol: str, force: bool) -> dict | None:
+    """Statement-derived TTM EPS cross-check for the fundamentals panel."""
+    fn = mock.fetch_eps_ttm if use_mock() else registry.resolve("eps_check")
+    if fn is None:
+        return None
+    try:
+        return get_or_fetch(f"eps_check:{symbol.upper()}", config.TTL["eps_check"],
+                            lambda: fn(symbol), force=force)["data"]
+    except ProviderError:
+        return None
 
 
 def _fetch_one(section: str, fn, ttl_key: str, symbol: str,
@@ -327,21 +353,53 @@ def analyze(symbol: str, force: bool = False) -> dict[str, Any]:
     closes = [b["close"] for b in bars]
     volumes = [b["volume"] for b in bars]
 
+    # BUG B (2026-09-10): distributions must not masquerade as price moves.
+    # σ comes from the dividend-ADJUSTED return series, and on an ex-div date
+    # the band/day-move anchor is prior close MINUS the distribution (INSW's
+    # $5.05 ex-div had rendered a fake "−3.84% / −1.89σ · outside band").
+    div_payload = _dividends(symbol, force)
+    div_events = (div_payload or {}).get("events") or []
+
     signals = band = move = None
+    ex_today_amt, ex_pending = 0.0, False
     if len(closes) >= 21:
-        signals = vol_bands.compute_signals(closes, volumes)
+        signals = vol_bands.compute_signals(closes, volumes)  # raw price levels
+        adj_closes = vol_bands.adjust_closes_for_dividends(bars, div_events)
+        if div_events:
+            signals["rv_20d"] = round(vol_bands.realized_vol(adj_closes, 20), 2)
+            if len(adj_closes) >= 61:
+                signals["rv_60d"] = round(vol_bands.realized_vol(adj_closes, 60), 2)
+        # today's distribution applies only while today's bar isn't complete yet
+        # (once today's close exists, prices on both sides are post-div already)
+        today_iso = dt.date.today().isoformat()
+        if bars and bars[-1]["date"] < today_iso:
+            ex_today_amt = sum(float(e.get("amount") or 0.0) for e in div_events
+                               if str(e.get("date"))[:10] == today_iso)
+            if ex_today_amt == 0.0:
+                # amount not in the history feed yet (specials lag) — try the
+                # quote provider's fundamental block, else flag date-only
+                q_ex = str((quote or {}).get("div_ex_date") or "")[:10]
+                q_amt = (quote or {}).get("div_pay_amount")
+                if q_ex == today_iso and q_amt:
+                    ex_today_amt = float(q_amt)
+                elif (str((div_payload or {}).get("next_ex_date") or "")[:10]
+                      == today_iso or q_ex == today_iso):
+                    ex_pending = True
+        anchor = round(signals["prev_close"] - ex_today_amt, 4)
         # engine per user setting (flat20 default — it WON the validation);
         # conformal needs 251 bars → history section serves 130 → falls back
         # unless the 2y bars (fetched below for earnings-move) are available.
+        # (conformal uses the raw 2y series — quantile of |moves| is far less
+        # sensitive to small distributions than the 20d stdev was.)
         engine = _load_band_engine()
-        band_closes = closes
+        band_closes = adj_closes
         if engine == "conformal":
             bars2y = _closes_2y(symbol, force)
             if bars2y:
                 band_closes = bars2y
-        band = vol_bands.band_with_engine(signals["prev_close"], band_closes, engine)
+        band = vol_bands.band_with_engine(anchor, band_closes, engine)
         current = quote["last"] if quote else closes[-1]
-        move = vol_bands.move_z_score(signals["prev_close"], current, signals["rv_20d"])
+        move = vol_bands.move_z_score(anchor, current, signals["rv_20d"])
 
     # ── earnings expected-move + PEAD (roadmap #3, #7) — stocks only ─────────
     earnings_move = pead = None
@@ -475,6 +533,14 @@ def analyze(symbol: str, force: bool = False) -> dict[str, Any]:
         "insiders": sections["insiders"].get("data"),
         "short_interest": si_data,
         "fundamentals": sections["fundamentals"].get("data"),
+        "fundamentals_ttm": fundamentals_ttm.build_ttm_view(
+            (quote or {}).get("last") or (closes[-1] if closes else None),
+            sections["fundamentals"].get("data"), div_payload,
+            _eps_check(symbol, force)),
+        "ex_div": {"today": ex_today_amt > 0 or ex_pending,
+                   "amount": round(ex_today_amt, 4) if ex_today_amt > 0 else None,
+                   # date known but amount unpublished → warn, never fabricate
+                   "pending": ex_pending},
         "recommendations": sections["recommendations"].get("data"),
         "earnings": sections["earnings"].get("data"),
         "social": sections["social"].get("data"),

@@ -157,6 +157,28 @@ def fetch_fundamentals(symbol: str) -> dict[str, Any]:
     }
 
 
+def fetch_dividends(symbol: str) -> dict[str, Any]:
+    """Quarterly $-per-share stream scaled off the seed (0 for ~1 in 5 names,
+    so the non-payer path gets exercised too)."""
+    seed = _seed(symbol, "div")
+    events = []
+    if seed > 0.2:
+        amt = round(0.2 + seed * 1.2, 4)
+        today = dt.date.today()
+        for q in range(1, 9):
+            events.append({"date": (today - dt.timedelta(days=91 * q)).isoformat(),
+                           "amount": amt})
+        events.reverse()
+    return {"available": True, "events": events, "source": "mock",
+            "as_of": dt.date.today().isoformat()}
+
+
+def fetch_eps_ttm(symbol: str) -> dict[str, Any]:
+    """Matches fetch_fundamentals' eps_ttm so mock mode never self-diverges."""
+    return {"eps_ttm": round(1 + _seed(symbol, "eps") * 12, 2),
+            "source": "mock", "as_of": dt.date.today().isoformat()}
+
+
 def fetch_recommendations(symbol: str) -> dict[str, Any]:
     """Two months so the MoM-change component has something to chew on."""
     def month(offset: int) -> dict[str, Any]:

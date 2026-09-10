@@ -157,6 +157,13 @@ export interface ClaudeNews {
   created_ts: string
 }
 
+export interface TTMMetric {
+  value: number | null
+  source: string
+  as_of: string | null
+  warning: string | null
+}
+
 export interface ClaudeStance {
   id: number
   stance: 'buy' | 'sell' | 'hold' | 'trim' | 'watch'
@@ -276,6 +283,11 @@ export interface Analysis {
   options: OptionsSummary | null
   news_sentiment: NewsSentiment | null
   claude_news: ClaudeNews | null
+  fundamentals_ttm: {
+    pe_ttm: TTMMetric
+    yield_ttm: TTMMetric
+  } | null
+  ex_div: { today: boolean; amount: number | null; pending: boolean } | null
   claude_stance: ClaudeStance | null
   headlines: Headline[] | null
   fundamentals: Fundamentals | null

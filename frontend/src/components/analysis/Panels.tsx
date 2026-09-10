@@ -33,11 +33,19 @@ export function FundamentalsPanel({ a, g }: { a: Analysis; g: G }) {
       </SectionShell>
     )
   }
+  // BUG A fix: P/E and yield come from the TTM-computed block (price ÷ TTM
+  // EPS; SUM of trailing-12mo distributions ÷ price) with source + as-of and
+  // divergence warnings — vendor metrics alone rendered ECO at 40x / 0.8%
+  // when the real trailing figures were ~6.4x / ~13%.
+  const t = a.fundamentals_ttm
+  const warns = [t?.pe_ttm?.warning, t?.yield_ttm?.warning].filter(Boolean) as string[]
   return (
     <SectionShell title="Fundamentals" envelope={a.sections.fundamentals} glossary={g.pe_ttm}>
       {f && (
         <div className="divide-y divide-border/60">
-          <Row label="P/E (TTM)" value={fmtNum(f.pe_ttm, 1)} tip={g.pe_ttm} />
+          <Row label="P/E (TTM)"
+            value={t?.pe_ttm?.value != null ? fmtNum(t.pe_ttm.value, 1) : '—'}
+            tip={g.pe_ttm} />
           <Row label="EPS (TTM)" value={fmtMoney(f.eps_ttm)} tip={g.eps_ttm} />
           <Row label="Market cap" value={fmtMarketCap(f.market_cap_m)} tip={g.market_cap} />
           <Row label="Revenue growth" value={fmtPct(f.revenue_growth_ttm_pct, 1, true)}
@@ -45,9 +53,23 @@ export function FundamentalsPanel({ a, g }: { a: Analysis; g: G }) {
           <Row label="Gross margin" value={fmtPct(f.gross_margin_pct, 1)} tip={g.gross_margin} />
           <Row label="Operating margin" value={fmtPct(f.operating_margin_pct, 1)} tip={g.operating_margin} />
           <Row label="Net margin" value={fmtPct(f.net_margin_pct, 1)} tip={g.net_margin} />
-          <Row label="Dividend yield" value={fmtPct(f.dividend_yield_pct, 2)} tip={g.dividend_yield} />
+          <Row label="Dividend yield (TTM)"
+            value={t?.yield_ttm?.value != null ? fmtPct(t.yield_ttm.value, 2) : '—'}
+            tip={g.dividend_yield} />
         </div>
       )}
+      {t && (
+        <p className="mt-2 text-[10px] leading-relaxed text-faint">
+          P/E: {t.pe_ttm.source}{t.pe_ttm.as_of ? ` · as of ${t.pe_ttm.as_of}` : ''}
+          <br />
+          Yield: {t.yield_ttm.source}{t.yield_ttm.as_of ? ` · as of ${t.yield_ttm.as_of}` : ''}
+        </p>
+      )}
+      {warns.map((w, i) => (
+        <p key={i} className="mt-1.5 rounded-lg border border-yellow-500/30 bg-yellow-500/5 px-2.5 py-1.5 text-[11px] text-yellow-500">
+          ⚠ {w}
+        </p>
+      ))}
     </SectionShell>
   )
 }

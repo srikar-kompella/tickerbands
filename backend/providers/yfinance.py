@@ -101,3 +101,55 @@ def fetch_quotes_batch(symbols: list[str]) -> dict[str, dict[str, Any]]:
         except ProviderError:
             continue
     return out
+
+
+def fetch_dividends(symbol: str) -> dict[str, Any]:
+    """Trailing distribution history (ex-dates + amounts), newest last.
+    Ground truth for TTM yield and for dividend-adjusting moves/bands —
+    vendor 'yield' metrics annualize one payment and break on variable payers.
+    """
+    yf = _yf()
+    import datetime as _dt
+    try:
+        series = yf.Ticker(symbol).dividends  # pandas Series, index = ex-date
+    except Exception as e:
+        raise ProviderError("unavailable", f"yfinance dividends: {e}")
+    events = []
+    try:
+        cutoff = _dt.date.today() - _dt.timedelta(days=3 * 365)
+        for idx, val in series.items():
+            d = idx.date() if hasattr(idx, "date") else idx
+            if d >= cutoff and float(val) > 0:
+                events.append({"date": d.isoformat(), "amount": round(float(val), 6)})
+    except Exception as e:
+        raise ProviderError("unavailable", f"yfinance dividends parse: {e}")
+    # Yahoo publishes the UPCOMING ex-DATE (quoteSummary) before the amount
+    # lands in the history feed — INSW's 9/10 special was invisible in
+    # .dividends on the day itself. Date-only knowledge still lets the UI
+    # warn instead of rendering a fake sell-off.
+    next_ex = None
+    try:
+        epoch = (yf.Ticker(symbol).info or {}).get("exDividendDate")
+        if epoch:
+            next_ex = _dt.datetime.fromtimestamp(
+                float(epoch), _dt.timezone.utc).date().isoformat()
+    except Exception:
+        pass
+    return {"available": True, "events": events, "source": "yfinance",
+            "next_ex_date": next_ex, "as_of": _dt.date.today().isoformat()}
+
+
+def fetch_eps_ttm(symbol: str) -> dict[str, Any]:
+    """Statement-derived trailing-12-month EPS (Yahoo quoteSummary
+    trailingEps) — the cross-check that catches stale vendor FY EPS."""
+    yf = _yf()
+    import datetime as _dt
+    try:
+        info = yf.Ticker(symbol).info or {}
+        eps = info.get("trailingEps")
+    except Exception as e:
+        raise ProviderError("unavailable", f"yfinance eps: {e}")
+    if eps is None:
+        raise ProviderError("no_data", f"no trailing EPS for {symbol}")
+    return {"eps_ttm": round(float(eps), 4), "source": "yfinance trailingEps",
+            "as_of": _dt.date.today().isoformat()}

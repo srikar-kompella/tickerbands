@@ -60,6 +60,40 @@ def completed_bars(history: list[dict], today: dt.date | None = None,
             if b["date"] < cutoff or (include_today and b["date"] == cutoff)]
 
 
+def adjust_closes_for_dividends(bars: list[dict],
+                                 events: list[dict]) -> list[float]:
+    """Multiplicative back-adjustment of closes for cash distributions.
+
+    BUG B (2026-09-10): on an ex-div date the price mechanically opens lower
+    by the distribution — comparing against the UNADJUSTED prior close
+    manufactured a fake shock (INSW $5.05 ex-div rendered "−3.84% / −1.89σ ·
+    outside band" when the like-for-like move was ~+1%), and the phantom drop
+    then inflates rv_20d for a month. Standard back-adjustment: for each
+    ex-date, closes strictly BEFORE it are scaled by (prev − div) / prev.
+    Returns adjusted CLOSES (same length); display prices stay raw.
+    """
+    raw = [float(b["close"]) for b in bars]
+    if not events or not raw:
+        return raw
+    dates = [str(b["date"])[:10] for b in bars]
+    adj = raw[:]
+    for ev in sorted(events, key=lambda e: str(e.get("date"))):
+        amt = float(ev.get("amount") or 0.0)
+        d = str(ev.get("date"))[:10]
+        if amt <= 0:
+            continue
+        idx = next((i for i, dd in enumerate(dates) if dd >= d), None)
+        if idx is None or idx == 0:
+            continue  # ex-date outside (or at start of) this window
+        prev = raw[idx - 1]
+        if prev <= amt:
+            continue  # nonsensical event vs price — refuse to adjust
+        factor = (prev - amt) / prev
+        for i in range(idx):
+            adj[i] *= factor
+    return adj
+
+
 def realized_vol(closes: list[float], window: int) -> float:
     """Annualized realized volatility (%) from the last `window` close-to-close
     returns — sample std (n−1), same convention as the experiment."""

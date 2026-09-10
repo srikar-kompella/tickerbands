@@ -125,6 +125,11 @@ def fetch_quote(symbol: str) -> dict[str, Any]:
         "name": ref.get("description") or symbol.upper(),
         "last": float(last),
         **_extended_view(q, blob.get("regular") or {}, blob.get("extended") or {}),
+        # fundamental block (when Schwab sends it): ex-div date + per-payment
+        # amount — the fallback source for dividend-adjusting on ex-dates when
+        # the history feed hasn't recorded the event yet (specials lag there)
+        "div_ex_date": str((blob.get("fundamental") or {}).get("divExDate") or "")[:10] or None,
+        "div_pay_amount": (blob.get("fundamental") or {}).get("divPayAmount"),
         "open": float(q.get("openPrice") or last),
         "close_prev": float(q.get("closePrice") or last),
         "high_today": float(q.get("highPrice") or last),

@@ -75,6 +75,19 @@ export function SnapshotHeader({ a, onRefresh, refreshing, onAskClaude, watched,
                 <Moon className="h-2.5 w-2.5" /> AH
               </Badge>
             )}
+            {a.ex_div?.today && (
+              a.ex_div.amount != null ? (
+                <Badge tone="warn" className="text-[10px]"
+                  title="The distribution comes out of the price on the ex-date. Day move, σ and the expected-range band are computed against the dividend-adjusted prior close — without this, every ex-date looks like a fake sell-off.">
+                  ex-div ${a.ex_div.amount} · div-adjusted
+                </Badge>
+              ) : (
+                <Badge tone="warn" className="text-[10px]"
+                  title="Today is an ex-dividend date but the amount isn't published in the data feeds yet, so moves are NOT adjusted — a red day-move here is partly or wholly the distribution, not a sell-off.">
+                  ex-div today · amount pending — move not adjusted
+                </Badge>
+              )
+            )}
           </div>
           {showAH && q?.regular_last != null && (
             <div className="tnum text-[11px] text-faint">
