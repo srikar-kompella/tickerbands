@@ -69,6 +69,7 @@ CAPABILITY_DEFAULTS = {
     # TTM fundamentals panel and dividend-adjusted moves/bands (BUG A/B fixes)
     "dividend_history": "yfinance",
     "eps_check": "yfinance",
+    "financial_statements": "yfinance",
     "news_sentiment": "finnhub",
     "news_headlines": "finnhub",
     "analyst_recs": "finnhub",
@@ -117,7 +118,7 @@ TTL = {
     "fundamentals": 24 * 3600, "earnings": 12 * 3600, "portfolio": 300,
     "market_context": 300, "search": 24 * 3600, "history2y": 24 * 3600,
     "earnings_dates": 24 * 3600, "insiders": 12 * 3600,
-    "dividends": 12 * 3600, "eps_check": 24 * 3600,
+    "dividends": 12 * 3600, "eps_check": 24 * 3600, "statements": 24 * 3600,
     "short_interest": 24 * 3600, "shares_out": 7 * 24 * 3600,
     "earnings_calendar_market": 6 * 3600,
 }

@@ -179,6 +179,25 @@ def fetch_eps_ttm(symbol: str) -> dict[str, Any]:
             "source": "mock", "as_of": dt.date.today().isoformat()}
 
 
+def fetch_statements(symbol: str) -> dict[str, Any]:
+    base = 1e9 * (1 + _seed(symbol, "rev") * 40)         # revenue scale
+    ni = base * (0.05 + _seed(symbol, "nm2") * 0.15)
+    fcf = ni * (0.6 + _seed(symbol, "fcfr") * 0.8)       # some names NI >> FCF
+    ann = [{"revenue": base * (1 - 0.06 * i), "net_income": ni * (1 - 0.08 * i),
+            "ebit": ni * 1.3 * (1 - 0.08 * i), "eff_tax_rate": 0.21,
+            "fcf": fcf * (1 - 0.07 * i),
+            "acquisitions": -base * 0.01 * _seed(symbol, f"acq{i}")}
+           for i in range(5)]
+    return {"available": True,
+            "ttm": {"ocf": fcf * 1.2, "capex": -fcf * 0.2, "fcf": fcf,
+                    "dividends_paid": fcf * (_seed(symbol, "pay") * 0.9),
+                    "net_income": ni, "ebit": ni * 1.3, "eff_tax_rate": 0.21},
+            "annual": ann,
+            "balance": {"total_debt": base * 0.3, "cash": base * 0.15,
+                        "equity": base * 0.5},
+            "source": "mock", "as_of": dt.date.today().isoformat()}
+
+
 def fetch_recommendations(symbol: str) -> dict[str, Any]:
     """Two months so the MoM-change component has something to chew on."""
     def month(offset: int) -> dict[str, Any]:

@@ -84,6 +84,40 @@ def get_prompt(symbol: str):
             "context_hash": analysis["context_hash"]}
 
 
+def _value_lens_lines(a: dict) -> list[str]:
+    """Statement value lens → prompt. These analyses MUST inform the stance:
+    the research layer is where fundamentals affect buy/sell in this app —
+    computed signals never do (experiment verdict, n≈9,600)."""
+    vl = a.get("value_lens")
+    if not vl:
+        return []
+    def v(key, suffix=""):
+        m = vl.get(key) or {}
+        return f"{m['value']}{suffix}" if m.get("value") is not None else "n/a"
+    lines = [
+        "",
+        "## Statement value lens (weigh these in your stance — REQUIRED)",
+        f"- FCF (TTM): ${v('fcf_ttm')}M · P/FCF {v('p_fcf', 'x')} "
+        f"(vs {v('p_fcf_avg', 'x')} on multi-FY-avg FCF) · P/E on multi-FY-avg "
+        f"earnings {v('pe_avg', 'x')}",
+        f"- Dividends paid ÷ FCF: {v('payout_of_fcf_pct', '%')} · EV: ${v('ev')}M"
+        + (" · NET CASH position" if vl.get("net_cash") else ""),
+        f"- Revenue CAGR: {v('rev_cagr_3y', '%')} (3y) / {v('rev_cagr_5y', '%')} "
+        f"(~5y) · ROIC~: {v('roic_ttm', '%')} TTM / {v('roic_avg', '%')} multi-yr "
+        "(approximate) · acquisitions "
+        f"${v('acquisitions_total')}M over the reported FYs",
+    ]
+    for r in vl.get("readings") or []:
+        lines.append(f"- READ: {r}")
+    for w in vl.get("warnings") or []:
+        lines.append(f"- FLAG: {w}")
+    lines.append(
+        "- Your `stance:` must explicitly weigh this lens — cite the metrics "
+        "that drive your call AND the ones that argue against it. If the lens "
+        "contradicts the price action, say which you trust and why.")
+    return lines
+
+
 def _stale_warnings(a: dict) -> list[str]:
     """If core sections are being served stale (provider failing → cached data),
     the prompt must SAY SO — a research session once anchored its narrative on
@@ -188,6 +222,7 @@ def build_claude_prompt(a: dict) -> str:
         "file — the app already displays all of that. The file is your "
         "analysis only.",
         "",
+        *_value_lens_lines(a),
         "## After the discussion — REQUIRED",
         f"Write your analysis to `{_home_path(os.path.join(config.DISCUSSIONS_DIR, sym, f'{now}.md'))}` "
         "(this path is under the TickerLens home — correct from ANY working "

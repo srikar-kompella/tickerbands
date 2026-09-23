@@ -153,3 +153,95 @@ def fetch_eps_ttm(symbol: str) -> dict[str, Any]:
         raise ProviderError("no_data", f"no trailing EPS for {symbol}")
     return {"eps_ttm": round(float(eps), 4), "source": "yfinance trailingEps",
             "as_of": _dt.date.today().isoformat()}
+
+
+def _row(df, *names):
+    """First matching row from a yfinance statement DataFrame (labels vary
+    by issuer/version); values newest-first. None-safe."""
+    try:
+        for n in names:
+            if n in df.index:
+                return [None if v != v else float(v) for v in df.loc[n].tolist()]
+    except Exception:
+        pass
+    return None
+
+
+def fetch_statements(symbol: str) -> dict[str, Any]:
+    """Compact statement aggregates for the value lens: TTM (4 quarters) FCF /
+    net income / dividends paid / EBIT + up to 5 reported FYs + latest
+    balance-sheet debt/cash/equity. All plain numbers, JSON-safe."""
+    yf = _yf()
+    import datetime as _dt
+    t = yf.Ticker(symbol)
+    try:
+        qcf, acf = t.quarterly_cashflow, t.cashflow
+        qis, ais = t.quarterly_income_stmt, t.income_stmt
+        bs = t.balance_sheet
+    except Exception as e:
+        raise ProviderError("unavailable", f"yfinance statements: {e}")
+    if qcf is None or getattr(qcf, "empty", True):
+        raise ProviderError("no_data", f"no statements for {symbol} (funds/ETFs don't file)")
+
+    def _sum4(rows):
+        vals = [v for v in (rows or [])[:4] if v is not None]
+        return sum(vals) if vals else None
+
+    q_ocf = _row(qcf, "Operating Cash Flow", "Cash Flow From Continuing Operating Activities")
+    q_capex = _row(qcf, "Capital Expenditure")
+    q_div = _row(qcf, "Cash Dividends Paid", "Common Stock Dividend Paid")
+    q_ni = _row(qis, "Net Income", "Net Income Common Stockholders")
+    q_ebit = _row(qis, "Operating Income", "EBIT")
+    q_tax = _row(qis, "Tax Provision")
+    q_pre = _row(qis, "Pretax Income")
+    ocf4, capex4 = _sum4(q_ocf), _sum4(q_capex)
+    ttm = {
+        "ocf": ocf4,
+        "capex": capex4,
+        "fcf": (ocf4 + capex4) if ocf4 is not None and capex4 is not None else None,
+        "dividends_paid": abs(_sum4(q_div)) if _sum4(q_div) is not None else None,
+        "net_income": _sum4(q_ni),
+        "ebit": _sum4(q_ebit),
+        "eff_tax_rate": ((_sum4(q_tax) or 0) / _sum4(q_pre)
+                         if _sum4(q_pre) not in (None, 0) else None),
+    }
+
+    a_rev = _row(ais, "Total Revenue") or []
+    a_ni = _row(ais, "Net Income", "Net Income Common Stockholders") or []
+    a_ebit = _row(ais, "Operating Income", "EBIT") or []
+    a_tax = _row(ais, "Tax Provision") or []
+    a_pre = _row(ais, "Pretax Income") or []
+    a_ocf = _row(acf, "Operating Cash Flow", "Cash Flow From Continuing Operating Activities") or []
+    a_capex = _row(acf, "Capital Expenditure") or []
+    a_acq = _row(acf, "Purchase Of Business", "Net Business Purchase And Sale") or []
+
+    def _at(rows, i):
+        return rows[i] if i < len(rows) else None
+
+    annual = []
+    for i in range(min(5, max(len(a_rev), len(a_ni)))):
+        ocf_i, cap_i = _at(a_ocf, i), _at(a_capex, i)
+        pre_i, tax_i = _at(a_pre, i), _at(a_tax, i)
+        annual.append({
+            "revenue": _at(a_rev, i), "net_income": _at(a_ni, i),
+            "ebit": _at(a_ebit, i),
+            "eff_tax_rate": (tax_i / pre_i if pre_i not in (None, 0)
+                             and tax_i is not None else None),
+            "fcf": (ocf_i + cap_i) if ocf_i is not None and cap_i is not None else None,
+            "acquisitions": _at(a_acq, i),
+        })
+
+    balance = {}
+    try:
+        balance = {
+            "total_debt": (_row(bs, "Total Debt") or [None])[0],
+            "cash": (_row(bs, "Cash Cash Equivalents And Short Term Investments",
+                          "Cash And Cash Equivalents") or [None])[0],
+            "equity": (_row(bs, "Stockholders Equity", "Common Stock Equity",
+                            "Total Equity Gross Minority Interest") or [None])[0],
+        }
+    except Exception:
+        pass
+
+    return {"available": True, "ttm": ttm, "annual": annual, "balance": balance,
+            "source": "yfinance statements", "as_of": _dt.date.today().isoformat()}

@@ -157,6 +157,12 @@ export interface ClaudeNews {
   created_ts: string
 }
 
+export interface VLMetric {
+  value: number | null
+  basis: string
+  approx: boolean
+}
+
 export interface TTMMetric {
   value: number | null
   source: string
@@ -286,6 +292,16 @@ export interface Analysis {
   fundamentals_ttm: {
     pe_ttm: TTMMetric
     yield_ttm: TTMMetric
+  } | null
+  value_lens: {
+    as_of: string | null
+    source: string
+    fcf_ttm: VLMetric; p_fcf: VLMetric; p_fcf_avg: VLMetric; pe_avg: VLMetric
+    payout_of_fcf_pct: VLMetric; ev: VLMetric; rev_cagr_3y: VLMetric
+    rev_cagr_5y: VLMetric; roic_ttm: VLMetric; roic_avg: VLMetric
+    acquisitions_total: VLMetric
+    ni_vs_fcf_flag: boolean; net_cash: boolean
+    readings: string[]; warnings: string[]
   } | null
   ex_div: { today: boolean; amount: number | null; pending: boolean } | null
   claude_stance: ClaudeStance | null

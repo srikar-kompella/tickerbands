@@ -43,6 +43,8 @@ IMPLEMENTATIONS: dict[str, dict[str, Callable]] = {
                          "mock": (mock, "fetch_dividends")},
     "eps_check": {"yfinance": (yfinance, "fetch_eps_ttm"),
                   "mock": (mock, "fetch_eps_ttm")},
+    "financial_statements": {"yfinance": (yfinance, "fetch_statements"),
+                             "mock": (mock, "fetch_statements")},
     "news_sentiment": {"finnhub": (finnhub, "fetch_news_sentiment"),
                        "mock": (mock, "fetch_news_sentiment")},
     "news_headlines": {"finnhub": (finnhub, "fetch_headlines"),

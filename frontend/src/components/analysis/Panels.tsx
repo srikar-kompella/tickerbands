@@ -70,6 +70,39 @@ export function FundamentalsPanel({ a, g }: { a: Analysis; g: G }) {
           ⚠ {w}
         </p>
       ))}
+      {a.value_lens && (
+        <div className="mt-3 border-t border-border pt-2">
+          <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted">
+            Value lens · statements ({a.value_lens.source} · {a.value_lens.as_of})
+          </div>
+          <div className="divide-y divide-border/60">
+            <Row label="FCF (TTM)" value={a.value_lens.fcf_ttm.value != null ? `$${fmtNum(a.value_lens.fcf_ttm.value, 0)}M` : '—'} tip={{ term: 'FCF (TTM)', plain: a.value_lens.fcf_ttm.basis, why: 'Statement-derived comparison lens — context for the research stance, not a signal.' }} />
+            <Row label="P/FCF" value={a.value_lens.p_fcf.value != null ? `${fmtNum(a.value_lens.p_fcf.value, 1)}x` : '—'} tip={{ term: 'P/FCF', plain: a.value_lens.p_fcf.basis, why: 'Statement-derived comparison lens — context for the research stance, not a signal.' }} />
+            <Row label="P/FCF (multi-FY avg)" value={a.value_lens.p_fcf_avg.value != null ? `${fmtNum(a.value_lens.p_fcf_avg.value, 1)}x` : '—'} tip={{ term: 'P/FCF avg', plain: a.value_lens.p_fcf_avg.basis, why: 'Statement-derived comparison lens — context for the research stance, not a signal.' }} />
+            <Row label="P/E (multi-FY avg)" value={a.value_lens.pe_avg.value != null ? `${fmtNum(a.value_lens.pe_avg.value, 1)}x` : '—'} tip={{ term: 'P/E avg', plain: a.value_lens.pe_avg.basis, why: 'Statement-derived comparison lens — context for the research stance, not a signal.' }} />
+            <Row label="Dividends ÷ FCF" value={a.value_lens.payout_of_fcf_pct.value != null ? fmtPct(a.value_lens.payout_of_fcf_pct.value, 0) : '—'} tip={{ term: 'Payout of FCF', plain: a.value_lens.payout_of_fcf_pct.basis, why: 'Statement-derived comparison lens — context for the research stance, not a signal.' }} />
+            <Row label="Enterprise value" value={a.value_lens.ev.value != null ? `$${fmtNum(a.value_lens.ev.value, 0)}M${a.value_lens.net_cash ? ' · net cash' : ''}` : '—'} tip={{ term: 'EV', plain: a.value_lens.ev.basis, why: 'Statement-derived comparison lens — context for the research stance, not a signal.' }} />
+            <Row label="Revenue CAGR 3y / ~5y" value={`${a.value_lens.rev_cagr_3y.value != null ? fmtPct(a.value_lens.rev_cagr_3y.value, 1) : '—'} / ${a.value_lens.rev_cagr_5y.value != null ? fmtPct(a.value_lens.rev_cagr_5y.value, 1) : '—'}`} tip={{ term: 'Revenue CAGR', plain: a.value_lens.rev_cagr_5y.basis, why: 'Statement-derived comparison lens — context for the research stance, not a signal.' }} />
+            <Row label="ROIC~ TTM / multi-yr" value={`${a.value_lens.roic_ttm.value != null ? fmtPct(a.value_lens.roic_ttm.value, 1) : '—'} / ${a.value_lens.roic_avg.value != null ? fmtPct(a.value_lens.roic_avg.value, 1) : '—'}`} tip={{ term: 'ROIC (approx)', plain: a.value_lens.roic_ttm.basis, why: 'Statement-derived comparison lens — context for the research stance, not a signal.' }} />
+            <Row label="Acquisitions (rep. FYs)" value={a.value_lens.acquisitions_total.value != null ? `$${fmtNum(a.value_lens.acquisitions_total.value, 0)}M` : '—'} tip={{ term: 'Net acquisitions', plain: a.value_lens.acquisitions_total.basis, why: 'Statement-derived comparison lens — context for the research stance, not a signal.' }} />
+          </div>
+          {(a.value_lens.readings ?? []).map((r, i) => (
+            <p key={`r${i}`} className="mt-1.5 rounded-lg border border-accent/30 bg-accent/5 px-2.5 py-1.5 text-[11px] text-accent">
+              {r}
+            </p>
+          ))}
+          {(a.value_lens.warnings ?? []).map((w, i) => (
+            <p key={`w${i}`} className="mt-1.5 rounded-lg border border-yellow-500/30 bg-yellow-500/5 px-2.5 py-1.5 text-[11px] text-yellow-500">
+              ⚠ {w}
+            </p>
+          ))}
+          <p className="mt-1.5 text-[10px] text-faint">
+            Comparison lenses for research — they feed the Ask-Claude prompt and
+            the reasoned stance, never a computed buy/sell. ROIC~ is an
+            approximation.
+          </p>
+        </div>
+      )}
     </SectionShell>
   )
 }

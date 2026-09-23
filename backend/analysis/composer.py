@@ -25,7 +25,7 @@ import os
 from typing import Any, Callable  # noqa: F401
 
 import config
-from analysis import earnings_moves, fundamentals_ttm, news_lex, setup_score, vol_bands
+from analysis import earnings_moves, fundamentals_ttm, news_lex, setup_score, value_lens, vol_bands
 from cache.store import get_or_fetch
 from db import connect
 from providers import registry
@@ -135,6 +135,18 @@ def _dividends(symbol: str, force: bool) -> dict | None:
         return None
     try:
         return get_or_fetch(f"dividends:{symbol.upper()}", config.TTL["dividends"],
+                            lambda: fn(symbol), force=force)["data"]
+    except ProviderError:
+        return None
+
+
+def _statements(symbol: str, force: bool) -> dict | None:
+    """Financial-statement aggregates for the value lens (24h cache)."""
+    fn = mock.fetch_statements if use_mock() else registry.resolve("financial_statements")
+    if fn is None:
+        return None
+    try:
+        return get_or_fetch(f"statements:{symbol.upper()}", config.TTL["statements"],
                             lambda: fn(symbol), force=force)["data"]
     except ProviderError:
         return None
@@ -537,6 +549,10 @@ def analyze(symbol: str, force: bool = False) -> dict[str, Any]:
             (quote or {}).get("last") or (closes[-1] if closes else None),
             sections["fundamentals"].get("data"), div_payload,
             _eps_check(symbol, force)),
+        "value_lens": value_lens.build_value_lens(
+            ((sections["fundamentals"].get("data") or {}).get("market_cap_m")
+             or 0) * 1e6 or None,
+            _statements(symbol, force)),
         "ex_div": {"today": ex_today_amt > 0 or ex_pending,
                    "amount": round(ex_today_amt, 4) if ex_today_amt > 0 else None,
                    # date known but amount unpublished → warn, never fabricate
