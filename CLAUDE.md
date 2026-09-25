@@ -103,7 +103,7 @@ User says: "I use Alpaca / Tradier / IBKR / Polygon / Tiingo / …". Steps:
 5. **Test:** add shape assertions in `backend/tests/` exercising your fetchers
    against recorded/fixture payloads (see `test_form4_parse…`,
    `test_extended_view…` for the fixture style — never live calls in tests).
-   Run the full suite with scratch env vars (above). All 159+ must stay green.
+   Run the full suite with scratch env vars (above). All 219+ must stay green.
 6. **Walk the user through setup:** where to create the API key, the exact
    `.env` line, then verify via `GET /api/health` (their provider true) and
    `GET /api/capabilities`, then load one ticker.

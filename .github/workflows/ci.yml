@@ -1,0 +1,31 @@
+name: CI
+on:
+  push: { branches: [main] }
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - run: pip install -r backend/requirements.txt
+      - name: pytest (scratch instance — never touches real user data)
+        env:
+          TICKERLENS_HOME: /tmp/tl-ci
+          TICKERLENS_DB_PATH: /tmp/tl-ci/test.db
+          TICKERLENS_SKIP_SEED: "1"
+          TICKERLENS_NO_AUTOREFRESH: "1"
+          TICKERLENS_NO_KEYRING: "1"
+        run: cd backend && python -m pytest tests -q
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: cd frontend && npm ci
+      - run: cd frontend && npm run typecheck
+      - run: cd frontend && npm run build
