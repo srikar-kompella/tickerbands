@@ -1,5 +1,9 @@
 # TickerLens 🔭
 
+[![CI](https://github.com/srikar-kompella/tickerlens/actions/workflows/ci.yml/badge.svg)](https://github.com/srikar-kompella/tickerlens/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/srikar-kompella/tickerlens)
+
 **A local-first research tool for US stocks & options — with receipts.**
 Bring your own data providers and broker credentials; everything runs on your
 machine. No cloud, no telemetry, no accounts.
@@ -27,15 +31,19 @@ on your own symbols; they were computed on one 20-ticker basket.
 
 Requirements: Python 3.11+, Node 18+.
 
+**Fastest: zero install.** Click *Open in GitHub Codespaces* above — the app
+boots in your browser in mock mode (deterministic fake data, no keys, no signup).
+
+**Locally:**
+
 ```bash
-git clone <this repo> && cd tickerlens
-mkdir -p ~/.tickerlens && cp config.example.toml ~/.tickerlens/config.toml
-# edit ~/.tickerlens/config.toml → set user.name + user.contact_email
-pip install yfinance          # tier-0 price data, no signup
-./run_app.sh                  # → http://localhost:5174
+git clone https://github.com/srikar-kompella/tickerlens.git && cd tickerlens
+TICKERLENS_MOCK=1 ./run_app.sh    # fake data first → http://localhost:5174
+./run_app.sh                      # real data: first run opens a setup wizard
 ```
 
-Try it with fake data first: `TICKERLENS_MOCK=1 ./run_app.sh`.
+`run_app.sh` bootstraps its own venv + node_modules. Real mode starts on
+keyless yfinance prices; the wizard lets you add broker/data keys any time.
 
 
 ## Screenshots
@@ -111,6 +119,14 @@ cite their basket and window; the Setup Score carries a permanent disclaimer;
 probabilities in the options lens display their measured error and flag the
 tail zone where history flatters; the app is read-only by construction — it
 cannot place orders. Research & education only. **Not investment advice.**
+
+## Contributing
+
+New here? Issues labeled
+[`good first issue`](https://github.com/srikar-kompella/tickerlens/labels/good%20first%20issue)
+are scoped to an afternoon. Want your broker supported? Open a
+*New data provider* issue — `CLAUDE.md` holds the full provider contract, so an
+AI coding agent can do most of the work. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Docs
 

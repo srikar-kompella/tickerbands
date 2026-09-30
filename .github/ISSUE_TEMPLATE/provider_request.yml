@@ -1,0 +1,25 @@
+name: New data provider / broker
+description: Request (or offer to build) support for a data source or broker
+labels: ["provider", "help wanted"]
+body:
+  - type: input
+    id: service
+    attributes:
+      label: Service or broker
+      placeholder: e.g. Alpaca, Polygon, Tiingo, IBKR, Fidelity
+    validations: { required: true }
+  - type: checkboxes
+    id: caps
+    attributes:
+      label: Which capabilities would it provide?
+      options:
+        - label: quotes / daily_history
+        - label: option_chain
+        - label: account (read-only positions)
+        - label: fundamentals / earnings / news
+  - type: dropdown
+    id: build
+    attributes:
+      label: Are you willing to build it?
+      description: CLAUDE.md contains the full provider contract — an AI coding agent can implement most providers from it.
+      options: ["Yes, I'll open a PR", "Maybe, with guidance", "No, just requesting"]
