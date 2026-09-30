@@ -20,6 +20,9 @@ and failed honestly. The tool is built around what survived validation, and
 ships its receipts (`backend/analysis/*_validation.json`) — regenerate them
 on your own symbols; they were computed on one 20-ticker basket.
 
+
+![Analysis — calibrated 80% expected range, premium-seller's lens, research stance](docs/screenshots/analysis-hero.png)
+
 ## Quick start (zero API keys)
 
 Requirements: Python 3.11+, Node 18+.
@@ -33,6 +36,17 @@ pip install yfinance          # tier-0 price data, no signup
 ```
 
 Try it with fake data first: `TICKERLENS_MOCK=1 ./run_app.sh`.
+
+
+## Screenshots
+
+| | |
+|---|---|
+| ![Signal panels + TTM fundamentals & value lens](docs/screenshots/analysis-panels.png) *Setup Score, news, insiders, TTM-true fundamentals with divergence warnings + statement value lens* | ![Discover](docs/screenshots/discover.png) *Discover: evidence screens + agent web-sweeps, grouped by convergence* |
+| ![Research discussions](docs/screenshots/discussions.png) *The LLM research loop: dated, taggable discussions with stances that age in plain sight* | ![Portfolio](docs/screenshots/portfolio.png) *Read-only brokerage view with organic value history (mock data shown)* |
+| ![Watchlist screener](docs/screenshots/watchlist.png) *Watchlist screener: band width, implied-vs-band, earnings distance, score* | ![Tunable weights + honest data-source status](docs/screenshots/settings.png) *Setup Score weights are yours to tune — with the empirical caveat attached* |
+
+All shots show **mock mode** (`TICKERLENS_MOCK=1`) — deterministic fake data.
 
 ## Bring your own providers
 
