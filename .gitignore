@@ -1,6 +1,8 @@
-# Personal data — never to a remote
-discussions/
-!discussions/.gitkeep
+# Personal data — never to a remote (ROOT-anchored: the unanchored form
+# also matched frontend/src/components/discussions/ and silently kept the
+# discussion UI components out of the public repo — CI run #1 caught it)
+/discussions/
+!/discussions/.gitkeep
 *.db
 *.db-journal
 *.db-wal
