@@ -104,11 +104,12 @@ def save(body: SaveBody):
         env_path = os.path.join(config.TICKERLENS_HOME, ".env")
         existing: dict[str, str] = {}
         if os.path.exists(env_path):
-            for line in open(env_path):
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    k, v = line.split("=", 1)
-                    existing[k.strip()] = v.strip()
+            with open(env_path) as env_file:
+                for line in env_file:
+                    line = line.strip()
+                    if line and not line.startswith("#") and "=" in line:
+                        k, v = line.split("=", 1)
+                        existing[k.strip()] = v.strip()
         for k, v in body.secrets.items():
             if v.strip():
                 existing[k.strip()] = v.strip()
