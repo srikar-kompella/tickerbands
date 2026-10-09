@@ -265,6 +265,36 @@
       "term": "Score history",
       "plain": "The Setup Score recorded each time you analyzed this ticker. Grows as you use the tool.",
       "why": "There's no 30-day backfill because point-in-time sentiment/options history doesn't exist — a reconstructed 'history' would be fiction. This one is real."
+    },
+    "discover_tab": {
+      "term": "Discover tab",
+      "plain": "Surfaces candidate leads from four evidence screens: open-market insider buying clusters (SEC Form 4), post-earnings announcement drift (PEAD), FINRA short-interest shifts, and agent web sweeps. Mainstream megacaps and broad ETFs are excluded by design.",
+      "why": "Provides an unranked starting point for research from documented signal sources. It does NOT predict tomorrow's direction, and it does not use backtested range metrics, setup scores, or volume spikes — every row is an idea to investigate, not a recommendation."
+    },
+    "value_lens": {
+      "term": "Value lens",
+      "plain": "A statement-derived view comparing trailing twelve months (TTM) foundational metrics against multi-year fiscal averages (Price/FCF, multi-year P/E and P/FCF, dividend payout ratio, and ROIC).",
+      "why": "Answers 'has the business fundamentally changed?' with multi-year baseline context and an accounting smell-test (Net Income vs FCF divergence). It does NOT feed the Setup Score, predict tomorrow's price, or indicate market timing — these are business comparison lenses, not directional signals."
+    },
+    "p_fcf": {
+      "term": "Price to Free Cash Flow (P/FCF)",
+      "plain": "Market capitalization divided by trailing twelve months Free Cash Flow (operating cash flow minus capital expenditures).",
+      "why": "Compares market valuation against actual cash generation rather than accrual net income. It does NOT tell you whether cash flow is sustainable, nor does it factor in debt obligations or lumpy capital-expenditure cycles on its own."
+    },
+    "div_fcf": {
+      "term": "Dividends / FCF",
+      "plain": "Total cash dividends paid divided by Free Cash Flow over the trailing twelve months.",
+      "why": "Checks whether dividend distributions are safely covered by cash generation rather than borrowing (flags when exceeding 50% or 100%). It does NOT guarantee future dividend policy or tell you whether management will borrow to maintain payouts."
+    },
+    "roic": {
+      "term": "Return on Invested Capital (ROIC, approx)",
+      "plain": "An approximation of operating efficiency, computed as EBIT × (1 − effective tax) ÷ (debt + equity − cash), matching backend/analysis/value_lens.py.",
+      "why": "Compares operating profit generation against total capital invested in the business over trailing and multi-year spans. It does NOT represent a strict GAAP figure or guarantee future returns — free statement data provides 4–5 fiscal years, and it does not account for off-balance-sheet leases, intangibles, or working capital swings."
+    },
+    "ni_fcf_divergence": {
+      "term": "Net Income vs FCF divergence",
+      "plain": "An accounting smell-test that flags when reported Net Income exceeds Free Cash Flow by more than 30%.",
+      "why": "Highlights potential earnings-quality concerns when accrual paper profits outpace actual cash entering the bank. It does NOT prove accounting manipulation — timing of inventory, receivables, or non-cash charges can legitimately cause temporary divergences."
     }
   }
 }

@@ -184,6 +184,48 @@ export default function Guide() {
         </p>
       </Section>
 
+      <Section title="Financial statements: the Value lens">
+        <p>
+          The <span className="text-text">Value lens</span> translates reported financial
+          statements into foundational comparison metrics — Price to Free Cash Flow (P/FCF),
+          multi-year P/FCF and P/E averages, dividend affordability (Dividends / FCF),
+          and an approximate Return on Invested Capital (ROIC).
+        </p>
+        <p>
+          These are <span className="text-text">comparison lenses, not signals</span>:
+          TTM vs multi-year average answers "has the business fundamentally changed?",
+          the Net Income vs FCF divergence flags earnings-quality smell tests, and
+          dividend payout checks whether distributions are funded by cash rather than debt.
+          None of this feeds the Setup Score — value metrics do not predict tomorrow's price move.
+        </p>
+        <p>
+          Honesty rules: every multi-year figure displays the actual number of fiscal years
+          available (typically 4–5 from free statement data, never idealized), ROIC is
+          explicitly labeled an approximation (EBIT × (1 − effective tax) ÷ (debt + equity − cash)),
+          and unavailable metrics return nothing rather than guesses.
+        </p>
+      </Section>
+
+      <Section title="Discover tab: candidate leads from documented signals">
+        <p>
+          The <span className="text-text">Discover tab</span> surfaces candidate leads from
+          four documented evidence screens: open-market insider buying clusters (SEC Form 4),
+          post-earnings announcement drift (PEAD beats), FINRA short-interest shifts, and
+          agent web sweeps.
+        </p>
+        <p>
+          Candidates are <span className="text-text">leads, not recommendations</span>. Every row
+          displays its evidence source, reasoning, and date. Mainstream megacaps (Mag-7,
+          index mainstays, ETFs, and names &gt;$75B) are excluded by design to focus on non-obvious
+          names.
+        </p>
+        <p>
+          What Discover does NOT do: it does not predict direction, and it does not use
+          backtested range metrics, setup scores, or volume spikes. Dismissed candidates
+          stay dismissed unless a genuinely new evidence source arrives.
+        </p>
+      </Section>
+
       <Section title="Portfolio tab">
         <p>
           A live, read-only view of your Schwab account (shared weekly-re-auth
