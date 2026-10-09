@@ -29,11 +29,12 @@ REPO_ROOT = os.path.dirname(BACKEND_DIR)
 # secrets: load instance .env into the environment (setdefault — real env wins)
 _ENV_PATH = os.path.join(TICKERLENS_HOME, ".env")
 if os.path.exists(_ENV_PATH):
-    for _line in open(_ENV_PATH):
-        _line = _line.strip()
-        if _line and not _line.startswith("#") and "=" in _line:
-            _k, _v = _line.split("=", 1)
-            os.environ.setdefault(_k.strip(), _v.strip().strip('"').strip("'"))
+    with open(_ENV_PATH) as _env_file:
+        for _line in _env_file:
+            _line = _line.strip()
+            if _line and not _line.startswith("#") and "=" in _line:
+                _k, _v = _line.split("=", 1)
+                os.environ.setdefault(_k.strip(), _v.strip().strip('"').strip("'"))
 
 # user config (no secrets here)
 _CONFIG: dict = {}
@@ -180,8 +181,9 @@ def reload() -> None:
         (cfg.get("paths") or {}).get("portfolio_db") or "") or None
     env_path = os.path.join(TICKERLENS_HOME, ".env")
     if os.path.exists(env_path):
-        for line in open(env_path):
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                k, v = line.split("=", 1)
-                os.environ[k.strip()] = v.strip().strip('"').strip("'")
+        with open(env_path) as env_file:
+            for line in env_file:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, v = line.split("=", 1)
+                    os.environ[k.strip()] = v.strip().strip('"').strip("'")
