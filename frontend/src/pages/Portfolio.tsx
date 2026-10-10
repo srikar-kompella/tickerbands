@@ -7,6 +7,8 @@ import { motion } from 'framer-motion'
 import { Briefcase, Check, Download, Plus, RefreshCw, X as XIcon } from 'lucide-react'
 import { useState } from 'react'
 import { Line, LineChart, ResponsiveContainer, Tooltip, YAxis } from 'recharts'
+import { toast } from 'sonner'
+import { api } from '@/lib/api'
 import { fmtAge, fmtMoney, fmtNum, fmtPct, plColor } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { Badge, Button, Card, CardTitle, EmptyState, SkeletonCard } from '@/components/ui'
@@ -271,10 +273,8 @@ function SandboxCard({ symbols }: { symbols: string[] }) {
     if (!Object.keys(payload).length) return
     setBusy(true)
     try {
-      const { api } = await import('@/lib/api')
       setResult(await api.whatIf(payload))
     } catch (e) {
-      const { toast } = await import('sonner')
       toast.error((e as Error).message)
     } finally {
       setBusy(false)
