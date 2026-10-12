@@ -284,7 +284,7 @@
     "div_fcf": {
       "term": "Dividends / FCF",
       "plain": "Total cash dividends paid divided by Free Cash Flow over the trailing twelve months.",
-      "why": "Checks whether dividend distributions are safely covered by cash generation rather than borrowing (flags when exceeding 50% or 100%). It does NOT guarantee future dividend policy or tell you whether management will borrow to maintain payouts."
+      "why": "Checks whether dividend distributions are safely covered by cash generation rather than borrowing (flags when exceeding 50%). It does NOT guarantee future dividend policy or tell you whether management will borrow to maintain payouts."
     },
     "roic": {
       "term": "Return on Invested Capital (ROIC, approx)",

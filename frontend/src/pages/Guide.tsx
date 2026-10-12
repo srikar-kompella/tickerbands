@@ -216,7 +216,7 @@ export default function Guide() {
         <p>
           Candidates are <span className="text-text">leads, not recommendations</span>. Every row
           displays its evidence source, reasoning, and date. Mainstream megacaps (Mag-7,
-          index mainstays, ETFs, and names &gt;$75B) are excluded by design to focus on non-obvious
+          index mainstays, mainstream index ETFs, and names &gt;$75B) are excluded by design to focus on non-obvious
           names.
         </p>
         <p>
