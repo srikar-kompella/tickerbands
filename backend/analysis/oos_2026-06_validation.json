@@ -1,0 +1,1201 @@
+{
+ "note": "Forward out-of-sample check of the FROZEN band + breach constructions on days after the engine-selection data. Pre-registration is the docstring of backend/validation/oos_2026_06.py (committed before data fetch).",
+ "run_utc": "2026-10-12T00:12:25+00:00",
+ "frozen_constructions_commit": "6e766a36505693c5b5ef1c41ec6b36afa735f6af",
+ "eval_window": {
+  "primary_start": "2026-06-02",
+  "strict_start": "2026-06-08",
+  "end_latest_close": "2026-10-09"
+ },
+ "engine_selection_data_last_bar": "2026-06-05",
+ "tickers": [
+  "AAPL",
+  "AVGO",
+  "COIN",
+  "COST",
+  "GOOGL",
+  "HIMS",
+  "IWM",
+  "JPM",
+  "LLY",
+  "META",
+  "MSFT",
+  "NVDA",
+  "PHYS",
+  "PSLV",
+  "QQQ",
+  "SPY",
+  "TLT",
+  "TSLA",
+  "XLE",
+  "XOM"
+ ],
+ "data_source": "Yahoo Finance via yfinance 1.5.2, auto_adjust=False, actions=True",
+ "coverage_target_pct": 80.0,
+ "band": {
+  "primary_2026-06-02": {
+   "flat20": {
+    "coverage_pct": 82.8,
+    "n_ticker_days": 1820,
+    "n_trading_days": 91,
+    "wilson95_pct": [
+     81.0,
+     84.47
+    ],
+    "date_cluster_bootstrap95_pct": [
+     80.33,
+     85.05
+    ],
+    "mean_halfwidth_pct": 2.792,
+    "per_ticker": {
+     "AAPL": {
+      "covered_pct": 84.62,
+      "days": 91
+     },
+     "AVGO": {
+      "covered_pct": 82.42,
+      "days": 91
+     },
+     "COIN": {
+      "covered_pct": 82.42,
+      "days": 91
+     },
+     "COST": {
+      "covered_pct": 84.62,
+      "days": 91
+     },
+     "GOOGL": {
+      "covered_pct": 82.42,
+      "days": 91
+     },
+     "HIMS": {
+      "covered_pct": 82.42,
+      "days": 91
+     },
+     "IWM": {
+      "covered_pct": 81.32,
+      "days": 91
+     },
+     "JPM": {
+      "covered_pct": 82.42,
+      "days": 91
+     },
+     "LLY": {
+      "covered_pct": 85.71,
+      "days": 91
+     },
+     "META": {
+      "covered_pct": 80.22,
+      "days": 91
+     },
+     "MSFT": {
+      "covered_pct": 85.71,
+      "days": 91
+     },
+     "NVDA": {
+      "covered_pct": 83.52,
+      "days": 91
+     },
+     "PHYS": {
+      "covered_pct": 83.52,
+      "days": 91
+     },
+     "PSLV": {
+      "covered_pct": 80.22,
+      "days": 91
+     },
+     "QQQ": {
+      "covered_pct": 83.52,
+      "days": 91
+     },
+     "SPY": {
+      "covered_pct": 83.52,
+      "days": 91
+     },
+     "TLT": {
+      "covered_pct": 79.12,
+      "days": 91
+     },
+     "TSLA": {
+      "covered_pct": 82.42,
+      "days": 91
+     },
+     "XLE": {
+      "covered_pct": 85.71,
+      "days": 91
+     },
+     "XOM": {
+      "covered_pct": 80.22,
+      "days": 91
+     }
+    }
+   },
+   "ewma": {
+    "coverage_pct": 83.68,
+    "n_ticker_days": 1820,
+    "n_trading_days": 91,
+    "wilson95_pct": [
+     81.91,
+     85.31
+    ],
+    "date_cluster_bootstrap95_pct": [
+     81.37,
+     85.82
+    ],
+    "mean_halfwidth_pct": 2.822,
+    "per_ticker": {
+     "AAPL": {
+      "covered_pct": 84.62,
+      "days": 91
+     },
+     "AVGO": {
+      "covered_pct": 84.62,
+      "days": 91
+     },
+     "COIN": {
+      "covered_pct": 79.12,
+      "days": 91
+     },
+     "COST": {
+      "covered_pct": 85.71,
+      "days": 91
+     },
+     "GOOGL": {
+      "covered_pct": 84.62,
+      "days": 91
+     },
+     "HIMS": {
+      "covered_pct": 82.42,
+      "days": 91
+     },
+     "IWM": {
+      "covered_pct": 82.42,
+      "days": 91
+     },
+     "JPM": {
+      "covered_pct": 82.42,
+      "days": 91
+     },
+     "LLY": {
+      "covered_pct": 85.71,
+      "days": 91
+     },
+     "META": {
+      "covered_pct": 83.52,
+      "days": 91
+     },
+     "MSFT": {
+      "covered_pct": 89.01,
+      "days": 91
+     },
+     "NVDA": {
+      "covered_pct": 81.32,
+      "days": 91
+     },
+     "PHYS": {
+      "covered_pct": 84.62,
+      "days": 91
+     },
+     "PSLV": {
+      "covered_pct": 83.52,
+      "days": 91
+     },
+     "QQQ": {
+      "covered_pct": 85.71,
+      "days": 91
+     },
+     "SPY": {
+      "covered_pct": 83.52,
+      "days": 91
+     },
+     "TLT": {
+      "covered_pct": 82.42,
+      "days": 91
+     },
+     "TSLA": {
+      "covered_pct": 82.42,
+      "days": 91
+     },
+     "XLE": {
+      "covered_pct": 85.71,
+      "days": 91
+     },
+     "XOM": {
+      "covered_pct": 80.22,
+      "days": 91
+     }
+    }
+   },
+   "conformal": {
+    "coverage_pct": 79.4,
+    "n_ticker_days": 1820,
+    "n_trading_days": 91,
+    "wilson95_pct": [
+     77.48,
+     81.19
+    ],
+    "date_cluster_bootstrap95_pct": [
+     76.65,
+     82.03
+    ],
+    "mean_halfwidth_pct": 2.504,
+    "per_ticker": {
+     "AAPL": {
+      "covered_pct": 78.02,
+      "days": 91
+     },
+     "AVGO": {
+      "covered_pct": 75.82,
+      "days": 91
+     },
+     "COIN": {
+      "covered_pct": 78.02,
+      "days": 91
+     },
+     "COST": {
+      "covered_pct": 82.42,
+      "days": 91
+     },
+     "GOOGL": {
+      "covered_pct": 82.42,
+      "days": 91
+     },
+     "HIMS": {
+      "covered_pct": 79.12,
+      "days": 91
+     },
+     "IWM": {
+      "covered_pct": 92.31,
+      "days": 91
+     },
+     "JPM": {
+      "covered_pct": 83.52,
+      "days": 91
+     },
+     "LLY": {
+      "covered_pct": 82.42,
+      "days": 91
+     },
+     "META": {
+      "covered_pct": 62.64,
+      "days": 91
+     },
+     "MSFT": {
+      "covered_pct": 74.73,
+      "days": 91
+     },
+     "NVDA": {
+      "covered_pct": 80.22,
+      "days": 91
+     },
+     "PHYS": {
+      "covered_pct": 83.52,
+      "days": 91
+     },
+     "PSLV": {
+      "covered_pct": 85.71,
+      "days": 91
+     },
+     "QQQ": {
+      "covered_pct": 71.43,
+      "days": 91
+     },
+     "SPY": {
+      "covered_pct": 81.32,
+      "days": 91
+     },
+     "TLT": {
+      "covered_pct": 79.12,
+      "days": 91
+     },
+     "TSLA": {
+      "covered_pct": 76.92,
+      "days": 91
+     },
+     "XLE": {
+      "covered_pct": 81.32,
+      "days": 91
+     },
+     "XOM": {
+      "covered_pct": 76.92,
+      "days": 91
+     }
+    }
+   },
+   "orig_flat20": {
+    "coverage_pct": 82.8,
+    "n_ticker_days": 1820,
+    "n_trading_days": 91,
+    "wilson95_pct": [
+     81.0,
+     84.47
+    ],
+    "date_cluster_bootstrap95_pct": [
+     80.38,
+     85.05
+    ],
+    "mean_halfwidth_pct": 2.791,
+    "per_ticker": {
+     "AAPL": {
+      "covered_pct": 84.62,
+      "days": 91
+     },
+     "AVGO": {
+      "covered_pct": 82.42,
+      "days": 91
+     },
+     "COIN": {
+      "covered_pct": 82.42,
+      "days": 91
+     },
+     "COST": {
+      "covered_pct": 84.62,
+      "days": 91
+     },
+     "GOOGL": {
+      "covered_pct": 82.42,
+      "days": 91
+     },
+     "HIMS": {
+      "covered_pct": 82.42,
+      "days": 91
+     },
+     "IWM": {
+      "covered_pct": 81.32,
+      "days": 91
+     },
+     "JPM": {
+      "covered_pct": 82.42,
+      "days": 91
+     },
+     "LLY": {
+      "covered_pct": 85.71,
+      "days": 91
+     },
+     "META": {
+      "covered_pct": 80.22,
+      "days": 91
+     },
+     "MSFT": {
+      "covered_pct": 85.71,
+      "days": 91
+     },
+     "NVDA": {
+      "covered_pct": 83.52,
+      "days": 91
+     },
+     "PHYS": {
+      "covered_pct": 83.52,
+      "days": 91
+     },
+     "PSLV": {
+      "covered_pct": 80.22,
+      "days": 91
+     },
+     "QQQ": {
+      "covered_pct": 83.52,
+      "days": 91
+     },
+     "SPY": {
+      "covered_pct": 83.52,
+      "days": 91
+     },
+     "TLT": {
+      "covered_pct": 79.12,
+      "days": 91
+     },
+     "TSLA": {
+      "covered_pct": 82.42,
+      "days": 91
+     },
+     "XLE": {
+      "covered_pct": 85.71,
+      "days": 91
+     },
+     "XOM": {
+      "covered_pct": 80.22,
+      "days": 91
+     }
+    }
+   }
+  },
+  "strict_2026-06-08": {
+   "flat20": {
+    "coverage_pct": 83.33,
+    "n_ticker_days": 1740,
+    "n_trading_days": 87,
+    "wilson95_pct": [
+     81.51,
+     85.01
+    ],
+    "date_cluster_bootstrap95_pct": [
+     80.86,
+     85.69
+    ],
+    "mean_halfwidth_pct": 2.795,
+    "per_ticker": {
+     "AAPL": {
+      "covered_pct": 86.21,
+      "days": 87
+     },
+     "AVGO": {
+      "covered_pct": 85.06,
+      "days": 87
+     },
+     "COIN": {
+      "covered_pct": 83.91,
+      "days": 87
+     },
+     "COST": {
+      "covered_pct": 83.91,
+      "days": 87
+     },
+     "GOOGL": {
+      "covered_pct": 83.91,
+      "days": 87
+     },
+     "HIMS": {
+      "covered_pct": 81.61,
+      "days": 87
+     },
+     "IWM": {
+      "covered_pct": 81.61,
+      "days": 87
+     },
+     "JPM": {
+      "covered_pct": 82.76,
+      "days": 87
+     },
+     "LLY": {
+      "covered_pct": 86.21,
+      "days": 87
+     },
+     "META": {
+      "covered_pct": 81.61,
+      "days": 87
+     },
+     "MSFT": {
+      "covered_pct": 87.36,
+      "days": 87
+     },
+     "NVDA": {
+      "covered_pct": 85.06,
+      "days": 87
+     },
+     "PHYS": {
+      "covered_pct": 83.91,
+      "days": 87
+     },
+     "PSLV": {
+      "covered_pct": 80.46,
+      "days": 87
+     },
+     "QQQ": {
+      "covered_pct": 83.91,
+      "days": 87
+     },
+     "SPY": {
+      "covered_pct": 83.91,
+      "days": 87
+     },
+     "TLT": {
+      "covered_pct": 78.16,
+      "days": 87
+     },
+     "TSLA": {
+      "covered_pct": 82.76,
+      "days": 87
+     },
+     "XLE": {
+      "covered_pct": 85.06,
+      "days": 87
+     },
+     "XOM": {
+      "covered_pct": 79.31,
+      "days": 87
+     }
+    }
+   },
+   "ewma": {
+    "coverage_pct": 84.2,
+    "n_ticker_days": 1740,
+    "n_trading_days": 87,
+    "wilson95_pct": [
+     82.41,
+     85.83
+    ],
+    "date_cluster_bootstrap95_pct": [
+     81.9,
+     86.44
+    ],
+    "mean_halfwidth_pct": 2.825,
+    "per_ticker": {
+     "AAPL": {
+      "covered_pct": 85.06,
+      "days": 87
+     },
+     "AVGO": {
+      "covered_pct": 87.36,
+      "days": 87
+     },
+     "COIN": {
+      "covered_pct": 80.46,
+      "days": 87
+     },
+     "COST": {
+      "covered_pct": 85.06,
+      "days": 87
+     },
+     "GOOGL": {
+      "covered_pct": 86.21,
+      "days": 87
+     },
+     "HIMS": {
+      "covered_pct": 81.61,
+      "days": 87
+     },
+     "IWM": {
+      "covered_pct": 82.76,
+      "days": 87
+     },
+     "JPM": {
+      "covered_pct": 82.76,
+      "days": 87
+     },
+     "LLY": {
+      "covered_pct": 86.21,
+      "days": 87
+     },
+     "META": {
+      "covered_pct": 85.06,
+      "days": 87
+     },
+     "MSFT": {
+      "covered_pct": 90.8,
+      "days": 87
+     },
+     "NVDA": {
+      "covered_pct": 82.76,
+      "days": 87
+     },
+     "PHYS": {
+      "covered_pct": 85.06,
+      "days": 87
+     },
+     "PSLV": {
+      "covered_pct": 83.91,
+      "days": 87
+     },
+     "QQQ": {
+      "covered_pct": 86.21,
+      "days": 87
+     },
+     "SPY": {
+      "covered_pct": 83.91,
+      "days": 87
+     },
+     "TLT": {
+      "covered_pct": 81.61,
+      "days": 87
+     },
+     "TSLA": {
+      "covered_pct": 82.76,
+      "days": 87
+     },
+     "XLE": {
+      "covered_pct": 85.06,
+      "days": 87
+     },
+     "XOM": {
+      "covered_pct": 79.31,
+      "days": 87
+     }
+    }
+   },
+   "conformal": {
+    "coverage_pct": 79.94,
+    "n_ticker_days": 1740,
+    "n_trading_days": 87,
+    "wilson95_pct": [
+     78.0,
+     81.76
+    ],
+    "date_cluster_bootstrap95_pct": [
+     77.3,
+     82.47
+    ],
+    "mean_halfwidth_pct": 2.509,
+    "per_ticker": {
+     "AAPL": {
+      "covered_pct": 78.16,
+      "days": 87
+     },
+     "AVGO": {
+      "covered_pct": 78.16,
+      "days": 87
+     },
+     "COIN": {
+      "covered_pct": 79.31,
+      "days": 87
+     },
+     "COST": {
+      "covered_pct": 81.61,
+      "days": 87
+     },
+     "GOOGL": {
+      "covered_pct": 83.91,
+      "days": 87
+     },
+     "HIMS": {
+      "covered_pct": 79.31,
+      "days": 87
+     },
+     "IWM": {
+      "covered_pct": 93.1,
+      "days": 87
+     },
+     "JPM": {
+      "covered_pct": 83.91,
+      "days": 87
+     },
+     "LLY": {
+      "covered_pct": 82.76,
+      "days": 87
+     },
+     "META": {
+      "covered_pct": 63.22,
+      "days": 87
+     },
+     "MSFT": {
+      "covered_pct": 77.01,
+      "days": 87
+     },
+     "NVDA": {
+      "covered_pct": 81.61,
+      "days": 87
+     },
+     "PHYS": {
+      "covered_pct": 83.91,
+      "days": 87
+     },
+     "PSLV": {
+      "covered_pct": 86.21,
+      "days": 87
+     },
+     "QQQ": {
+      "covered_pct": 71.26,
+      "days": 87
+     },
+     "SPY": {
+      "covered_pct": 81.61,
+      "days": 87
+     },
+     "TLT": {
+      "covered_pct": 78.16,
+      "days": 87
+     },
+     "TSLA": {
+      "covered_pct": 77.01,
+      "days": 87
+     },
+     "XLE": {
+      "covered_pct": 81.61,
+      "days": 87
+     },
+     "XOM": {
+      "covered_pct": 77.01,
+      "days": 87
+     }
+    }
+   },
+   "orig_flat20": {
+    "coverage_pct": 83.33,
+    "n_ticker_days": 1740,
+    "n_trading_days": 87,
+    "wilson95_pct": [
+     81.51,
+     85.01
+    ],
+    "date_cluster_bootstrap95_pct": [
+     80.86,
+     85.75
+    ],
+    "mean_halfwidth_pct": 2.795,
+    "per_ticker": {
+     "AAPL": {
+      "covered_pct": 86.21,
+      "days": 87
+     },
+     "AVGO": {
+      "covered_pct": 85.06,
+      "days": 87
+     },
+     "COIN": {
+      "covered_pct": 83.91,
+      "days": 87
+     },
+     "COST": {
+      "covered_pct": 83.91,
+      "days": 87
+     },
+     "GOOGL": {
+      "covered_pct": 83.91,
+      "days": 87
+     },
+     "HIMS": {
+      "covered_pct": 81.61,
+      "days": 87
+     },
+     "IWM": {
+      "covered_pct": 81.61,
+      "days": 87
+     },
+     "JPM": {
+      "covered_pct": 82.76,
+      "days": 87
+     },
+     "LLY": {
+      "covered_pct": 86.21,
+      "days": 87
+     },
+     "META": {
+      "covered_pct": 81.61,
+      "days": 87
+     },
+     "MSFT": {
+      "covered_pct": 87.36,
+      "days": 87
+     },
+     "NVDA": {
+      "covered_pct": 85.06,
+      "days": 87
+     },
+     "PHYS": {
+      "covered_pct": 83.91,
+      "days": 87
+     },
+     "PSLV": {
+      "covered_pct": 80.46,
+      "days": 87
+     },
+     "QQQ": {
+      "covered_pct": 83.91,
+      "days": 87
+     },
+     "SPY": {
+      "covered_pct": 83.91,
+      "days": 87
+     },
+     "TLT": {
+      "covered_pct": 78.16,
+      "days": 87
+     },
+     "TSLA": {
+      "covered_pct": 82.76,
+      "days": 87
+     },
+     "XLE": {
+      "covered_pct": 85.06,
+      "days": 87
+     },
+     "XOM": {
+      "covered_pct": 79.31,
+      "days": 87
+     }
+    }
+   }
+  }
+ },
+ "breach": {
+  "5": {
+   "horizon_days": 5,
+   "nonoverlap_total_n": 1800,
+   "overlap_total_n": 8600,
+   "primary_nonoverlap_vs_mean_pred": [
+    {
+     "bucket": "0.00-0.05",
+     "n": 70,
+     "mean_pred": 0.027,
+     "realized": 0.0,
+     "dev_pp": 2.7
+    },
+    {
+     "bucket": "0.05-0.15",
+     "n": 164,
+     "mean_pred": 0.077,
+     "realized": 0.055,
+     "dev_pp": 2.2
+    },
+    {
+     "bucket": "0.15-0.30",
+     "n": 317,
+     "mean_pred": 0.228,
+     "realized": 0.218,
+     "dev_pp": 1.1
+    },
+    {
+     "bucket": "0.30-0.50",
+     "n": 241,
+     "mean_pred": 0.392,
+     "realized": 0.378,
+     "dev_pp": 1.4
+    },
+    {
+     "bucket": "0.50-0.70",
+     "n": 377,
+     "mean_pred": 0.58,
+     "realized": 0.589,
+     "dev_pp": 0.9
+    },
+    {
+     "bucket": "0.70-0.85",
+     "n": 260,
+     "mean_pred": 0.78,
+     "realized": 0.777,
+     "dev_pp": 0.3
+    },
+    {
+     "bucket": "0.85-0.95",
+     "n": 238,
+     "mean_pred": 0.898,
+     "realized": 0.887,
+     "dev_pp": 1.1
+    },
+    {
+     "bucket": "0.95-1.01",
+     "n": 133,
+     "mean_pred": 0.974,
+     "realized": 0.97,
+     "dev_pp": 0.4
+    }
+   ],
+   "primary_max_dev_pp_buckets_n_ge_30": 2.7,
+   "secondary_overlap_vs_midpoint": [
+    {
+     "bucket": "0.00-0.05",
+     "n": 332,
+     "mean_pred": 0.027,
+     "realized": 0.006,
+     "dev_pp": 1.9
+    },
+    {
+     "bucket": "0.05-0.15",
+     "n": 786,
+     "mean_pred": 0.077,
+     "realized": 0.065,
+     "dev_pp": 3.5
+    },
+    {
+     "bucket": "0.15-0.30",
+     "n": 1518,
+     "mean_pred": 0.229,
+     "realized": 0.215,
+     "dev_pp": 1.0
+    },
+    {
+     "bucket": "0.30-0.50",
+     "n": 1148,
+     "mean_pred": 0.392,
+     "realized": 0.368,
+     "dev_pp": 3.2
+    },
+    {
+     "bucket": "0.50-0.70",
+     "n": 1801,
+     "mean_pred": 0.58,
+     "realized": 0.557,
+     "dev_pp": 4.3
+    },
+    {
+     "bucket": "0.70-0.85",
+     "n": 1236,
+     "mean_pred": 0.779,
+     "realized": 0.775,
+     "dev_pp": 0.0
+    },
+    {
+     "bucket": "0.85-0.95",
+     "n": 1146,
+     "mean_pred": 0.898,
+     "realized": 0.88,
+     "dev_pp": 2.0
+    },
+    {
+     "bucket": "0.95-1.01",
+     "n": 633,
+     "mean_pred": 0.974,
+     "realized": 0.972,
+     "dev_pp": 0.3
+    }
+   ],
+   "secondary_max_dev_pp": 4.3
+  },
+  "10": {
+   "horizon_days": 10,
+   "nonoverlap_total_n": 900,
+   "overlap_total_n": 8100,
+   "primary_nonoverlap_vs_mean_pred": [
+    {
+     "bucket": "0.00-0.05",
+     "n": 12,
+     "mean_pred": 0.016,
+     "realized": 0.0,
+     "dev_pp": 1.6
+    },
+    {
+     "bucket": "0.05-0.15",
+     "n": 57,
+     "mean_pred": 0.116,
+     "realized": 0.105,
+     "dev_pp": 1.1
+    },
+    {
+     "bucket": "0.15-0.30",
+     "n": 100,
+     "mean_pred": 0.23,
+     "realized": 0.22,
+     "dev_pp": 1.0
+    },
+    {
+     "bucket": "0.30-0.50",
+     "n": 222,
+     "mean_pred": 0.395,
+     "realized": 0.378,
+     "dev_pp": 1.7
+    },
+    {
+     "bucket": "0.50-0.70",
+     "n": 227,
+     "mean_pred": 0.591,
+     "realized": 0.559,
+     "dev_pp": 3.2
+    },
+    {
+     "bucket": "0.70-0.85",
+     "n": 157,
+     "mean_pred": 0.78,
+     "realized": 0.726,
+     "dev_pp": 5.4
+    },
+    {
+     "bucket": "0.85-0.95",
+     "n": 105,
+     "mean_pred": 0.897,
+     "realized": 0.905,
+     "dev_pp": 0.8
+    },
+    {
+     "bucket": "0.95-1.01",
+     "n": 20,
+     "mean_pred": 0.976,
+     "realized": 1.0,
+     "dev_pp": 2.4
+    }
+   ],
+   "primary_max_dev_pp_buckets_n_ge_30": 5.4,
+   "secondary_overlap_vs_midpoint": [
+    {
+     "bucket": "0.00-0.05",
+     "n": 104,
+     "mean_pred": 0.015,
+     "realized": 0.0,
+     "dev_pp": 2.5
+    },
+    {
+     "bucket": "0.05-0.15",
+     "n": 509,
+     "mean_pred": 0.115,
+     "realized": 0.112,
+     "dev_pp": 1.2
+    },
+    {
+     "bucket": "0.15-0.30",
+     "n": 898,
+     "mean_pred": 0.229,
+     "realized": 0.21,
+     "dev_pp": 1.5
+    },
+    {
+     "bucket": "0.30-0.50",
+     "n": 2001,
+     "mean_pred": 0.395,
+     "realized": 0.361,
+     "dev_pp": 3.9
+    },
+    {
+     "bucket": "0.50-0.70",
+     "n": 2054,
+     "mean_pred": 0.591,
+     "realized": 0.565,
+     "dev_pp": 3.5
+    },
+    {
+     "bucket": "0.70-0.85",
+     "n": 1428,
+     "mean_pred": 0.781,
+     "realized": 0.753,
+     "dev_pp": 2.2
+    },
+    {
+     "bucket": "0.85-0.95",
+     "n": 929,
+     "mean_pred": 0.897,
+     "realized": 0.907,
+     "dev_pp": 0.7
+    },
+    {
+     "bucket": "0.95-1.01",
+     "n": 177,
+     "mean_pred": 0.976,
+     "realized": 0.989,
+     "dev_pp": 1.4
+    }
+   ],
+   "secondary_max_dev_pp": 3.9
+  },
+  "21": {
+   "horizon_days": 21,
+   "nonoverlap_total_n": 400,
+   "overlap_total_n": 7000,
+   "primary_nonoverlap_vs_mean_pred": [
+    {
+     "bucket": "0.00-0.05",
+     "n": 4,
+     "mean_pred": 0.015,
+     "realized": 0.0,
+     "dev_pp": 1.6
+    },
+    {
+     "bucket": "0.05-0.15",
+     "n": 5,
+     "mean_pred": 0.134,
+     "realized": 0.0,
+     "dev_pp": 13.4
+    },
+    {
+     "bucket": "0.15-0.30",
+     "n": 27,
+     "mean_pred": 0.232,
+     "realized": 0.185,
+     "dev_pp": 4.7
+    },
+    {
+     "bucket": "0.30-0.50",
+     "n": 131,
+     "mean_pred": 0.419,
+     "realized": 0.351,
+     "dev_pp": 6.8
+    },
+    {
+     "bucket": "0.50-0.70",
+     "n": 106,
+     "mean_pred": 0.591,
+     "realized": 0.5,
+     "dev_pp": 9.1
+    },
+    {
+     "bucket": "0.70-0.85",
+     "n": 91,
+     "mean_pred": 0.766,
+     "realized": 0.659,
+     "dev_pp": 10.6
+    },
+    {
+     "bucket": "0.85-0.95",
+     "n": 36,
+     "mean_pred": 0.893,
+     "realized": 0.861,
+     "dev_pp": 3.2
+    },
+    {
+     "bucket": "0.95-1.01",
+     "n": 0
+    }
+   ],
+   "primary_max_dev_pp_buckets_n_ge_30": 10.6,
+   "secondary_overlap_vs_midpoint": [
+    {
+     "bucket": "0.00-0.05",
+     "n": 70,
+     "mean_pred": 0.016,
+     "realized": 0.0,
+     "dev_pp": 2.5
+    },
+    {
+     "bucket": "0.05-0.15",
+     "n": 81,
+     "mean_pred": 0.132,
+     "realized": 0.012,
+     "dev_pp": 8.8
+    },
+    {
+     "bucket": "0.15-0.30",
+     "n": 484,
+     "mean_pred": 0.229,
+     "realized": 0.233,
+     "dev_pp": 0.8
+    },
+    {
+     "bucket": "0.30-0.50",
+     "n": 2270,
+     "mean_pred": 0.417,
+     "realized": 0.429,
+     "dev_pp": 2.9
+    },
+    {
+     "bucket": "0.50-0.70",
+     "n": 1906,
+     "mean_pred": 0.59,
+     "realized": 0.557,
+     "dev_pp": 4.3
+    },
+    {
+     "bucket": "0.70-0.85",
+     "n": 1558,
+     "mean_pred": 0.766,
+     "realized": 0.741,
+     "dev_pp": 3.4
+    },
+    {
+     "bucket": "0.85-0.95",
+     "n": 631,
+     "mean_pred": 0.892,
+     "realized": 0.868,
+     "dev_pp": 3.2
+    },
+    {
+     "bucket": "0.95-1.01",
+     "n": 0
+    }
+   ],
+   "secondary_max_dev_pp": 8.8
+  }
+ },
+ "derived_series_sha256": {
+  "AAPL": "d6444be19b4ea9ee847b4674d4fcd9fb7524c428a79496fc17bd261fe4c725f4",
+  "AVGO": "84bde9505bb35fbb6e7b0cb827ccd39fee9478a32cac3e71fb734ed5ea3ebdf9",
+  "COIN": "feb79542e2f4979a317089e69feae960947d8f601d4b1f5e1ad4cdff14783402",
+  "COST": "b9ce09b6f73642c75434909243d7c175f362fa8b76bff25907f283659e103099",
+  "GOOGL": "4c711f93020e0148f1047b4a2080b4a7f34731a1392c3e05acef056df312ac99",
+  "HIMS": "2c7cdac060022de3bc202e9e34e5fe97abc547ece9deeed7e319e0d7a52f14ec",
+  "IWM": "8a4e32b842b45aeb4ba57cc529c233c3d2b5c5e8e962f1ea4bb4803446b9c8cc",
+  "JPM": "48534c5d81f1f04e159673d69f8f095c6da0e31e65a195ec9cfbd42314aed9c7",
+  "LLY": "07722511e402b471dd75cb280480479b5b23d4dc77b864ba434130a0775644bd",
+  "META": "4e60cc0e584592eb49fecf98ba4a3fff8c67b52264cc8580d3e7bdee41e76f54",
+  "MSFT": "e12ec39c2be477b1c8d5fdc010e609f399088d476d04f8c4793226dd5cf9fa70",
+  "NVDA": "9d44807404081638a0ae9885b521cd0d45562e339341029a5b1e66316becf18c",
+  "PHYS": "761987b3c7c681c84664216c734c51cbcb4208eef43288432baecce7b9908e82",
+  "PSLV": "03a5d4df64c97b243ce04976d6b6c18058baedaf54100b4dd65052f63a3855e3",
+  "QQQ": "0bad900571e43875ae4c4df450b88048de1e3d4c0b5a9fe87e380742ddaed376",
+  "SPY": "6621b4cbdd3b3cf996a6614d8835a9973704a6a35bb97c00b35628b5b824cddc",
+  "TLT": "850b8c7588a2b8c6f55b1be467191cfb7f2e1b63764de4128d3d31d27f160b12",
+  "TSLA": "28e07d4ea0aa07409e5e1d5ed8836fbc7d2c67fc673774a6e340430ca196e6f0",
+  "XLE": "7330f758d37f909a628ff1ce4f3487b0855df1b1337f90a6d09047ab2bb03af1",
+  "XOM": "c0c4509a6a9acb917aa7a3cb69bd003e271d0c82d225ffdd1ce1e857cdcd51f8"
+ },
+ "caveats": [
+  "Wilson interval assumes independence; same-day moves are correlated across tickers, so the date-clustered bootstrap interval is the honest one.",
+  "Breach thresholds were not recorded by the original study; this run uses a pre-registered set, so it tests the frozen estimator, not an exact re-run.",
+  "One regime (Jun\u2013Oct 2026). Out-of-sample on time, not on tickers."
+ ]
+}
