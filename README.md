@@ -66,6 +66,13 @@ news, …) mapped to a provider in `~/.tickerlens/config.toml`. Bundled:
 provider simply means no options features, not errors. Secrets live in
 `~/.tickerlens/.env`; the repo never sees them.
 
+> **Data note:** the default **yfinance** provider uses Yahoo Finance's
+> unofficial endpoints, which are intended for personal use under
+> [Yahoo's terms](https://legal.yahoo.com/us/en/yahoo/terms/otos/index.html).
+> TickerLens never redistributes market data: it fetches on your machine, for
+> you, and its cache never leaves your machine. For anything beyond personal
+> research, configure a licensed provider (e.g. your broker's API).
+
 ## Subscriptions & API keys
 
 The registry of individual subscriptions lives in
