@@ -32,9 +32,10 @@ export default function Guide() {
         </p>
         <p>
           It will <span className="text-text">never predict direction</span>. This project's
-          parent experiment tested exactly that — two model classes, four time
-          horizons, twenty per-ticker models, ~9,600 predictions per configuration —
-          and everything landed at coin-flip. The one thing that survived with
+          parent experiment tested exactly that — a hand-coded heuristic over 9,620
+          point-in-time predictions, then XGBoost at four horizons plus twenty
+          per-ticker models — and nothing beat its simple baselines (chance or
+          always-up). The one thing that survived with
           evidence is the range math, so that's what the app is built around.
         </p>
       </Section>

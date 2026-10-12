@@ -11,7 +11,8 @@ against pinned values from the backtest.
 Vocabulary discipline (the whole point of this product): these are RANGES.
 "80% expected range", "typical daily move" — never "prediction". The range
 says nothing about direction; the parent experiment proved direction is not
-predictable from these inputs (~9,600 predictions, three methods).
+predictable from these inputs (two model classes, four horizons; nothing
+beat its baseline — see backend/validation/README.md for the band's own OOS check).
 """
 from __future__ import annotations
 
