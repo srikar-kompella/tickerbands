@@ -31,3 +31,10 @@ walkthrough, and the constitution.
   (provider file + `SUBSCRIPTIONS` entry + registry + TTL + docs row).
 - Anything claiming statistical calibration must ship its validation
   evidence, like the existing `band_validation.json`.
+
+## Your First PR Walkthrough
+
+1. Fork the repo and create your feature branch from main.
+2. Run the tests and typechecks locally to verify your setup.
+3. Open your pull request using the existing template (.github/pull_request_template.md).
+4. Gotcha: Make sure to include a space before the issue number when auto-closing, like `Fixes #3`. Writing `Fixes#3` without the space will not close the issue automatically.
