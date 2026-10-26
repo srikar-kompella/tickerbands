@@ -20,12 +20,12 @@ export default function Guide() {
     <div className="max-w-3xl space-y-4">
       <div className="flex items-center gap-2 text-accent">
         <BookOpen className="h-5 w-5" />
-        <h2 className="text-lg font-semibold text-text">How TickerLens works</h2>
+        <h2 className="text-lg font-semibold text-text">How TickerBands works</h2>
       </div>
 
       <Section title="What this is — and deliberately isn't">
         <p>
-          TickerLens is a research tool: for any US ticker it assembles price,
+          TickerBands is a research tool: for any US ticker it assembles price,
           a calibrated <span className="text-text">80% expected range for tomorrow</span>,
           fundamentals, options positioning, news and social sentiment, analyst
           recommendation shifts, and your own position — in plain English.

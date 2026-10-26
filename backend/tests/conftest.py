@@ -2,7 +2,7 @@
 tests/conftest.py — shared fixtures.
 
 Isolation strategy: every test gets a throwaway SQLite file (monkeypatched
-into the db module) and, where relevant, TICKERLENS_MOCK=1 so no test ever
+into the db module) and, where relevant, TICKERBANDS_MOCK=1 so no test ever
 touches the network, the Keychain, or the real portfolio.db.
 """
 import os
@@ -15,10 +15,19 @@ import pytest  # noqa: E402
 
 # Tests assert against empty watchlists; the production startup seed
 # (seed_watchlist.json) is opt-out via this env var. test_seed.py opts back in.
-os.environ.setdefault("TICKERLENS_SKIP_SEED", "1")
-os.environ.setdefault("TICKERLENS_NO_AUTOREFRESH", "1")
+# A developer's shell may still export pre-rename TICKERLENS_* vars; they are
+# honoured as fallbacks, so drop them here or they'd leak into tests.
+for _k in [k for k in os.environ if k.startswith("TICKERLENS_")]:
+    os.environ.pop(_k)
+# Never let a test run import config against the real instance dir — that
+# would read real config/.env and could trigger the ~/.tickerlens migration.
+if "TICKERBANDS_HOME" not in os.environ:
+    import tempfile
+    os.environ["TICKERBANDS_HOME"] = tempfile.mkdtemp(prefix="tb-test-home-")
+os.environ.setdefault("TICKERBANDS_SKIP_SEED", "1")
+os.environ.setdefault("TICKERBANDS_NO_AUTOREFRESH", "1")
 # never let get_secret touch keyring / the OS Keychain from a test
-os.environ.setdefault("TICKERLENS_NO_KEYRING", "1")
+os.environ.setdefault("TICKERBANDS_NO_KEYRING", "1")
 
 import db as dbmod  # noqa: E402
 
@@ -34,7 +43,7 @@ def tmp_db(tmp_path, monkeypatch):
 
 @pytest.fixture()
 def mock_mode(monkeypatch):
-    monkeypatch.setenv("TICKERLENS_MOCK", "1")
+    monkeypatch.setenv("TICKERBANDS_MOCK", "1")
 
 
 @pytest.fixture()

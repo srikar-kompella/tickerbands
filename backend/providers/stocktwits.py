@@ -21,7 +21,7 @@ from providers.base import ProviderError
 
 name = "stocktwits"
 URL = "https://api.stocktwits.com/api/2/streams/symbol/{sym}.json"
-HEADERS = {"User-Agent": "tickerlens/1.0"}
+HEADERS = {"User-Agent": "tickerbands/1.0"}
 
 
 def health_check() -> bool:

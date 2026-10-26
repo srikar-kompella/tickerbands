@@ -1,4 +1,4 @@
-# TickerLens as an Open-Source, Local-First Product — Design
+# TickerBands as an Open-Source, Local-First Product — Design
 
 > Goal: anyone clones/installs, brings THEIR OWN credentials (their broker,
 > their free/paid data keys), runs entirely locally. the maintainer's instance keeps
@@ -10,7 +10,7 @@ Today the composer knows "Schwab does quotes." Tomorrow it asks a REGISTRY for
 a *capability*; a user config maps capabilities to installed providers:
 
 ```toml
-# ~/.tickerlens/config.toml
+# ~/.tickerbands/config.toml
 [user]
 name = "Jane"                 # used in prompts ("discussing with {name}")
 contact_email = "j@x.com"     # REQUIRED for SEC EDGAR User-Agent
@@ -62,11 +62,11 @@ with mocks; formalize as the CI gate). `PROVIDERS.md` documents the spec.
 
 ## 3. Instance directory — user data OUT of the repo tree
 
-`~/.tickerlens/` (override: `TICKERLENS_HOME`):
+`~/.tickerbands/` (override: `TICKERBANDS_HOME`):
 ```
 config.toml     # capability mapping + user identity (no secrets)
 .env            # secrets fallback (chmod 600)
-tickerlens.db   # THE database
+tickerbands.db   # THE database
 discussions/    # markdown files (the LLM loop)
 ```
 Why this matters beyond tidiness: `git pull` can never touch user data, the
@@ -74,7 +74,7 @@ repo stays clean for contributors, and the entire "a script deleted the DB"
 accident class dies structurally — user data no longer lives where code runs.
 Legacy in-repo layout stays supported for existing instances (the maintainer's).
 
-**Secrets resolution order:** env vars → `~/.tickerlens/.env` → OS keyring
+**Secrets resolution order:** env vars → `~/.tickerbands/.env` → OS keyring
 via the `keyring` lib (macOS Keychain / Windows Credential Manager / Linux
 Secret Service — replaces our mac-only `security` calls) → setup wizard
 prompt. Secrets never in config.toml.
@@ -85,14 +85,14 @@ On boot with no config: frontend routes to `/setup` — pick a provider per
 capability (only implemented ones shown), paste keys, per-provider **Test
 connection** button (existing health_check pattern), write config.toml.
 Schwab's OAuth dance becomes a guided step (port of schwab_auth). CLI
-equivalent (`tickerlens init`) for headless people.
+equivalent (`tickerbands init`) for headless people.
 
 ## 5. The honesty machinery must travel — or it becomes false advertising
 
 Our coverage/breach receipts were validated on ONE basket (20 US large-caps,
 2024–26). Shipping those numbers as if universal would be exactly the
 survivorship-marketing this project exists to reject. Therefore:
-- `tickerlens validate` — first-class command that replays band engines and
+- `tickerbands validate` — first-class command that replays band engines and
   breach calibration ON THE USER'S OWN watchlist/history and regenerates
   `band_validation.json` / `breach_validation.json` locally.
 - UI receipts always cite basket + window; "revalidate on your symbols"
@@ -116,7 +116,7 @@ write a file. Prompt template moves to a configurable template with
   finance tool) + NOTICE + the not-advice disclaimer already in the UI/README.
 - **Install paths:** (a) git clone + `./run_app.sh` (works today; make it
   Linux-friendly, `open` → `xdg-open` fallback); (b) `pipx install
-  tickerlens` + `tickerlens serve` — FastAPI serves the BUILT frontend
+  tickerbands` + `tickerbands serve` — FastAPI serves the BUILT frontend
   (vite build → static) so non-dev users never touch npm; (c) Dockerfile as
   a distribution nicety (still local-only).
 - **Public repo = fresh curated export, NOT this repo flipped public.**
@@ -132,9 +132,9 @@ write a file. Prompt template moves to a configurable template with
 - **B — capability registry** (M): manifests, registry, composer/routes ask
   capabilities, `/api/capabilities`, UI gating + provider chips.
 - **C — Tier-0 + wizard** (M): yfinance provider (labeled), portfolio CSV
-  mode, `/setup` wizard + `tickerlens init`, cross-platform run scripts.
+  mode, `/setup` wizard + `tickerbands init`, cross-platform run scripts.
 - **D — community + distribution** (M): contract-test harness, PROVIDERS.md,
-  CONTRIBUTING.md, PRINCIPLES.md, LICENSE/NOTICE, `tickerlens validate`,
+  CONTRIBUTING.md, PRINCIPLES.md, LICENSE/NOTICE, `tickerbands validate`,
   pipx packaging + built-frontend serving, Dockerfile, stranger-facing README,
   curated public repo export.
 

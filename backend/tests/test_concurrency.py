@@ -198,7 +198,7 @@ def test_discover_report_html_lists_candidates(tmp_db):
     assert "ERII" in html and "$1.2B" in html
     assert "convergence" in html          # ≥2 sources badge
     assert "not" in html.lower() and "recommendation" in html.lower()
-    assert "TickerLens_Discover_" in html  # save-as-PDF filename via <title>
+    assert "TickerBands_Discover_" in html  # save-as-PDF filename via <title>
 
 
 def test_discover_report_route_empty_ok(tmp_db, mock_mode, tmp_discussions, monkeypatch):
@@ -228,7 +228,7 @@ def test_hanging_secret_store_cannot_stall_requests(monkeypatch):
 
     monkeypatch.setitem(sys.modules, "keyring", HangingKeyring())
     monkeypatch.setattr(base, "from_keychain", lambda n: None)
-    monkeypatch.delenv("TICKERLENS_NO_KEYRING", raising=False)
+    monkeypatch.delenv("TICKERBANDS_NO_KEYRING", raising=False)
     monkeypatch.setenv("STALL_ENV_KEY", "from-env")
     monkeypatch.setattr(base, "_STORE_BLOCKED", False)
     monkeypatch.setattr(base, "_STORE_TIMEOUT_S", 0.3)
@@ -254,7 +254,7 @@ def test_secret_cache_hits_store_once(monkeypatch):
             return "sekret"
 
     monkeypatch.setitem(sys.modules, "keyring", CountingKeyring())
-    monkeypatch.delenv("TICKERLENS_NO_KEYRING", raising=False)
+    monkeypatch.delenv("TICKERBANDS_NO_KEYRING", raising=False)
     monkeypatch.setattr(base, "_STORE_BLOCKED", False)
     base._SECRET_CACHE.pop("cache_key", None)
     assert base.get_secret("cache_key", "X") == "sekret"

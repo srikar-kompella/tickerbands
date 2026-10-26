@@ -59,9 +59,10 @@ def from_keychain(service: str) -> str | None:
 
 
 def _no_keyring() -> bool:
-    """Truthy TICKERLENS_NO_KEYRING skips the OS secret stores; "", "0" and
-    "false" mean OFF (keyring enabled) — mirrors Prime exactly."""
-    return os.environ.get("TICKERLENS_NO_KEYRING", "").strip().lower() not in ("", "0", "false")
+    """Truthy TICKERBANDS_NO_KEYRING (legacy TICKERLENS_NO_KEYRING) skips the
+    OS secret stores; "", "0" and "false" mean OFF (keyring enabled)."""
+    from envcompat import env
+    return (env("NO_KEYRING") or "").strip().lower() not in ("", "0", "false")
 
 
 def get_secret(keychain_service: str, env_name: str) -> str | None:
@@ -69,14 +70,15 @@ def get_secret(keychain_service: str, env_name: str) -> str | None:
 
       1. `keyring` — cross-platform OS secret store (macOS Keychain, Windows
          Credential Manager, Linux Secret Service), all under the single
-         service name "tickerlens": keyring.get_password("tickerlens", name).
+         service name "tickerbands" (legacy "tickerlens" is read as a fallback,
+         so keys stored before the rename keep working).
       2. legacy macOS Keychain via `security` (from_keychain) — honors entries
          created with `security add-generic-password -s <name>`.
-      3. os.environ — note that config.py merges ~/.tickerlens/.env into the
+      3. os.environ — note that config.py merges ~/.tickerbands/.env into the
          environment at import time, so .env keys arrive here too.
 
     Footgun to know: a stale keyring entry shadows a rotated .env/env value.
-    Set TICKERLENS_NO_KEYRING=1 (any truthy value) to skip steps 1–2 entirely
+    Set TICKERBANDS_NO_KEYRING=1 (any truthy value) to skip steps 1–2 entirely
     (tests do this so no test ever touches an OS secret store).
     """
     if not _no_keyring():
@@ -98,6 +100,9 @@ def get_secret(keychain_service: str, env_name: str) -> str | None:
 _SECRET_CACHE: dict[str, str] = {}
 _STORE_BLOCKED = False
 _STORE_TIMEOUT_S = 2.0
+# New name first; the pre-rename service is still read so nobody has to
+# re-enter keys after upgrading. New writes should use KEYRING_SERVICES[0].
+KEYRING_SERVICES = ("tickerbands", "tickerlens")
 
 
 def _keyring_get(name: str) -> str | None:
@@ -105,10 +110,14 @@ def _keyring_get(name: str) -> str | None:
         import keyring  # lazy: optional dependency
     except ImportError:
         return None
-    try:
-        return keyring.get_password("tickerlens", name)
-    except Exception:
-        return None  # locked/absent backend — fall through
+    for service in KEYRING_SERVICES:
+        try:
+            val = keyring.get_password(service, name)
+        except Exception:
+            return None  # locked/absent backend — fall through
+        if val:
+            return val
+    return None
 
 
 def _timed(fn) -> str | None:
@@ -128,7 +137,7 @@ def _timed(fn) -> str | None:
         return box.get(timeout=_STORE_TIMEOUT_S)
     except _q.Empty:
         _STORE_BLOCKED = True
-        print("[tickerlens] WARNING: OS secret store not answering (hidden "
+        print("[tickerbands] WARNING: OS secret store not answering (hidden "
               "keychain permission dialog?) — falling back to env for this "
               "run. Approve the dialog and restart to re-enable.")
         return None
@@ -166,7 +175,7 @@ SUBSCRIPTIONS: dict[str, dict[str, Any]] = {
         "label": "SEC EDGAR (insider filings)",
         "secrets": [],  # no key; SEC requires a User-Agent contact email
         "cost": "free (fair-use: contact email in config.toml)",
-        "signup": "none — set user.contact_email in ~/.tickerlens/config.toml",
+        "signup": "none — set user.contact_email in ~/.tickerbands/config.toml",
     },
     "finra": {
         "label": "FINRA (short interest)",

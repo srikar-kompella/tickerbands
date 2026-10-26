@@ -2,32 +2,47 @@
 config.py — paths, ports, TTLs, flags, and the user's instance configuration.
 
 OSS layout: ALL user data lives in an instance directory OUTSIDE the repo —
-    ~/.tickerlens/            (override with TICKERLENS_HOME)
+    ~/.tickerbands/           (override with TICKERBANDS_HOME; legacy TICKERLENS_* vars still honoured)
       config.toml             identity + capability→provider mapping (no secrets)
       .env                    secrets (API keys), chmod 600
-      tickerlens.db           the database
+      tickerbands.db          the database
       discussions/            research-discussion markdown files
       schwab_token.json       broker OAuth token (if Schwab is used)
 `git pull` can never touch user data, and code never writes into the repo.
 
 Secrets resolution order (providers/base.get_secret):
-    keyring ("tickerlens" service) → legacy macOS Keychain → process env
-    (which this module pre-seeds from ~/.tickerlens/.env) → absent.
-    TICKERLENS_NO_KEYRING=1 skips the two keychain steps.
+    keyring ("tickerbands" service, legacy "tickerlens") → legacy macOS Keychain → process env
+    (which this module pre-seeds from ~/.tickerbands/.env) → absent.
+    TICKERBANDS_NO_KEYRING=1 skips the two keychain steps.
 """
 from __future__ import annotations
 
 import os
 
+from envcompat import env, migrate_legacy_db, migrate_legacy_home  # noqa: E402
+
 # ─── instance directory ────────────────────────────────────────────────────────
-TICKERLENS_HOME = os.path.expanduser(os.environ.get("TICKERLENS_HOME", "~/.tickerlens"))
-os.makedirs(TICKERLENS_HOME, exist_ok=True)
+# Renamed from ~/.tickerlens (Oct 2026). With no explicit override, a legacy
+# instance dir is moved here once, atomically, leaving a symlink behind.
+_explicit_home = env("HOME")
+if _explicit_home is None:
+    _mig = migrate_legacy_home(os.path.expanduser("~/.tickerbands"),
+                               os.path.expanduser("~/.tickerlens"))
+    if _mig == "migrated":
+        print("[tickerbands] moved your data ~/.tickerlens → ~/.tickerbands "
+              "(a symlink remains at the old path)")
+    elif _mig == "both":
+        print("[tickerbands] WARNING: both ~/.tickerbands and ~/.tickerlens exist; "
+              "using ~/.tickerbands and leaving ~/.tickerlens untouched")
+TICKERBANDS_HOME = os.path.expanduser(_explicit_home or "~/.tickerbands")
+os.makedirs(TICKERBANDS_HOME, exist_ok=True)
+TICKERLENS_HOME = TICKERBANDS_HOME  # legacy alias (one release)
 
 BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(BACKEND_DIR)
 
 # secrets: load instance .env into the environment (setdefault — real env wins)
-_ENV_PATH = os.path.join(TICKERLENS_HOME, ".env")
+_ENV_PATH = os.path.join(TICKERBANDS_HOME, ".env")
 if os.path.exists(_ENV_PATH):
     with open(_ENV_PATH) as _env_file:
         for _line in _env_file:
@@ -38,7 +53,7 @@ if os.path.exists(_ENV_PATH):
 
 # user config (no secrets here)
 _CONFIG: dict = {}
-_cfg_path = os.path.join(TICKERLENS_HOME, "config.toml")
+_cfg_path = os.path.join(TICKERBANDS_HOME, "config.toml")
 if os.path.exists(_cfg_path):
     try:
         try:
@@ -48,7 +63,7 @@ if os.path.exists(_cfg_path):
         with open(_cfg_path, "rb") as _f:
             _CONFIG = tomllib.load(_f)
     except Exception as _e:  # malformed config must not brick the app
-        print(f"[tickerlens] WARNING: config.toml unreadable ({_e}) — using defaults")
+        print(f"[tickerbands] WARNING: config.toml unreadable ({_e}) — using defaults")
 
 USER_NAME: str = (_CONFIG.get("user", {}).get("name") or "the user").strip()
 # Required for SEC EDGAR's fair-use User-Agent policy; the edgar provider
@@ -90,18 +105,16 @@ BACKEND_PORT = 8001
 FRONTEND_ORIGINS = ["http://localhost:5174", "http://127.0.0.1:5174"]
 
 # ─── paths (instance-dir based; env overrides for tests/tools) ─────────────────
-DB_PATH = os.environ.get("TICKERLENS_DB_PATH",
-                         os.path.join(TICKERLENS_HOME, "tickerlens.db"))
-DISCUSSIONS_DIR = os.environ.get(
-    "TICKERLENS_DISCUSSIONS_DIR", os.path.join(TICKERLENS_HOME, "discussions"))
+if env("DB_PATH") is None and migrate_legacy_db(TICKERBANDS_HOME) == "migrated":
+    print("[tickerbands] renamed tickerlens.db → tickerbands.db (backup kept)")
+DB_PATH = env("DB_PATH") or os.path.join(TICKERBANDS_HOME, "tickerbands.db")
+DISCUSSIONS_DIR = env("DISCUSSIONS_DIR") or os.path.join(TICKERBANDS_HOME, "discussions")
 DISCUSSIONS_FAILED_DIR = os.path.join(DISCUSSIONS_DIR, "_failed")
-DISCOVERIES_DIR = os.path.join(TICKERLENS_HOME, "discoveries")
+DISCOVERIES_DIR = os.path.join(TICKERBANDS_HOME, "discoveries")
 
 _paths_cfg = _CONFIG.get("paths") or {}
-SCHWAB_TOKEN_PATH = os.environ.get(
-    "TICKERLENS_SCHWAB_TOKEN_PATH",
-    os.path.expanduser(_paths_cfg.get("schwab_token")
-                       or os.path.join(TICKERLENS_HOME, "schwab_token.json")))
+SCHWAB_TOKEN_PATH = env("SCHWAB_TOKEN_PATH") or os.path.expanduser(
+    _paths_cfg.get("schwab_token") or os.path.join(TICKERBANDS_HOME, "schwab_token.json"))
 SCHWAB_CALLBACK_URL = os.environ.get("SCHWAB_CALLBACK_URL", "https://127.0.0.1:8182")
 # Optional: a legacy portfolio SQLite to one-time-import watchlist/actions from.
 PORTFOLIO_DB_PATH = os.path.expanduser(_paths_cfg.get("portfolio_db") or "") or None
@@ -158,7 +171,7 @@ def reload() -> None:
     the setup wizard apply changes without a process restart. Only the values
     a wizard can change are refreshed; structural constants stay put."""
     global _CONFIG, USER_NAME, CONTACT_EMAIL, CAPABILITIES_CONFIG, PORTFOLIO_DB_PATH
-    cfg_path = os.path.join(TICKERLENS_HOME, "config.toml")
+    cfg_path = os.path.join(TICKERBANDS_HOME, "config.toml")
     cfg: dict = {}
     if os.path.exists(cfg_path):
         try:
@@ -169,7 +182,7 @@ def reload() -> None:
             with open(cfg_path, "rb") as f:
                 cfg = tomllib.load(f)
         except Exception as e:
-            print(f"[tickerlens] WARNING: config.toml unreadable ({e})")
+            print(f"[tickerbands] WARNING: config.toml unreadable ({e})")
     _CONFIG = cfg
     USER_NAME = (cfg.get("user", {}).get("name") or "the user").strip()
     CONTACT_EMAIL = (cfg.get("user", {}).get("contact_email") or None)
@@ -179,7 +192,7 @@ def reload() -> None:
         {k: str(v).lower() for k, v in (cfg.get("capabilities") or {}).items()})
     PORTFOLIO_DB_PATH = os.path.expanduser(
         (cfg.get("paths") or {}).get("portfolio_db") or "") or None
-    env_path = os.path.join(TICKERLENS_HOME, ".env")
+    env_path = os.path.join(TICKERBANDS_HOME, ".env")
     if os.path.exists(env_path):
         with open(env_path) as env_file:
             for line in env_file:

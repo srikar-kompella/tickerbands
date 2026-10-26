@@ -1,8 +1,17 @@
-# TickerLens 🔭
+# TickerBands 🔭
 
-[![CI](https://github.com/srikar-kompella/tickerlens/actions/workflows/ci.yml/badge.svg)](https://github.com/srikar-kompella/tickerlens/actions/workflows/ci.yml)
+[![CI](https://github.com/srikar-kompella/tickerbands/actions/workflows/ci.yml/badge.svg)](https://github.com/srikar-kompella/tickerbands/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/srikar-kompella/tickerlens)
+[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/srikar-kompella/tickerbands)
+
+> **Formerly TickerLens.** Renamed in October 2026 because an unrelated
+> commercial product already uses that name. Old GitHub links redirect here.
+> Upgrading is automatic: on first start your `~/.tickerlens` folder moves
+> to `~/.tickerbands` (a symlink stays at the old path), `tickerlens.db` is
+> renamed after a backup copy is made, keys saved under the old keyring name
+> are still read, and `TICKERLENS_*` environment variables still work (with a
+> one-time deprecation notice). If both folders exist, nothing is moved —
+> you decide which to keep.
 
 **A local-first research tool for US stocks & options — with receipts.**
 Bring your own data providers and broker credentials; everything runs on your
@@ -37,8 +46,8 @@ boots in your browser in mock mode (deterministic fake data, no keys, no signup)
 **Locally:**
 
 ```bash
-git clone https://github.com/srikar-kompella/tickerlens.git && cd tickerlens
-TICKERLENS_MOCK=1 ./run_app.sh    # fake data first → http://localhost:5174
+git clone https://github.com/srikar-kompella/tickerbands.git && cd tickerbands
+TICKERBANDS_MOCK=1 ./run_app.sh    # fake data first → http://localhost:5174
 ./run_app.sh                      # real data: first run opens a setup wizard
 ```
 
@@ -54,22 +63,22 @@ keyless yfinance prices; the wizard lets you add broker/data keys any time.
 | ![Research discussions](docs/screenshots/discussions.png) *The LLM research loop: dated, taggable discussions with stances that age in plain sight* | ![Portfolio](docs/screenshots/portfolio.png) *Read-only brokerage view with organic value history (mock data shown)* |
 | ![Watchlist screener](docs/screenshots/watchlist.png) *Watchlist screener: band width, implied-vs-band, earnings distance, score* | ![Tunable weights + honest data-source status](docs/screenshots/settings.png) *Setup Score weights are yours to tune — with the empirical caveat attached* |
 
-All shots show **mock mode** (`TICKERLENS_MOCK=1`) — deterministic fake data.
+All shots show **mock mode** (`TICKERBANDS_MOCK=1`) — deterministic fake data.
 
 ## Bring your own providers
 
 Every data need is a *capability* (quotes, history, option chain, account,
-news, …) mapped to a provider in `~/.tickerlens/config.toml`. Bundled:
+news, …) mapped to a provider in `~/.tickerbands/config.toml`. Bundled:
 **Schwab** (reference broker: quotes/history/options/account, read-only),
 **Finnhub** (free key), **StockTwits**, **SEC EDGAR**, **FINRA**,
 **yfinance** (zero-key). Anything unconfigured degrades cleanly — no options
 provider simply means no options features, not errors. Secrets live in
-`~/.tickerlens/.env`; the repo never sees them.
+`~/.tickerbands/.env`; the repo never sees them.
 
 > **Data note:** the default **yfinance** provider uses Yahoo Finance's
 > unofficial endpoints, which are intended for personal use under
 > [Yahoo's terms](https://legal.yahoo.com/us/en/yahoo/terms/otos/index.html).
-> TickerLens never redistributes market data: it fetches on your machine, for
+> TickerBands never redistributes market data: it fetches on your machine, for
 > you, and its cache never leaves your machine. For anything beyond personal
 > research, configure a licensed provider (e.g. your broker's API).
 
@@ -91,27 +100,27 @@ needs:
 
 **Storing secrets — most secure first.** On any OS, put keys in the operating
 system's secret store via [keyring](https://pypi.org/project/keyring/) under
-the service name `tickerlens`:
+the service name `tickerbands`:
 
 ```bash
-backend/.venv/bin/python -m keyring set tickerlens <secret_name>   # macOS Keychain / Linux Secret Service
+backend/.venv/bin/python -m keyring set tickerbands <secret_name>   # macOS Keychain / Linux Secret Service
 ```
 
 ```bat
-backend\.venv\Scripts\python -m keyring set tickerlens <secret_name>   # Windows Credential Manager
+backend\.venv\Scripts\python -m keyring set tickerbands <secret_name>   # Windows Credential Manager
 ```
 
 Legacy macOS entries created with
 `security add-generic-password -s <secret_name> -a "$USER" -w` are still
-honored. Fallback: plain env vars, or `~/.tickerlens/.env` (written by the
+honored. Fallback: plain env vars, or `~/.tickerbands/.env` (written by the
 setup wizard, `chmod 600`) — config.py merges `.env` into the process
 environment at startup.
 
 **Precedence** (first hit wins): keyring → legacy macOS Keychain → environment
 (`.env` feeds the environment). Footgun: if you rotate a key in `.env` but a
 stale copy still sits in keyring, the stale keyring entry **wins** — delete it
-(`python -m keyring del tickerlens <secret_name>`) or set
-`TICKERLENS_NO_KEYRING=1` to bypass the OS stores entirely.
+(`python -m keyring del tickerbands <secret_name>`) or set
+`TICKERBANDS_NO_KEYRING=1` to bypass the OS stores entirely.
 
 **Different broker or data service?** Open this repo with an AI coding agent
 and point it at **`CLAUDE.md`** — it contains the full provider contract
@@ -130,7 +139,7 @@ cannot place orders. Research & education only. **Not investment advice.**
 ## Contributing
 
 New here? Issues labeled
-[`good first issue`](https://github.com/srikar-kompella/tickerlens/labels/good%20first%20issue)
+[`good first issue`](https://github.com/srikar-kompella/tickerbands/labels/good%20first%20issue)
 are scoped to an afternoon. Want your broker supported? Open a
 *New data provider* issue — `CLAUDE.md` holds the full provider contract, so an
 AI coding agent can do most of the work. See [CONTRIBUTING.md](CONTRIBUTING.md).
@@ -147,10 +156,10 @@ License: Apache-2.0 (see LICENSE, NOTICE).
 
 ## Importing an existing instance
 
-Moving from another TickerLens installation (or a private fork)? One command
+Moving from another TickerBands installation (or a private fork)? One command
 migrates your watchlist, score/portfolio/VRP history, discussions (with
 decision prices and stances intact), discovery candidates, settings, private
-notes, and your Schwab token — into `~/.tickerlens`, never into this repo:
+notes, and your Schwab token — into `~/.tickerbands`, never into this repo:
 
 ```bash
 cd backend

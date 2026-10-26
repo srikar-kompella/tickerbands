@@ -1,4 +1,4 @@
-# TickerLens — Claude/AI Session Manual
+# TickerBands — Claude/AI Session Manual
 
 > **You (the AI) are this project's primary onboarding path.** A human just
 > opened this repo and will ask you to set it up, wire in THEIR data
@@ -26,10 +26,10 @@ telemetry, no accounts.
    2024–26). If you change claims-bearing math (band engines, breach
    probabilities), rerun the validation approach and update the receipts —
    or gate the feature. Never invent coverage numbers.
-4. **User data lives in `~/.tickerlens/`** (override `TICKERLENS_HOME`) —
-   config.toml, .env, tickerlens.db, discussions/. Code never writes into the
-   repo tree. Tests/scripts must ALWAYS set `TICKERLENS_DB_PATH` (and ideally
-   `TICKERLENS_HOME`) to scratch paths. The DB is user data, not a build
+4. **User data lives in `~/.tickerbands/`** (override `TICKERBANDS_HOME`) —
+   config.toml, .env, tickerbands.db, discussions/. Code never writes into the
+   repo tree. Tests/scripts must ALWAYS set `TICKERBANDS_DB_PATH` (and ideally
+   `TICKERBANDS_HOME`) to scratch paths. The DB is user data, not a build
    artifact — never delete it.
 5. **Degrade, never break:** one provider failing (or absent) affects only
    its section (`ok | stale | unavailable`). Providers raise `ProviderError`
@@ -42,7 +42,7 @@ backend/
   providers/
     registry.py        capability → provider resolution  ← START HERE
     base.py            ProviderError + get_secret (keyring → legacy macOS
-                       Keychain → env; ~/.tickerlens/.env pre-seeds env via
+                       Keychain → env; ~/.tickerbands/.env pre-seeds env via
                        config.py) + SUBSCRIPTIONS (per-provider secrets registry)
     schwab.py finnhub.py stocktwits.py edgar.py finra.py yfinance.py mock.py
   analysis/            composer (per-section assembly), vol_bands (+engines),
@@ -51,17 +51,17 @@ backend/
   cache/store.py       SQLite TTL cache; stale-on-error; put() for batch warms
   discussions_svc/     file-watcher → SQLite → SSE (the LLM loop)
   api/routes.py        thin handlers; api/report.py print/PDF builders
-  tests/               159 tests; mock-mode; conftest sets TICKERLENS_SKIP_SEED
+  tests/               159 tests; mock-mode; conftest sets TICKERBANDS_SKIP_SEED
 frontend/src/          pages Analysis·Portfolio·Watchlist·Discussions·Settings·Guide
 ```
-Run: `./run_app.sh` · mock demo: `TICKERLENS_MOCK=1 ./run_app.sh` ·
-tests: `cd backend && TICKERLENS_HOME=/tmp/tl TICKERLENS_DB_PATH=/tmp/t.db python3 -m pytest tests -q`
+Run: `./run_app.sh` · mock demo: `TICKERBANDS_MOCK=1 ./run_app.sh` ·
+tests: `cd backend && TICKERBANDS_HOME=/tmp/tl TICKERBANDS_DB_PATH=/tmp/t.db python3 -m pytest tests -q`
 
 ## Capabilities (what a provider can supply)
 `quotes, quotes_batch, daily_history, option_chain, option_chain_lens,
 account, fundamentals, news_sentiment, news_headlines, analyst_recs,
 earnings, earnings_dates, shares_out, social, insiders, short_interest,
-symbol_search` — mapped to providers in `~/.tickerlens/config.toml`
+symbol_search` — mapped to providers in `~/.tickerbands/config.toml`
 `[capabilities]` (defaults in `config.CAPABILITY_DEFAULTS`; `"none"` disables;
 missing capability ⇒ dependent sections/features hide or degrade
 automatically). `GET /api/capabilities` shows the live wiring.
@@ -78,11 +78,11 @@ User says: "I use Alpaca / Tradier / IBKR / Polygon / Tiingo / …". Steps:
    - errors: `raise ProviderError(reason, detail)` with reason ∈
      `auth_expired | rate_limited | not_found | no_data | unavailable`
    - secrets via `providers.base.get_secret("<keychain-service>", "<ENV_VAR>")`;
-     document the ENV_VAR name for the user's `~/.tickerlens/.env`.
-     Resolution precedence (first hit wins): keyring service `"tickerlens"` →
+     document the ENV_VAR name for the user's `~/.tickerbands/.env`.
+     Resolution precedence (first hit wins): keyring service `"tickerbands"` →
      legacy macOS Keychain (`security`) → `os.environ` (config.py merges
-     `~/.tickerlens/.env` into the environment at import). A stale keyring
-     entry shadows a rotated .env key; `TICKERLENS_NO_KEYRING=1` skips both
+     `~/.tickerbands/.env` into the environment at import). A stale keyring
+     entry shadows a rotated .env key; `TICKERBANDS_NO_KEYRING=1` skips both
      keychain steps (tests set it in conftest.py).
    - **add a `SUBSCRIPTIONS` entry** in `providers/base.py` — it is THE
      registry of individual subscriptions (`label`, `secrets` as
@@ -94,7 +94,7 @@ User says: "I use Alpaca / Tradier / IBKR / Polygon / Tiingo / …". Steps:
 3. **Register it:** `providers/registry.py` → add to `MODULES` and, per
    capability implemented, to `IMPLEMENTATIONS` as `(module, "fetch_fn_name")`
    (late-bound tuples — enables test monkeypatching).
-4. **Wire the user's config:** `~/.tickerlens/config.toml`:
+4. **Wire the user's config:** `~/.tickerbands/config.toml`:
    ```toml
    [capabilities]
    quotes = "<name>"
@@ -153,22 +153,22 @@ User says: "I use Alpaca / Tradier / IBKR / Polygon / Tiingo / …". Steps:
 - **symbol_search** `(query, limit=8) -> [{symbol, description, type}]`
 
 ## Helping a user set up from scratch
-1. Create `~/.tickerlens/config.toml` from `config.example.toml`; set
+1. Create `~/.tickerbands/config.toml` from `config.example.toml`; set
    `user.name` and `user.contact_email` (EDGAR refuses to run without email —
    SEC fair-use policy).
 2. Zero-key start: `pip install yfinance`, set quotes/daily_history to
    `"yfinance"`, everything else `"none"` — bands, screener, discussions work.
-3. Keys go in `~/.tickerlens/.env` (e.g. `FINNHUB_KEY=…`); `chmod 600` it.
+3. Keys go in `~/.tickerbands/.env` (e.g. `FINNHUB_KEY=…`); `chmod 600` it.
 4. Schwab (reference broker): developer.schwab.com app → key/secret →
    `SCHWAB_APP_KEY/SCHWAB_APP_SECRET` in .env (or macOS Keychain services
    `schwab_app_key`/`schwab_app_secret`) → OAuth once (schwab-py easy_client
-   mints `~/.tickerlens/schwab_token.json`; refresh ~weekly).
+   mints `~/.tickerbands/schwab_token.json`; refresh ~weekly).
 5. Verify: `./run_app.sh` → `/api/health`, `/api/capabilities` → analyze AAPL.
-6. `TICKERLENS_MOCK=1` anytime for a deterministic offline demo.
+6. `TICKERBANDS_MOCK=1` anytime for a deterministic offline demo.
 
 ## Research discussions (the LLM loop — agent-agnostic)
 The app's "Ask Claude" button copies a prompt; ANY agent (or human) writes
-`~/.tickerlens/discussions/{TICKER}/{ISO_DATETIME}.md` with the frontmatter
+`~/.tickerbands/discussions/{TICKER}/{ISO_DATETIME}.md` with the frontmatter
 the prompt specifies (`ticker, created_ts, summary, tags`, optional
 `news_view/news_note`, `decision` = what the USER decided (price
 auto-captured), `stance/stance_horizon/stance_note` = YOUR reasoned
@@ -182,12 +182,12 @@ number gets a `glossary.json` entry (plain English + "why"). Frontend: dark
 theme tokens in `index.css`; green/red are P&L-ONLY (accent is cyan);
 sections wrap in `SectionShell` (freshness + degradation for free). Keep
 `pytest` green and `npm run typecheck` clean; never commit anything from
-`~/.tickerlens/`. And re-read the constitution before shipping.
+`~/.tickerbands/`. And re-read the constitution before shipping.
 
 ## Session continuity (private notes)
-If `~/.tickerlens/notes/WORKLOG.md` exists, read it at session start and append
+If `~/.tickerbands/notes/WORKLOG.md` exists, read it at session start and append
 a dated entry after meaningful work — it is the user's PRIVATE running log
 (lives in the instance dir, never in this public repo). Users migrating from
-another TickerLens installation bring it over via
+another TickerBands installation bring it over via
 `backend/migrate_instance.py` (see README "Importing an existing instance").
 

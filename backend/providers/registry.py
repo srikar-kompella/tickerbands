@@ -70,7 +70,8 @@ _ALIAS = {"quotes_batch": "quotes", "option_chain_lens": "option_chain",
 
 
 def use_mock() -> bool:
-    return os.environ.get("TICKERLENS_MOCK", "").strip() in {"1", "true", "yes"}
+    from envcompat import env
+    return (env("MOCK") or "").strip() in {"1", "true", "yes"}
 
 
 def provider_name(capability: str) -> str:
