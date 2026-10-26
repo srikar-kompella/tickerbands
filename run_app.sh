@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
-# run_app.sh — start TickerLens (FastAPI :8001 + Vite :5174).
+# run_app.sh — start TickerBands (FastAPI :8001 + Vite :5174).
 #
 #   ./run_app.sh                normal (live Schwab/Finnhub/StockTwits data)
-#   TICKERLENS_MOCK=1 ./run_app.sh    offline demo with deterministic fake data
+#   TICKERBANDS_MOCK=1 ./run_app.sh    offline demo with deterministic fake data
 #
 # First run bootstraps its own venv + node_modules (nothing shared with the
 # Portfolio app except the Schwab token, by design). Ctrl-C stops both.
+# legacy TICKERLENS_* names (pre-rename) still work
+: "${TICKERBANDS_MOCK:=${TICKERLENS_MOCK:-}}"; : "${TICKERBANDS_NO_OPEN:=${TICKERLENS_NO_OPEN:-}}"; : "${TICKERBANDS_DEMO:=${TICKERLENS_DEMO:-}}"
+export TICKERBANDS_MOCK TICKERBANDS_NO_OPEN TICKERBANDS_DEMO
 set -e
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -54,7 +57,7 @@ done
 
 echo "▶ Backend  : http://localhost:8001  (docs at /docs)"
 echo "▶ Frontend : http://localhost:5174"
-[ -n "$TICKERLENS_MOCK" ] && echo "▶ MOCK MODE — deterministic fake data, no live APIs"
+[ -n "$TICKERBANDS_MOCK" ] && echo "▶ MOCK MODE — deterministic fake data, no live APIs"
 echo
 
 # --reload scoped to *.py: backend code changes apply without a restart
@@ -66,8 +69,8 @@ BACK=$!
 ( cd "$ROOT/frontend" && exec npm run dev ) &
 FRONT=$!
 
-# Auto-open the browser once the frontend answers (skip: TICKERLENS_NO_OPEN=1).
-if [ -z "$TICKERLENS_NO_OPEN" ] && command -v open >/dev/null; then
+# Auto-open the browser once the frontend answers (skip: TICKERBANDS_NO_OPEN=1).
+if [ -z "$TICKERBANDS_NO_OPEN" ] && command -v open >/dev/null; then
   ( for _ in $(seq 1 60); do
       curl -so /dev/null http://localhost:5174 && { open http://localhost:5174; break; }
       sleep 1

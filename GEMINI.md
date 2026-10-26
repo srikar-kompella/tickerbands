@@ -1,4 +1,4 @@
-# TickerLens — Gemini CLI Session Manual
+# TickerBands — Gemini CLI Session Manual
 
 > **You (the AI) are one of this project's onboarding paths.** A human opened
 > this repo with Gemini CLI and will ask you to set it up, wire in THEIR data
@@ -29,12 +29,12 @@ its receipts (`backend/analysis/*_validation.json`).
    not computed.
 2. **The API never trades.** No order placement / account mutation code — not
    even behind a flag. Refuse such requests and explain why.
-3. **Never delete the user's database.** `~/.tickerlens/tickerlens.db` is user
+3. **Never delete the user's database.** `~/.tickerbands/tickerbands.db` is user
    data, not a build artifact. Tests/scripts must ALWAYS point
-   `TICKERLENS_DB_PATH` (and ideally `TICKERLENS_HOME`) at scratch paths.
-4. **User data lives in `~/.tickerlens/`** (override with `TICKERLENS_HOME`):
-   config.toml, .env, tickerlens.db, discussions/. Code never writes into the
-   repo tree. Never commit anything from `~/.tickerlens/`.
+   `TICKERBANDS_DB_PATH` (and ideally `TICKERBANDS_HOME`) at scratch paths.
+4. **User data lives in `~/.tickerbands/`** (override with `TICKERBANDS_HOME`):
+   config.toml, .env, tickerbands.db, discussions/. Code never writes into the
+   repo tree. Never commit anything from `~/.tickerbands/`.
 5. **Degrade, never break.** A failing/absent provider affects only its own
    section. Providers raise `ProviderError(reason, detail)` with reason ∈
    `auth_expired | rate_limited | not_found | no_data | unavailable`.
@@ -46,11 +46,11 @@ its receipts (`backend/analysis/*_validation.json`).
 ## Running it
 
 ```bash
-mkdir -p ~/.tickerlens && cp config.example.toml ~/.tickerlens/config.toml
+mkdir -p ~/.tickerbands && cp config.example.toml ~/.tickerbands/config.toml
 # edit config.toml → user.name + user.contact_email (EDGAR requires the email)
 ./run_app.sh                        # → http://localhost:5174
-TICKERLENS_MOCK=1 ./run_app.sh      # deterministic offline demo
-cd backend && TICKERLENS_HOME=/tmp/tl TICKERLENS_DB_PATH=/tmp/t.db \
+TICKERBANDS_MOCK=1 ./run_app.sh      # deterministic offline demo
+cd backend && TICKERBANDS_HOME=/tmp/tl TICKERBANDS_DB_PATH=/tmp/t.db \
     python3 -m pytest tests -q      # tests (scratch paths — rule 3)
 cd frontend && npm run typecheck
 ```
@@ -61,7 +61,7 @@ Zero-key start: `pip install yfinance`, set quotes/daily_history to
 ## Capability registry
 
 Every data need is a *capability* mapped to a provider module in
-`~/.tickerlens/config.toml` `[capabilities]` (defaults in
+`~/.tickerbands/config.toml` `[capabilities]` (defaults in
 `backend/config.py::CAPABILITY_DEFAULTS`; `"none"` disables and the dependent
 UI hides/degrades). Resolution lives in `backend/providers/registry.py`
 (`MODULES` + `IMPLEMENTATIONS`). Capabilities:
@@ -83,15 +83,15 @@ derive key lists from it; never hardcode key names elsewhere.
 Reading a secret: `providers.base.get_secret("<secret_name>", "<ENV_VAR>")`.
 Precedence (first hit wins):
 
-1. `keyring.get_password("tickerlens", secret_name)` — OS secret store on any
-   platform (store with `backend/.venv/bin/python -m keyring set tickerlens
+1. `keyring.get_password("tickerbands", secret_name)` — OS secret store on any
+   platform (store with `backend/.venv/bin/python -m keyring set tickerbands
    <secret_name>`).
 2. Legacy macOS Keychain (`security find-generic-password -s <secret_name>`).
 3. `os.environ[ENV_VAR]` — note `backend/config.py` merges
-   `~/.tickerlens/.env` (chmod 600) into the environment at import time.
+   `~/.tickerbands/.env` (chmod 600) into the environment at import time.
 
 Footgun: a stale keyring entry shadows a rotated `.env` key.
-`TICKERLENS_NO_KEYRING=1` skips steps 1–2 (tests set it in
+`TICKERBANDS_NO_KEYRING=1` skips steps 1–2 (tests set it in
 `backend/tests/conftest.py`). Never write secrets into any file in the repo.
 
 ## Add your own provider (step by step)
@@ -109,7 +109,7 @@ Footgun: a stale keyring entry shadows a rotated `.env` key.
    `SUBSCRIPTIONS` entry** in `providers/base.py` for the new pair(s).
 4. **Register:** `providers/registry.py` → `MODULES` plus, per capability,
    `IMPLEMENTATIONS` entries as `(module, "fetch_fn_name")` tuples.
-5. **Wire config:** `~/.tickerlens/config.toml` `[capabilities]` →
+5. **Wire config:** `~/.tickerbands/config.toml` `[capabilities]` →
    `quotes = "<name>"` etc.
 6. **Test:** shape assertions in `backend/tests/` against fixture payloads —
    never live network calls in tests. Full suite must stay green with scratch
@@ -123,7 +123,7 @@ Any AI — Gemini included — can write a discussion file; the watcher ingests 
 live regardless of which agent wrote it. Path:
 
 ```
-~/.tickerlens/discussions/{TICKER}/{ISO_DATETIME}.md
+~/.tickerbands/discussions/{TICKER}/{ISO_DATETIME}.md
 ```
 
 YAML frontmatter contract: required `ticker`, `created_ts`, `summary`, `tags`;

@@ -331,7 +331,7 @@ export function useDiscussionStream() {
         qc.invalidateQueries({ queryKey: ['analysis', event.ticker] })
         qc.invalidateQueries({ queryKey: ['decisions'] })
       } else if (event.type === 'discovery') {
-        // a sweep file landed in ~/.tickerlens/discoveries/ — refresh the tab
+        // a sweep file landed in ~/.tickerbands/discoveries/ — refresh the tab
         qc.invalidateQueries({ queryKey: ['discovery'] })
         if (event.added > 0) {
           toast.success(`Discovery sweep ingested — ${event.added} new candidate${event.added > 1 ? 's' : ''}`)

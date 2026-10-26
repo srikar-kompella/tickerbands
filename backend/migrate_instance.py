@@ -1,6 +1,6 @@
 """
-migrate_instance.py — import user data from another TickerLens installation
-(e.g. a private/Prime checkout) into THIS instance's home (~/.tickerlens).
+migrate_instance.py — import user data from another TickerBands (or pre-rename TickerLens) installation
+(e.g. a private/Prime checkout) into THIS instance's home (~/.tickerbands).
 
 What it moves (and what it deliberately doesn't):
   MOVED    watchlist, setup_score_history, portfolio_snapshots,
@@ -15,18 +15,18 @@ What it moves (and what it deliberately doesn't):
 Safety:
   * The SOURCE database is opened read-only (mode=ro). Nothing is ever
     written to the source installation.
-  * The destination DB is backed up to tickerlens.db.bak-<timestamp> first.
+  * The destination DB is backed up to tickerbands.db.bak-<timestamp> first.
   * Idempotent: rerunning inserts nothing new (row-identity checks), so a
     half-finished migration can simply be run again.
 
 Usage (from this backend/ directory, any Python 3.10+):
   python3 migrate_instance.py \
-      --source-db  ~/old-tickerlens/backend/tickerlens.db \
-      --source-discussions ~/old-tickerlens/discussions \
-      --source-discoveries ~/old-tickerlens/discoveries \
-      --source-repo ~/old-tickerlens \
+      --source-db  ~/old-checkout/backend/tickerlens.db \
+      --source-discussions ~/old-checkout/discussions \
+      --source-discoveries ~/old-checkout/discoveries \
+      --source-repo ~/old-checkout \
       --source-token /path/to/schwab_token.json \
-      [--dest-home ~/.tickerlens] [--dry-run]
+      [--dest-home ~/.tickerbands] [--dry-run]
 """
 from __future__ import annotations
 
@@ -132,14 +132,15 @@ def main() -> int:
                          "copied to <dest-home>/notes/ as private notes")
     ap.add_argument("--source-token", help="schwab_token.json to copy in")
     ap.add_argument("--dest-home",
-                    default=os.environ.get("TICKERLENS_HOME",
-                                           os.path.expanduser("~/.tickerlens")))
+                    default=os.environ.get("TICKERBANDS_HOME")
+                    or os.environ.get("TICKERLENS_HOME")
+                    or os.path.expanduser("~/.tickerbands"))
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
 
     src_db = os.path.expanduser(a.source_db)
     home = os.path.expanduser(a.dest_home)
-    dest_db = os.path.join(home, "tickerlens.db")
+    dest_db = os.path.join(home, "tickerbands.db")
     dry = a.dry_run
 
     if not os.path.exists(src_db):
@@ -149,7 +150,7 @@ def main() -> int:
 
     # destination schema (import via the app so migrations run) ------------
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    os.environ["TICKERLENS_DB_PATH"] = dest_db
+    os.environ["TICKERBANDS_DB_PATH"] = dest_db
     import db as dbmod
     if not dry:
         dbmod.init_db(dest_db)

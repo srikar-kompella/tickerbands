@@ -8,22 +8,22 @@ Run whenever the app reports "Schwab auth expired" (the refresh token dies
     cd backend && .venv/bin/python schwab_reauth.py
 
 Opens a browser for the Schwab login; the token lands at the configured path
-(default ~/.tickerlens/schwab_token.json). Credentials come from env /
-~/.tickerlens/.env / macOS Keychain (SCHWAB_APP_KEY, SCHWAB_APP_SECRET).
+(default ~/.tickerbands/schwab_token.json). Credentials come from env /
+~/.tickerbands/.env / macOS Keychain (SCHWAB_APP_KEY, SCHWAB_APP_SECRET).
 """
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-import config  # noqa: E402  (loads ~/.tickerlens/.env)
+import config  # noqa: E402  (loads ~/.tickerbands/.env)
 from providers.base import get_secret  # noqa: E402
 
 key = get_secret("schwab_app_key", "SCHWAB_APP_KEY")
 secret = get_secret("schwab_app_secret", "SCHWAB_APP_SECRET")
 if not key or not secret:
     sys.exit("Missing SCHWAB_APP_KEY / SCHWAB_APP_SECRET — add them to "
-             f"{config.TICKERLENS_HOME}/.env (see CLAUDE.md → Schwab setup).")
+             f"{config.TICKERBANDS_HOME}/.env (see CLAUDE.md → Schwab setup).")
 
 token_path = config.SCHWAB_TOKEN_PATH
 if os.path.exists(token_path):

@@ -243,7 +243,7 @@ def fetch_options_summary(symbol: str) -> dict[str, Any]:
     """Put/call ratio + ATM implied vol + implied move from the nearest expiry.
 
     Semantics note (LOOKAHEAD_AUDIT F4): `totalVolume` is the *current session's*
-    volume. TickerLens is used intraday/on-demand, so that's the honest number —
+    volume. TickerBands is used intraday/on-demand, so that's the honest number —
     but the response carries `as_of` so the UI can timestamp it. Pre-market the
     ratio may legitimately be None (near-zero volume).
 

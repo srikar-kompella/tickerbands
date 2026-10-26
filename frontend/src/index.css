@@ -1,6 +1,6 @@
 @import 'tailwindcss';
 
-/* ─── TickerLens dark theme (Q7: cyan accent; green/red RESERVED for P&L) ─── */
+/* ─── TickerBands dark theme (Q7: cyan accent; green/red RESERVED for P&L) ─── */
 @theme {
   --color-bg: #0a0a0b;
   --color-surface: #131316;

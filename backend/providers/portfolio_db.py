@@ -82,7 +82,7 @@ def fetch_position(symbol: str) -> dict[str, Any]:
 
 
 def fetch_watchlist_symbols() -> list[dict[str, Any]]:
-    """One-time import source for TickerLens's own watchlist (Q2)."""
+    """One-time import source for TickerBands's own watchlist (Q2)."""
     conn = _connect()
     try:
         rows = conn.execute("SELECT symbol, note FROM watchlist").fetchall()

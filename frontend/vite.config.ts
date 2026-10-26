@@ -14,7 +14,7 @@ export default defineConfig({
     // Demo mode (./demo.sh): the tunnel's Host header (xyz.trycloudflare.com)
     // must be allowed or Vite's DNS-rebinding guard blocks every request.
     // Normal runs keep the strict default.
-    allowedHosts: process.env.TICKERLENS_DEMO ? true : undefined,
+    allowedHosts: (process.env.TICKERBANDS_DEMO || process.env.TICKERLENS_DEMO) ? true : undefined,
     proxy: { '/api': { target: 'http://localhost:8001', changeOrigin: true } },
   },
 })

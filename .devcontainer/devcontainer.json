@@ -1,5 +1,5 @@
 {
-  "name": "TickerLens (mock-mode demo)",
+  "name": "TickerBands (mock-mode demo)",
   "image": "mcr.microsoft.com/devcontainers/python:1-3.11",
   "features": {
     "ghcr.io/devcontainers/features/node:1": {
@@ -7,10 +7,10 @@
     }
   },
   "containerEnv": {
-    "TICKERLENS_MOCK": "1",
-    "TICKERLENS_NO_KEYRING": "1",
-    "TICKERLENS_NO_OPEN": "1",
-    "TICKERLENS_DEMO": "1"
+    "TICKERBANDS_MOCK": "1",
+    "TICKERBANDS_NO_KEYRING": "1",
+    "TICKERBANDS_NO_OPEN": "1",
+    "TICKERBANDS_DEMO": "1"
   },
   "postCreateCommand": "bash .devcontainer/setup.sh",
   "postAttachCommand": "./run_app.sh",
@@ -19,7 +19,7 @@
   ],
   "portsAttributes": {
     "5174": {
-      "label": "TickerLens (open this)",
+      "label": "TickerBands (open this)",
       "onAutoForward": "openBrowser"
     },
     "8001": {
