@@ -14,6 +14,12 @@ from __future__ import annotations
 
 import asyncio
 import os
+import warnings
+
+# yfinance (≤1.7) still calls pandas methods with inplace=True, which pandas
+# 3.1 deprecates — one warning per fetch floods the terminal. Harmless today;
+# silence only that message, only from yfinance.
+warnings.filterwarnings("ignore", message=r".*inplace keyword.*", module=r"yfinance(\..*)?")
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
