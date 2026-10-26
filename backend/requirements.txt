@@ -1,4 +1,4 @@
-# TickerLens backend — installed into ./.venv by run_app.sh on first launch.
+# TickerBands backend — installed into ./.venv by run_app.sh on first launch.
 # Python 3.10+ (Homebrew python3.12 recommended, same as the Portfolio app).
 fastapi>=0.115
 uvicorn[standard]>=0.30

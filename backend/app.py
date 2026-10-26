@@ -2,7 +2,7 @@
 app.py — FastAPI entrypoint. Thin by design: wiring only.
 
 Run (dev):   .venv/bin/uvicorn app:app --port 8001          (from backend/)
-Mock mode:   TICKERLENS_MOCK=1 .venv/bin/uvicorn app:app --port 8001
+Mock mode:   TICKERBANDS_MOCK=1 .venv/bin/uvicorn app:app --port 8001
 Docs:        http://localhost:8001/docs
 
 Lifespan owns three things (deviation 4: lifespan, not the deprecated
@@ -20,6 +20,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 import config
+from envcompat import env
 from api.routes import router
 from api.setup import router as setup_router
 from db import init_db
@@ -39,7 +40,7 @@ def _seed_watchlist_once() -> int:
     import os
     from db import connect
 
-    if os.environ.get("TICKERLENS_SKIP_SEED"):  # tests want empty watchlists
+    if env("SKIP_SEED"):  # tests want empty watchlists
         return 0
     seed_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                              "seed_watchlist.json")
@@ -88,7 +89,7 @@ async def _auto_refresh_loop():
                 except Exception:
                     pass          # one bad symbol never stops the pass
                 await aio.sleep(6)
-            print(f"[tickerlens] auto-refresh pass done ({len(syms)} symbols)")
+            print(f"[tickerbands] auto-refresh pass done ({len(syms)} symbols)")
         except Exception:
             pass
         await aio.sleep(3600)
@@ -99,14 +100,14 @@ async def lifespan(app: FastAPI):
     init_db()
     seeded = _seed_watchlist_once()
     if seeded:
-        print(f"[tickerlens] seeded watchlist with {seeded} symbols from seed_watchlist.json")
+        print(f"[tickerbands] seeded watchlist with {seeded} symbols from seed_watchlist.json")
     broadcaster.bind_loop(asyncio.get_running_loop())
     observer = start_watcher()
     refresh_task = None
-    if not os.environ.get("TICKERLENS_NO_AUTOREFRESH"):
+    if not env("NO_AUTOREFRESH"):
         refresh_task = asyncio.create_task(_auto_refresh_loop())
     scanned = catch_up_scan()
-    print(f"[tickerlens] watcher up on discussions/ (catch-up scanned {scanned} files)")
+    print(f"[tickerbands] watcher up on discussions/ (catch-up scanned {scanned} files)")
     yield
     if refresh_task:
         refresh_task.cancel()
@@ -115,7 +116,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="TickerLens API",
+    title="TickerBands API",
     version="0.1.0",
     description="Research tool — calibrated ranges, transparent signals, "
                 "zero direction predictions.",

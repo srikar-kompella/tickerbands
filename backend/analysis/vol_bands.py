@@ -126,7 +126,7 @@ def compute_signals(closes: list[float], volumes: list[int]) -> dict[str, Any]:
         "return_5d": round((closes[-1] / closes[-6] - 1) * 100, 3),
         "return_20d": round((closes[-1] / closes[-21] - 1) * 100, 3),
         "rv_20d": round(realized_vol(closes, 20), 2),
-        # rv_60d is TickerLens-only: baseline for the vol-regime conviction
+        # rv_60d is TickerBands-only: baseline for the vol-regime conviction
         # multiplier (Q8a). None when history is short — the multiplier
         # degrades to 1.0 rather than inventing a regime.
         "rv_60d": round(realized_vol(closes, 60), 2) if len(closes) >= 61 else None,

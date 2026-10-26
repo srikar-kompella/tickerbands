@@ -1,5 +1,5 @@
 // First-run setup wizard (Phase C): identity → providers → keys → test → save.
-// Local-first: everything written to ~/.tickerlens on THIS machine only.
+// Local-first: everything written to ~/.tickerbands on THIS machine only.
 import { useEffect, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { CheckCircle2, Telescope, XCircle } from 'lucide-react'
@@ -71,7 +71,7 @@ export default function Setup({ onDone }: { onDone: () => void }) {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, contact_email: email, capabilities: caps, secrets }),
       })
-      toast.success('Configuration saved to ~/.tickerlens — welcome aboard')
+      toast.success('Configuration saved to ~/.tickerbands — welcome aboard')
       qc.invalidateQueries()
       onDone()
     } catch (e) {
@@ -84,9 +84,9 @@ export default function Setup({ onDone }: { onDone: () => void }) {
       <div className="flex items-center gap-3 pt-4">
         <Telescope className="h-8 w-8 text-accent" />
         <div>
-          <h1 className="text-xl font-bold">Welcome to TickerLens</h1>
+          <h1 className="text-xl font-bold">Welcome to TickerBands</h1>
           <p className="text-sm text-muted">
-            Local-first setup — everything below is written to <code className="rounded bg-surface-3 px-1">~/.tickerlens</code> on
+            Local-first setup — everything below is written to <code className="rounded bg-surface-3 px-1">~/.tickerbands</code> on
             this machine only. Ranges, not predictions.
           </p>
         </div>
@@ -164,7 +164,7 @@ export default function Setup({ onDone }: { onDone: () => void }) {
             No key entered for: <b>{missingKeys.join(', ')}</b>. You can still
             save — but those providers will show as unavailable until you paste
             a key here or store one via{' '}
-            <span className="font-mono">python -m keyring set tickerlens &lt;secret&gt;</span>.
+            <span className="font-mono">python -m keyring set tickerbands &lt;secret&gt;</span>.
             Placeholders are NOT defaults.
           </p>
         )}
@@ -175,7 +175,7 @@ export default function Setup({ onDone }: { onDone: () => void }) {
         <p className="mt-3 border-t border-border pt-2 text-[11px] text-faint">
           Research &amp; education only — not investment advice. This tool never
           predicts direction and never places orders. Config lives in
-          ~/.tickerlens/config.toml; secrets in ~/.tickerlens/.env (chmod 600).
+          ~/.tickerbands/config.toml; secrets in ~/.tickerbands/.env (chmod 600).
         </p>
       </Card>
     </div>

@@ -34,7 +34,7 @@ from providers.base import ProviderError
 
 
 def use_mock() -> bool:
-    """Delegates to the registry (TICKERLENS_MOCK=1 → mock everywhere)."""
+    """Delegates to the registry (TICKERBANDS_MOCK=1 → mock everywhere)."""
     return registry.use_mock()
 
 

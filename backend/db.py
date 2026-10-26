@@ -1,5 +1,5 @@
 """
-db.py — SQLite schema + connection helpers for TickerLens.
+db.py — SQLite schema + connection helpers for TickerBands.
 
 Tables
   watchlist            research targets (independent of the Portfolio app's — Q2)
@@ -140,7 +140,7 @@ MIGRATIONS = [
 
 
 def connect(db_path: str | None = None) -> sqlite3.Connection:
-    """Open the TickerLens DB (row access by name, FKs on, WAL for the
+    """Open the TickerBands DB (row access by name, FKs on, WAL for the
     watcher-thread + request-thread concurrency pattern)."""
     conn = sqlite3.connect(db_path or DB_PATH)
     conn.row_factory = sqlite3.Row

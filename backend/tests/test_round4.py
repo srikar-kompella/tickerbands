@@ -368,7 +368,7 @@ def test_morning_sheet_renders(client):
     client.post("/api/watchlist", json={"symbol": "NVDA"})
     page = client.get("/api/morning-sheet").text
     assert "Morning sheet" in page and "NVDA" in page
-    assert "TickerLens_MorningSheet_" in page      # print filename
+    assert "TickerBands_MorningSheet_" in page      # print filename
     assert "no direction predictions" in page
 
 
@@ -440,7 +440,7 @@ def test_bottom_context_in_payload(client):
 def test_score_history_export_import_logged(client, tmp_db):
     client.get("/api/analysis/AAPL")   # creates ≥1 score row
     exp = client.get("/api/score-history/export").json()
-    assert exp["format"] == "tickerlens-score-history-v1" and len(exp["rows"]) >= 1
+    assert exp["format"] == "tickerbands-score-history-v1" and len(exp["rows"]) >= 1
     # import into same instance → full dedupe; foreign row → added
     r = client.post("/api/score-history/import", json={"rows": exp["rows"]}).json()
     assert r["imported"] == 0

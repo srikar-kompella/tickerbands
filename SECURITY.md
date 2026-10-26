@@ -14,6 +14,6 @@ issues.
 - **Read-only by construction:** no order placement or money movement exists
   in the codebase; broker access is read-only market/account data.
 - **Secrets:** never stored in the repo. Resolution is OS keyring
-  (`keyring set tickerlens <name>`) → `~/.tickerlens/.env` (chmod 600) →
+  (`keyring set tickerbands <name>`) → `~/.tickerbands/.env` (chmod 600) →
   environment. Report any code path that logs or persists a credential —
   that is a bug of the highest severity here.
