@@ -25,7 +25,7 @@ from providers.base import ProviderError
 name = "finra"
 URL = "https://api.finra.org/data/group/otcmarket/name/consolidatedShortInterest"
 HEADERS = {"Accept": "application/json",
-           "User-Agent": "TickerLens/1.0 (personal research)"}
+           "User-Agent": "TickerBands/1.0 (personal research)"}
 
 
 def health_check() -> bool:

@@ -1,4 +1,4 @@
-# Demoing TickerLens over a public URL
+# Demoing TickerBands over a public URL
 
 Run the app on your Mac, share a temporary `https://…trycloudflare.com` link,
 demo from any device. No router changes, no port forwarding, no account.
@@ -12,8 +12,8 @@ brew install cloudflared
 ## Run a demo (recommended: mock data)
 
 ```bash
-cd <your tickerlens checkout>
-TICKERLENS_MOCK=1 ./demo.sh
+cd <your tickerbands checkout>
+TICKERBANDS_MOCK=1 ./demo.sh
 ```
 
 - Starts the app (backend + frontend) and opens the tunnel.
@@ -50,7 +50,7 @@ subdomain and relays traffic to your Mac over an outbound connection — no
 inbound ports are ever opened. Only the frontend (5174) is tunneled: Vite
 proxies `/api/*` to the backend (8001) locally, so one tunnel carries the
 whole app, including the live discussion updates (SSE with 15s heartbeats).
-`TICKERLENS_DEMO=1` (set by the script) tells Vite to accept the tunnel's
+`TICKERBANDS_DEMO=1` (set by the script) tells Vite to accept the tunnel's
 hostname — without it, Vite's DNS-rebinding protection blocks the requests.
 
 ## Troubleshooting
@@ -58,7 +58,7 @@ hostname — without it, Vite's DNS-rebinding protection blocks the requests.
 | Symptom | Fix |
 |---|---|
 | `cloudflared: command not found` | `brew install cloudflared` |
-| Page loads but says "Blocked request. This host is not allowed" | You started the app yourself instead of via `demo.sh` — use `./demo.sh` (it sets `TICKERLENS_DEMO=1`) |
+| Page loads but says "Blocked request. This host is not allowed" | You started the app yourself instead of via `demo.sh` — use `./demo.sh` (it sets `TICKERBANDS_DEMO=1`) |
 | Viewer sees data but no live discussion updates | Corporate proxies on *their* side sometimes buffer SSE; the timeline still updates on tab refresh |
 | Tunnel URL slow or erroring under load | Quick tunnels are capped (~200 concurrent requests) and are for demos, not hosting |
 | Need it up permanently / with a login | Different tool: a *named* Cloudflare Tunnel + Cloudflare Access (free tier, ~30 min setup) — ask for it if you actually need this |

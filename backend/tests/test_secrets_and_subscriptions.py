@@ -24,18 +24,18 @@ def _fake_keyring(calls, value="from-keyring"):
 def test_keyring_wins_over_env(monkeypatch):
     calls = []
     monkeypatch.setitem(sys.modules, "keyring", _fake_keyring(calls))
-    monkeypatch.delenv("TICKERLENS_NO_KEYRING", raising=False)
+    monkeypatch.delenv("TICKERBANDS_NO_KEYRING", raising=False)
     monkeypatch.setattr(base, "from_keychain", lambda service: None)
     monkeypatch.setenv("FAKE_SECRET_ENV", "from-env")
 
     assert base.get_secret("fake_secret", "FAKE_SECRET_ENV") == "from-keyring"
-    assert calls == [("tickerlens", "fake_secret")]
+    assert calls == [("tickerbands", "fake_secret")]
 
 
 def test_kill_switch_skips_keyring_env_wins(monkeypatch):
     calls = []
     monkeypatch.setitem(sys.modules, "keyring", _fake_keyring(calls))
-    monkeypatch.setenv("TICKERLENS_NO_KEYRING", "1")
+    monkeypatch.setenv("TICKERBANDS_NO_KEYRING", "1")
     monkeypatch.setattr(base, "from_keychain", lambda service: None)
     monkeypatch.setenv("FAKE_SECRET_ENV", "from-env")
 
@@ -46,18 +46,19 @@ def test_kill_switch_skips_keyring_env_wins(monkeypatch):
 def test_legacy_keychain_between_keyring_and_env(monkeypatch):
     calls = []
     monkeypatch.setitem(sys.modules, "keyring", _fake_keyring(calls, value=None))
-    monkeypatch.delenv("TICKERLENS_NO_KEYRING", raising=False)
+    monkeypatch.delenv("TICKERBANDS_NO_KEYRING", raising=False)
     monkeypatch.setattr(base, "from_keychain", lambda service: "from-legacy")
     monkeypatch.setenv("FAKE_SECRET_ENV", "from-env")
 
     assert base.get_secret("fake_secret", "FAKE_SECRET_ENV") == "from-legacy"
-    assert calls == [("tickerlens", "fake_secret")]  # tried first, empty
+    # both keyring services tried first (new, then pre-rename), both empty
+    assert calls == [("tickerbands", "fake_secret"), ("tickerlens", "fake_secret")]
 
 
 def test_nothing_set_returns_none(monkeypatch):
     calls = []
     monkeypatch.setitem(sys.modules, "keyring", _fake_keyring(calls, value=None))
-    monkeypatch.delenv("TICKERLENS_NO_KEYRING", raising=False)
+    monkeypatch.delenv("TICKERBANDS_NO_KEYRING", raising=False)
     monkeypatch.setattr(base, "from_keychain", lambda service: None)
     monkeypatch.delenv("FAKE_SECRET_ENV", raising=False)
 
@@ -105,14 +106,33 @@ def test_kill_switch_off_values_reenable_keyring(monkeypatch):
     class FakeKeyring:
         @staticmethod
         def get_password(service, name):
-            assert service == "tickerlens"
+            assert service == "tickerbands"
             return "from-keyring"
 
     monkeypatch.setitem(sys.modules, "keyring", FakeKeyring())
     monkeypatch.setattr(base, "from_keychain", lambda name: None)
     monkeypatch.setenv("SOME_ENV_KEY", "from-env")
     for off in ("0", "false", "FALSE", " 0 "):
-        monkeypatch.setenv("TICKERLENS_NO_KEYRING", off)
+        monkeypatch.setenv("TICKERBANDS_NO_KEYRING", off)
         assert base.get_secret("some_key", "SOME_ENV_KEY") == "from-keyring", off
-    monkeypatch.setenv("TICKERLENS_NO_KEYRING", "1")
+    monkeypatch.setenv("TICKERBANDS_NO_KEYRING", "1")
     assert base.get_secret("some_key", "SOME_ENV_KEY") == "from-env"
+
+
+def test_pre_rename_keyring_service_still_read(monkeypatch):
+    """Keys stored under the old "tickerlens" service keep working after the
+    TickerLens → TickerBands rename, without re-entering them."""
+    class FakeKeyring:
+        seen: list = []
+
+        @staticmethod
+        def get_password(service, name):
+            FakeKeyring.seen.append(service)
+            return "old-key" if service == "tickerlens" else None
+
+    monkeypatch.setitem(sys.modules, "keyring", FakeKeyring())
+    monkeypatch.delenv("TICKERBANDS_NO_KEYRING", raising=False)
+    monkeypatch.setattr(base, "from_keychain", lambda name: None)
+    monkeypatch.delenv("LEGACY_ENV", raising=False)
+    assert base.get_secret("legacy_only_key", "LEGACY_ENV") == "old-key"
+    assert FakeKeyring.seen == ["tickerbands", "tickerlens"]

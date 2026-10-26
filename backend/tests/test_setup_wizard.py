@@ -6,7 +6,7 @@ import pytest
 @pytest.fixture()
 def wiz_client(tmp_path, tmp_db, mock_mode, tmp_discussions, monkeypatch):
     import config as cfg
-    monkeypatch.setattr(cfg, "TICKERLENS_HOME", str(tmp_path))
+    monkeypatch.setattr(cfg, "TICKERBANDS_HOME", str(tmp_path))
     monkeypatch.setattr(cfg, "DISCUSSIONS_DIR", str(tmp_discussions))
     from fastapi.testclient import TestClient
     from app import app
@@ -35,7 +35,7 @@ def test_status_unconfigured_then_save_then_configured(wiz_client):
     assert os.environ.get("FINNHUB_KEY") == "abc123"
     assert c.get("/api/setup/status").json()["configured"] is True
     # capability gating reflects account=none (mock off for this check is
-    # unnecessary — snapshot uses config unless TICKERLENS_MOCK, which maps all
+    # unnecessary — snapshot uses config unless TICKERBANDS_MOCK, which maps all
     # to mock; so assert via config directly)
     assert cfg.CAPABILITIES_CONFIG["account"] == "none"
 

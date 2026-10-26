@@ -3,7 +3,7 @@ providers/mock.py — deterministic fixtures matching every real provider's shap
 
 Two jobs:
   1. Unit tests (composer/API tests run hermetically — no network, no Keychain).
-  2. Offline dev: TICKERLENS_MOCK=1 ./run_app.sh gives a fully working UI with
+  2. Offline dev: TICKERBANDS_MOCK=1 ./run_app.sh gives a fully working UI with
      fake-but-plausible data on any machine.
 
 Determinism: everything derives from md5(symbol), so the same symbol always

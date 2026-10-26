@@ -32,8 +32,8 @@ def _ua() -> dict:
         raise ProviderError(
             "unavailable",
             "SEC EDGAR requires a contact email in its User-Agent — set "
-            "user.contact_email in ~/.tickerlens/config.toml")
-    return {"User-Agent": f"TickerLens/1.0 (personal research; {config.CONTACT_EMAIL})"}
+            "user.contact_email in ~/.tickerbands/config.toml")
+    return {"User-Agent": f"TickerBands/1.0 (personal research; {config.CONTACT_EMAIL})"}
 MAX_FILINGS = 8          # newest Form 4s parsed per request (cached 12h)
 CLUSTER_WINDOW_DAYS = 14
 

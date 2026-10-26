@@ -1,5 +1,5 @@
-# TickerLens instance configuration — copy to ~/.tickerlens/config.toml
-# Secrets do NOT go here — they go in ~/.tickerlens/.env  (chmod 600)
+# TickerBands instance configuration — copy to ~/.tickerbands/config.toml
+# Secrets do NOT go here — they go in ~/.tickerbands/.env  (chmod 600)
 
 [user]
 name = "Your Name"                 # used in research-discussion prompts
@@ -26,10 +26,10 @@ short_interest = "finra"
 symbol_search  = "finnhub"
 
 [paths]
-# schwab_token = "~/.tickerlens/schwab_token.json"   # default
+# schwab_token = "~/.tickerbands/schwab_token.json"   # default
 # portfolio_db = ""    # optional legacy sqlite to one-time-import watchlist from
 
-# ~/.tickerlens/.env example:
+# ~/.tickerbands/.env example:
 #   FINNHUB_KEY=xxxxxxxx
 #   SCHWAB_APP_KEY=xxxxxxxx
 #   SCHWAB_APP_SECRET=xxxxxxxx

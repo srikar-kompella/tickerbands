@@ -223,10 +223,10 @@ def test_report_contains_everything(client, tmp_db, tmp_discussions):
         assert needle in page, f"report missing: {needle}"
     # markdown actually rendered, not dumped raw
     assert "<strong>no edge</strong>" in page
-    # <title> = default save-as-PDF filename: TickerLens_AAPL_YYYY-MM-DD_HHMM
+    # <title> = default save-as-PDF filename: TickerBands_AAPL_YYYY-MM-DD_HHMM
     import re
     m = re.search(r"<title>(.*?)</title>", page)
-    assert m and re.fullmatch(r"TickerLens_AAPL_\d{4}-\d{2}-\d{2}_\d{4}", m.group(1)), m.group(1)
+    assert m and re.fullmatch(r"TickerBands_AAPL_\d{4}-\d{2}-\d{2}_\d{4}", m.group(1)), m.group(1)
 
 
 def test_report_clean_ticker_without_history(client):

@@ -1,4 +1,4 @@
-# Contributing to TickerLens
+# Contributing to TickerBands
 
 Contributions are welcome — from humans and from AI coding agents alike.
 This project is deliberately structured so that an AI session can implement
@@ -16,15 +16,15 @@ walkthrough, and the constitution.
    quality.
 2. **The API is read-only.** No order placement, ever.
 3. **No secrets in files.** Credentials resolve via OS keyring →
-   `~/.tickerlens/.env` (chmod 600) → env vars.
-4. **User data is sacred.** `~/.tickerlens/` is never written by tests;
-   anything touching a DB must set `TICKERLENS_DB_PATH` to a scratch path.
+   `~/.tickerbands/.env` (chmod 600) → env vars.
+4. **User data is sacred.** `~/.tickerbands/` is never written by tests;
+   anything touching a DB must set `TICKERBANDS_DB_PATH` to a scratch path.
 5. **Degrade, don't die.** Every provider raises `ProviderError`; every
    section renders ok/stale/unavailable. A dead API must never blank a page.
 
 ## Pull requests
 
-- Backend: `cd backend && TICKERLENS_HOME=/tmp/tl TICKERLENS_DB_PATH=/tmp/t.db
+- Backend: `cd backend && TICKERBANDS_HOME=/tmp/tl TICKERBANDS_DB_PATH=/tmp/t.db
   python3 -m pytest tests -q` — everything green, new behavior needs tests.
 - Frontend: `cd frontend && npm run typecheck` — clean.
 - Adding a data source? Follow the provider checklist in `CLAUDE.md`

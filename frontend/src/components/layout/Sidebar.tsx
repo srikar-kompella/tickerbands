@@ -23,7 +23,7 @@ export function Sidebar({ tab, setTab, tabs = TABS }: {
       <div className="flex items-center gap-2 px-4 py-5 max-md:justify-center max-md:px-0">
         <Telescope className="h-6 w-6 text-accent" />
         <div className="max-md:hidden">
-          <div className="text-base font-bold leading-none">TickerLens</div>
+          <div className="text-base font-bold leading-none">TickerBands</div>
           <div className="mt-1 text-[10px] text-faint">ranges, not predictions</div>
         </div>
       </div>

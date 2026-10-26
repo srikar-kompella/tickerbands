@@ -225,7 +225,7 @@ def build_claude_prompt(a: dict) -> str:
         *_value_lens_lines(a),
         "## After the discussion — REQUIRED",
         f"Write your analysis to `{_home_path(os.path.join(config.DISCUSSIONS_DIR, sym, f'{now}.md'))}` "
-        "(this path is under the TickerLens home — correct from ANY working "
+        "(this path is under the TickerBands home — correct from ANY working "
         "folder; do NOT write into a repo checkout) "
         "with EXACTLY this frontmatter structure (the app auto-ingests it).",
         "ALWAYS create a NEW file per discussion — never append to or edit a "
@@ -595,14 +595,14 @@ def discovery_prompt():
     """The web-sweep prompt: paste into any agent; it writes discoveries/*.md
     which the watcher ingests (same file contract philosophy as discussions)."""
     day = dt.date.today().isoformat()
-    return {"prompt": f"""# TickerLens discovery sweep — {day}
+    return {"prompt": f"""# TickerBands discovery sweep — {day}
 Research CURRENT sources (news, filings, sector coverage) for 8-15 NON-OBVIOUS
 US stock/ETF candidates with early potential. EXCLUDE: Mag-7, S&P 500
 mainstays, mega-cap household names, flagship index ETFs. For each: a concrete
 thesis (what changed recently), and the main risk. No price predictions —
 theses about businesses/flows/events only.
 
-Write the result to `~/.tickerlens/discoveries/{day}.md` EXACTLY as:
+Write the result to `~/.tickerbands/discoveries/{day}.md` EXACTLY as:
 ```markdown
 ---
 date: {day}
@@ -780,7 +780,7 @@ def score_history_export():
         conn.commit()
     finally:
         conn.close()
-    return {"format": "tickerlens-score-history-v1",
+    return {"format": "tickerbands-score-history-v1",
             "exported_at": dt.datetime.now().isoformat(timespec="seconds"),
             "rows": rows}
 
@@ -923,7 +923,7 @@ def sync_all():
     return {"ok": True, "invalidated": invalidate("")}
 
 
-# ─── watchlist (TickerLens's own — independent of the Portfolio app's, Q2) ─────
+# ─── watchlist (TickerBands's own — independent of the Portfolio app's, Q2) ─────
 
 class WatchAdd(BaseModel):
     symbol: str = Field(min_length=1, max_length=10)
@@ -996,7 +996,7 @@ def del_watch(symbol: str):
 @router.post("/watchlist/import-portfolio")
 def import_portfolio_watchlist():
     """One-time convenience (Q2): copy symbols from the Portfolio app's
-    watchlist (read-only). Existing TickerLens entries are left alone."""
+    watchlist (read-only). Existing TickerBands entries are left alone."""
     if not config.PORTFOLIO_DB_PATH:
         raise HTTPException(501, "no legacy portfolio DB configured (paths.portfolio_db in config.toml)")
     from providers import portfolio_db
