@@ -62,8 +62,11 @@ echo
 
 # --reload scoped to *.py: backend code changes apply without a restart
 # (DB/cache writes in this dir must NOT trigger reloads — hence the include).
+# Quiet by default: no per-request access lines (the UI polls constantly).
+# TICKERBANDS_VERBOSE=1 ./run_app.sh brings them back for debugging.
+ACCESS_LOG="--no-access-log"; [ -n "$TICKERBANDS_VERBOSE" ] && ACCESS_LOG=""
 ( cd "$ROOT/backend" && exec "$VENV/bin/uvicorn" app:app --port 8001 \
-    --reload --reload-include '*.py' ) &
+    --reload --reload-include '*.py' $ACCESS_LOG ) &
 BACK=$!
 
 ( cd "$ROOT/frontend" && exec npm run dev ) &
