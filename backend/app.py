@@ -110,6 +110,9 @@ async def lifespan(app: FastAPI):
     yield
     if refresh_task:
         refresh_task.cancel()
+
+    observer.discussion_handler.stop()
+
     observer.stop()
     observer.join(timeout=3)
 

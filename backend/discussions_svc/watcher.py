@@ -15,6 +15,7 @@ tells the UI, instead of silently ingesting a truncated discussion.
 """
 from __future__ import annotations
 
+from importlib.resources import path
 import os
 import shutil
 import threading
@@ -92,20 +93,43 @@ class DiscussionHandler(FileSystemEventHandler):
     def __init__(self) -> None:
         self._timers: dict[str, threading.Timer] = {}
         self._lock = threading.Lock()
+        self._condition = threading.Condition(self._lock)
+        self._active_callbacks = 0
+        self._stopping = False
+
+    def stop(self) -> None:
+        with self._condition:
+            self._stopping = True
+            for timer in self._timers.values():
+                timer.cancel()
+
+            self._timers.clear()
+
+            while self._active_callbacks > 0:
+                self._condition.wait()
 
     def _schedule(self, path: str) -> None:
-        with self._lock:
+        with self._condition:
+            if self._stopping:
+                return
             if (t := self._timers.get(path)) is not None:
                 t.cancel()  # fresh write activity → restart the clock
             timer = threading.Timer(DEBOUNCE_SECONDS, self._fire, args=(path,))
             timer.daemon = True
             self._timers[path] = timer
             timer.start()
-
+    
     def _fire(self, path: str) -> None:
-        with self._lock:
+        with self._condition:
             self._timers.pop(path, None)
-        _ingest(path)
+            self._active_callbacks += 1
+        
+        try:
+            _ingest(path)
+        finally:
+            with self._condition:
+                self._active_callbacks -= 1
+                self._condition.notify_all()
 
     # watchdog callbacks (observer thread) --------------------------------------
     def on_created(self, event):
@@ -199,7 +223,9 @@ def start_watcher() -> Observer:
     os.makedirs(DISCUSSIONS_DIR, exist_ok=True)
     os.makedirs(DISCOVERIES_DIR, exist_ok=True)
     observer = Observer()
-    observer.schedule(DiscussionHandler(), DISCUSSIONS_DIR, recursive=True)
+    discussion_handler = DiscussionHandler()
+    observer.discussion_handler = discussion_handler
+    observer.schedule(discussion_handler, DISCUSSIONS_DIR, recursive=True)
     observer.schedule(DiscoveryHandler(), DISCOVERIES_DIR, recursive=False)
     observer.daemon = True
     observer.start()
