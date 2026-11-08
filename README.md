@@ -12,10 +12,17 @@
 > are still read, and `TICKERLENS_*` environment variables still work (with a
 > one-time deprecation notice). If both folders exist, nothing is moved —
 > you decide which to keep.
+>
+> Older commits that show the author `TickerLens <tickerlens@localhost>`
+> (in forks or old links) are the maintainer's, made under the project's
+> former name. In November 2026 those commits were re-attributed to the
+> maintainer's GitHub account; their content and dates did not change.
 
 **A local-first research tool for US stocks & options — with receipts.**
 Bring your own data providers and broker credentials; everything runs on your
 machine. No cloud, no telemetry, no accounts.
+
+Created and maintained by [Srikar Kompella](https://github.com/srikar-kompella).
 
 For any ticker: a **calibrated 80% expected range** (three volatility engines,
 each labeled with its measured backtest coverage), fundamentals, options
