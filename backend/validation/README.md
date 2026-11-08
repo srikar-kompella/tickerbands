@@ -5,8 +5,13 @@
 Forward out-of-sample check of the shipped band and breach estimator on days
 after the data used to choose the band engine (that cache ended 2026-06-05).
 The method is **pre-registered in the script's docstring**; the script was
-committed (6e766a3, 2026-10-12 00:12 UTC) before any out-of-sample data was
+committed (2f39a62, 2026-10-12 00:12 UTC) before any out-of-sample data was
 fetched, then run once. Nothing was tuned.
+
+Note: commit IDs changed on 2026-11-08 when the repository's commit-author
+metadata was corrected; file contents and timestamps are unchanged. The result
+JSON records the pre-registration commit under its original ID `6e766a3`,
+which is the same commit as `2f39a62`.
 
 Reproduce: `cd backend && python validation/oos_2026_06.py` (needs
 `yfinance`). Compare `derived_series_sha256` in the JSON to confirm you fetched
