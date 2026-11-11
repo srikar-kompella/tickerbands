@@ -112,12 +112,18 @@ def screen_pead(calendar_fn, cap_fn=None, max_new: int = 10) -> int:
         est, act, sym = e.get("epsEstimate"), e.get("epsActual"), (e.get("symbol") or "").upper()
         if not sym or est in (None, 0) or act is None:
             continue
+        # Denominator floor: with a near-zero estimate the percentage is
+        # meaningless — a $0.12 beat on a $0.01 estimate reads as "1100%"
+        # while being a dime of earnings. Below $0.05 expected EPS, don't
+        # compute (or rank on) a surprise percentage at all.
+        if abs(est) < 0.05:
+            continue
         surprise = (act - est) / abs(est) * 100
         if surprise >= 10:
-            scored.append((surprise, sym, e.get("date")))
+            scored.append((surprise, sym, e.get("date"), est, act))
     scored.sort(reverse=True)
     added = 0
-    for surprise, sym, day in scored:
+    for surprise, sym, day, est, act in scored:
         if added >= max_new:
             break
         cap = None
@@ -129,6 +135,7 @@ def screen_pead(calendar_fn, cap_fn=None, max_new: int = 10) -> int:
                 pass
         if upsert_candidate(sym, "pead",
                             f"beat EPS estimates by {surprise:.0f}% on {day} — "
+                            f"${act:.2f} vs ${est:.2f} est, "
                             f"inside the ~60-trading-day drift window", cap, day):
             added += 1
     return added
