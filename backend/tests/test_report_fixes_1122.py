@@ -214,3 +214,17 @@ def test_every_trigger_is_searched_before_it_is_marked(tmp_db, monkeypatch):
     assert ("Check every trigger, yours and the user's, with a search or a filing before "
             "you mark it, and name that search; UNKNOWN means the search could not settle "
             "it, not that it was skipped.") in step3
+
+
+# ── 6. speed: parallel research, filing index, length cap ────────────────────
+
+def test_step1_offers_parallel_subagents_and_the_filing_index_json(tmp_db, monkeypatch):
+    a = _analyze(monkeypatch, rf.nvda_providers(), rf.NVDA_NOW, "NVDA")
+    p = _prompt(a)
+    step1 = p[p.index("1. Research first"):p.index("2. Reconcile the data")]
+    assert ("if you can start subagents (for example Claude Code's Task tool), run step 1 "
+            "as three in parallel and collect all three results") in step1
+    assert "keep steps 2 to 8 yourself" in step1
+    if a.get("sec_cik"):
+        assert f"https://data.sec.gov/submissions/CIK{a['sec_cik']}.json" in step1
+    assert "stay under 1,100" in p

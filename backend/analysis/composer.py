@@ -920,6 +920,7 @@ def analyze(symbol: str, force: bool = False, now: dt.datetime | None = None,
         "headlines_view": {k: v for k, v in headlines_view.items()
                            if k not in ("items", "all_relevant")},
         "sec_filings": filings,
+        "sec_cik": (filings_payload or {}).get("cik"),
         "regulatory_hits": reg_hits,
         "move_cause": cause,
         "rating_changes": rating_changes,

@@ -776,7 +776,10 @@ def build_claude_prompt(a: dict) -> str:
         "broad, then narrow, and run independent searches in parallel. Minimum "
         "searches:",
         step1a,
-        f"   b. SEC EDGAR filings since {w_from}, reading the item numbers of every 8-K;",
+        f"   b. SEC EDGAR filings since {w_from}, reading the item numbers of every 8-K"
+        + (f" (the filing index as JSON: https://data.sec.gov/submissions/CIK{a['sec_cik']}.json"
+           " — EDGAR's browse pages block automated readers)" if a.get("sec_cik") else "")
+        + ";",
         "   c. the company name with each of: SEC, DOJ, state attorneys general, "
         "subpoena, export controls, securities class actions;",
         "   d. the latest earnings release"
@@ -784,6 +787,14 @@ def build_claude_prompt(a: dict) -> str:
         "   e. the company's investor-relations page for the next earnings date — "
         "the snapshot tags its date confirmed or estimated; if the company's date "
         "differs, say so with the link.",
+        "   To finish sooner: if you can start subagents (for example Claude Code's "
+        "Task tool), run step 1 as three in parallel and collect all three results — (A) "
+        "search a; (B) searches b, d and e, including the release's quarterly free "
+        "cash flow and balance sheet; (C) searches c, plus one search for each "
+        "trigger in the user's notes and each open condition in <prior_notes>. Have "
+        "each return rows of claim, source, date, a verbatim quote and the link it "
+        "opened, and keep steps 2 to 8 yourself. Without subagents, run the "
+        "searches in parallel batches.",
         "   Prefer primary sources (filings, releases, the company's own pages) over "
         "summaries of them. Log every search that found nothing — \"searched X, "
         "nothing found\" is evidence too."
@@ -896,7 +907,9 @@ def build_claude_prompt(a: dict) -> str:
         "",
         "The file holds your analysis only: the app already displays the snapshot, "
         "so leave this prompt, the tagged blocks and raw JSON out of it. Aim for "
-        "about 900 words excluding tables. Body headings, in this order:",
+        "about 900 words excluding tables and stay under 1,100: a longer note is "
+        "skimmed, and the reader misses the part that matters. Body headings, in "
+        "this order:",
         "",
         "1. `## TL;DR` — 2–3 sentences; a MET trigger comes first.",
         "2. `## What happened` — the window in date order; name sessions by date.",
