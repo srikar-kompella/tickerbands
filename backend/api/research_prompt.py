@@ -62,6 +62,19 @@ own triggers; funds compare price with an index ETF when NAV data is out of
 reach; a bank's regulator follows its charter; an INVALID note's redo covers
 the window only.
 
+Nov 22 amendment, round 3 (keys unchanged): the filing header names the
+forms the list covers (`sec_filing_forms`) and step 1b only the ones left
+out; a ≥2σ session under 1σ net of the market is a market-wide move that
+needs no cause (here and in every app-side check); a page that refused to
+open is "not verified" without making research partial by itself; thin
+coverage may keep the stance with a reason (the app still flags it); EDGAR's
+newer-filings check waits for a list more than one trading day old; legal
+terms may share a search; future-dated conditions are PENDING without a
+search; about 1,100 words (incremental about 500); `news_view` is defined;
+the window counts days back and sessions; the INVALID sentence needs an
+INVALID note; a fund's EDGAR search names its trust; an auto-loaded project
+file counts only when it is about the user's investing.
+
 The prompt is static per snapshot and regenerable from the button;
 continuity across sessions comes from <prior_notes>, not chat history.
 """
@@ -71,6 +84,7 @@ import datetime as dt
 import os
 import re
 from typing import Any
+from urllib.parse import quote_plus
 
 import config
 from analysis import market_clock as mc
@@ -121,7 +135,73 @@ RECENT_ROWS = 5          # Recent sessions rows always printed (plus each sessio
 _FUND_FORM_RE = re.compile(r"^(N-|497|485|24F|19a-1)", re.I)
 _BASE_FORMS = {"8-K", "8-K/A", "10-Q", "10-Q/A", "10-K", "10-K/A"}
 _INSIDER_FORMS = {"4", "4/A", "144", "144/A", "3", "5"}
+# forms a stock's filing list may leave out, as step 1b names them (the key
+# matches a covered form by prefix: "424B" covers 424B4)
+_LEFT_OUT_FORMS = (("4", "Form 4"), ("144", "144"), ("3", "Form 3"), ("S-8", "S-8"),
+                   ("NT 10", "NT 10-Q and NT 10-K"), ("S-1", "S-1"), ("424B", "424B"),
+                   ("6-K", "6-K"), ("20-F", "20-F"))
 FRESH_NOTE_HOURS = 24    # an OK note younger than this → incremental run
+
+
+def filing_forms(a: dict) -> list[str] | None:
+    """The forms the app's filing list covers (payload `sec_filing_forms`,
+    set by the composer), cleaned; None when the payload does not say, and
+    the coverage is then inferred from the forms in the list."""
+    forms = a.get("sec_filing_forms")
+    if not isinstance(forms, (list, tuple)):
+        return None
+    out = []
+    for f in forms:
+        t = str(f or "").strip()
+        if t and t not in out:
+            out.append(t)
+    return out or None
+
+
+def fund_family(a: dict) -> str | None:
+    """The fund family (the trust's sponsor) where the payload carries it:
+    `security.fund_family`, or the family half of the "category · fund
+    family" row. None when unknown — a lone value in that row could be
+    either half."""
+    fam = str((a.get("security") or {}).get("fund_family") or "").strip()
+    if fam:
+        return fam
+    row = (((a.get("report_view") or {}).get("fields") or {}).get("fund_category") or {})
+    parts = [p.strip() for p in str(row.get("value") or "").split(" · ") if p.strip()]
+    return parts[-1] if len(parts) == 2 else None
+
+
+def _forms_shown(forms: list[str], fund: bool) -> list[str]:
+    """The covered forms as the header prints them: an amendment ("/A")
+    folds into its form, "SCHEDULE 13G" into "SC 13G", and a stock's header
+    leaves out fund forms (N-PORT, 497 …), which a company does not file.
+    The live list named 24 forms for every ticker."""
+    up = {f.upper() for f in forms}
+    out = []
+    for f in forms:
+        u = f.upper()
+        if u.endswith("/A") and u[:-2] in up:
+            continue
+        if u.startswith("SCHEDULE ") and ("SC " + u[9:]) in up:
+            continue
+        if not fund and _FUND_FORM_RE.match(f):
+            continue
+        out.append(f)
+    return out
+
+
+def _form_word(f: str) -> str:
+    """'4' → 'Form 4' (the insider forms); other names as they are."""
+    return f"Form {f}" if f.upper() in _INSIDER_FORMS else f
+
+
+def _covers(forms: list[str], key: str) -> bool:
+    """Whether the list covers a form family: an insider form by number
+    ("4" → 4 and 4/A), anything else by prefix ("424B" → 424B4)."""
+    k = key.upper()
+    if k.isdigit():
+        return any(f.upper() in (k, k + "/A") for f in forms)
+    return any(f.upper().startswith(k) for f in forms)
 _EXPORT_RE = re.compile(r"\bexport (?:control|rule|restriction|curb|licen[cs]e|ban)s?\b", re.I)
 
 
@@ -259,11 +339,13 @@ def _recent_split(recent: list[dict], keep: set[str]) -> tuple[list[dict], list[
     return shown, [x for x in recent if x not in shown]
 
 
-def _data_blocks(a: dict, keep: set[str] | None = None
+def _data_blocks(a: dict, keep: set[str] | None = None,
+                 market: set[str] | frozenset = frozenset()
                  ) -> tuple[list[str], list[str], dict[str, Any]]:
     """(<data_caveats> lines, <snapshot> lines, facts the task text needs).
     `keep`: session dates step 1 lists, each of which gets a Recent sessions
-    row."""
+    row; `market`: the ≥2σ sessions among them the market explains, whose
+    row says so."""
     rv = a.get("report_view") or {}
     F = rv.get("fields") or {}
     asof = rv.get("data_as_of") or {}
@@ -379,6 +461,8 @@ def _data_blocks(a: dict, keep: set[str] | None = None
                 ln += f"; SPY {signed(x['spy_change_pct'], 2, '%')}"
             if x.get("net_of_market_pct") is not None:
                 ln += f"; net {signed(x['net_of_market_pct'], 2, '%')}"
+                if x["date"] in market:
+                    ln += " — market-wide move"
             snap.append(ln)
 
     lag = bool(smeta.get("warning"))
@@ -413,12 +497,22 @@ def _data_blocks(a: dict, keep: set[str] | None = None
     fund_kind = base_kind(a) == "fund"
     filings = sorted(a.get("sec_filings") or [],
                      key=lambda f: str(f.get("date") or ""), reverse=True)
-    if fund_kind and not any(_FUND_FORM_RE.match(str(f.get("form") or "")) for f in filings):
-        filings = []
-    # the list holds more than 8-K / 10-Q / 10-K (Form 4, 144, NT, S-1, fund
-    # forms) once any other form appears in it
-    wide = any(str(f.get("form") or "") not in _BASE_FORMS for f in filings)
-    listed = bool(filings or (a.get("sec_cik") and not fund_kind))
+    # which forms the list covers: the composer's own statement
+    # (`sec_filing_forms`) when it gives one — the ANT run met eight Form 3s
+    # and two S-8s on EDGAR under a header that said the list was wider — and
+    # otherwise inferred: more than 8-K / 10-Q / 10-K once any other form
+    # appears in it
+    forms = filing_forms(a)
+    fund_forms = bool(forms) and any(_FUND_FORM_RE.match(f) for f in forms)
+    if fund_kind and not fund_forms and not any(
+            _FUND_FORM_RE.match(str(f.get("form") or "")) for f in filings):
+        filings, forms = [], None
+    wide = (any(f not in _BASE_FORMS for f in forms) if forms else
+            any(str(f.get("form") or "") not in _BASE_FORMS for f in filings))
+    listed = bool(filings or (a.get("sec_cik") and (not fund_kind or fund_forms)))
+    covers = ("forms covered: " + ", ".join(_form_word(f) for f in _forms_shown(forms, fund_kind))
+              + "; amendments included" * any(f.upper().endswith("/A") for f in forms)
+              ) if forms else ""
     filings_since = min([str(d)[:10] for d in [nwin.get("from")]
                          + [f.get("date") for f in filings] if d] or [""])
     # the earnings 8-K's own page is a cover with no figures: its row links
@@ -427,7 +521,9 @@ def _data_blocks(a: dict, keep: set[str] | None = None
     rel_ex = {rel.get("url"): rel.get("exhibit_url")} if rel.get("exhibit_url") else {}
     if filings:
         snap += ["", f"SEC filings since {filings_since}"
-                     + (" (EDGAR's index as the app fetched it, newest first)" if wide else
+                     + (f" — {covers} (EDGAR's index as the app fetched it, newest first)"
+                        if covers else
+                        " (EDGAR's index as the app fetched it, newest first)" if wide else
                         " — 8-K, 10-Q and 10-K only (EDGAR's index as the app fetched it, "
                         "newest first)")]
         # insider forms filed the same day share one row (GOOGL: four Form
@@ -458,17 +554,27 @@ def _data_blocks(a: dict, keep: set[str] | None = None
         if len(groups) > FILINGS_SHOWN:
             left = sum(len(g) for g in groups[FILINGS_SHOWN:])
             snap.append(f"- and {left} older, not listed (on EDGAR, back to {groups[-1][0].get('date')})")
+    elif listed and covers:
+        snap += ["", f"SEC filings since {filings_since}: none in EDGAR's index when the "
+                     f"app fetched it ({covers})"]
     elif listed:
         snap += ["", f"SEC filings since {filings_since}: no 8-K, 10-Q or 10-K in EDGAR's "
                      "index when the app fetched it (other forms are not listed)"]
     elif fund_kind:
         # a URL with a query string stays in the data block: the task text
         # carries no question mark (a guard against the prompt asking anything)
-        snap += ["", "Fund filings: not fetched by the app. EDGAR full-text search for "
-                     "the window (put the trust's name in place of the ticker to list its "
-                     "N-PORT, 497 and N-CSR filings): https://efts.sec.gov/LATEST/"
-                     f"search-index?q=%22{a.get('symbol')}%22&dateRange=custom"
-                     f"&startdt={nwin.get('from')}&enddt={nwin.get('to')}"]
+        # a fund's filings sit under its trust, so a ticker query finds
+        # nothing (QQQI run): the query names the fund family when known
+        fam = fund_family(a)
+        snap += ["", "Fund filings: not fetched by the app. EDGAR files a fund's N-PORT, 497 "
+                     "and N-CSR under its trust (the fund family), not its ticker. Full-text "
+                     "search for the window"
+                     + (f" on the family's name ({fam}; use the trust's exact name where it "
+                        "differs)" if fam else
+                        " (put the trust's name in place of the ticker)")
+                     + ": https://efts.sec.gov/LATEST/"
+                     f"search-index?q=%22{quote_plus(fam or str(a.get('symbol')))}%22"
+                     f"&dateRange=custom&startdt={nwin.get('from')}&enddt={nwin.get('to')}"]
 
     snap += ["", "Feed leads [C4]"]
     used.add("C4")
@@ -571,6 +677,7 @@ def _data_blocks(a: dict, keep: set[str] | None = None
              "has_beta": bool(shown("beta")), "has_earn_date": bool(shown("earnings_next")),
              "filings_listed": listed,
              "filings_wide": wide,
+             "filings_forms": forms,
              "filings_cut": bool(filings) and len(groups) > FILINGS_SHOWN,
              "filings_since": filings_since,
              "earn_tag": (F.get("earnings_next") or {}).get("tag")}
@@ -596,9 +703,10 @@ def _prior_notes(sym: str, a: dict) -> tuple[list[str], dict[str, Any]]:
     notes = list_discussions(sym, limit=25)
     if not notes:
         return (["No earlier discussions on this ticker."],
-                {"any": False, "superseded": False, "conditions": False, "explained": {},
+                {"any": False, "superseded": False, "invalid": False, "conditions": False,
+                 "explained": {},
                  "older": [], "fresh": None})
-    args = (notes, a.get("move"), a.get("price_basis"), a.get("big_move_sessions"))
+    args = (notes, a.get("move"), a.get("price_basis"), _big_list(a))
     status = research_quality.prior_note_status(*args)
     lines = ["Each note is true only as of its date. STATUS says whether it can still "
              "be relied on."]
@@ -609,7 +717,7 @@ def _prior_notes(sym: str, a: dict) -> tuple[list[str], dict[str, Any]]:
     older = {s["session_date"]: s for s in
              research_quality.older_failed_sessions(*args, w_start)
              + research_quality.older_unexplained_sessions(*args, w_start)}
-    info = {"any": True, "superseded": False, "conditions": False,
+    info = {"any": True, "superseded": False, "invalid": False, "conditions": False,
             "explained": research_quality.explained_sessions(*args),
             "older": [older[d] for d in sorted(older)],
             "fresh": None}
@@ -636,6 +744,8 @@ def _prior_notes(sym: str, a: dict) -> tuple[list[str], dict[str, Any]]:
                      + (f" — {st['reason']}" if st["reason"] else ""))
         if st["status"] == research_quality.SUPERSEDED:
             info["superseded"] = True
+        if st["status"] == research_quality.INVALID:
+            info["invalid"] = True
         if st["status"] in (research_quality.INVALID, research_quality.SUPERSEDED):
             continue
         c = research_quality.stance_conditions(d)
@@ -648,22 +758,36 @@ def _prior_notes(sym: str, a: dict) -> tuple[list[str], dict[str, Any]]:
     return lines, info
 
 
-def _big_sessions_in_window(a: dict, explained: dict) -> tuple[list[dict], list[dict]]:
+def _big_list(a: dict) -> list[dict]:
+    """The payload's ≥2σ sessions with each market-wide move marked
+    (`market_net_pct`, from its Recent sessions row) — the list the notes in
+    <prior_notes> are judged against, so the prompt and the app agree on
+    which sessions need a cause."""
+    return news_relevance.big_sessions(a.get("move"), a.get("price_basis"),
+                                       a.get("big_move_sessions"), a.get("recent_sessions"))
+
+
+def _big_sessions_in_window(a: dict, explained: dict
+                            ) -> tuple[list[dict], list[dict], list[dict]]:
     """(≥2σ sessions inside the news window that still need a cause, those an
-    earlier sound note already explains), oldest first. Every completed ≥2σ
-    session counts — not only the last one — plus a session that is still
-    trading and is already ≥2σ away from the prior close."""
+    earlier sound note already explains, those the market explains — under
+    1σ net of the market), oldest first. Every completed ≥2σ session counts —
+    not only the last one — plus a session that is still trading and is
+    already ≥2σ away from the prior close (it has no row, so the market test
+    cannot clear it)."""
     basis, mv = a.get("price_basis") or {}, a.get("move") or {}
     w_from = (a.get("news_window") or {}).get("from")
-    big = [dict(s) for s in news_relevance.big_sessions(mv, basis, a.get("big_move_sessions"))]
+    big = [dict(s) for s in _big_list(a)]
     z = mv.get("z")
     if (basis.get("price_kind") == "live" and basis.get("session_date")
             and z is not None and abs(z) >= BIG_MOVE_SIGMA):
         big.append({"session_date": basis["session_date"], "z": z,
                     "move_pct": mv.get("move_pct"), "live": True})
     big = [s for s in big if not w_from or s["session_date"] >= w_from]
+    market = [s for s in big if news_relevance.is_market_move(s)]
+    big = [s for s in big if not news_relevance.is_market_move(s)]
     return ([s for s in big if s["session_date"] not in explained],
-            [s for s in big if s["session_date"] in explained])
+            [s for s in big if s["session_date"] in explained], market)
 
 
 def _daily_from(a: dict) -> str | None:
@@ -685,6 +809,21 @@ def _daily_from(a: dict) -> str | None:
     for _ in range(news_relevance.WINDOW_SESSIONS - 1):
         day = mc.previous_trading_day(day)
     return day.isoformat() if w_from < day else None
+
+
+def _last_session(a: dict) -> str | None:
+    """The last completed (or trading) session inside the window — the end
+    of "the last 5 trading sessions", which is not the window's calendar end
+    on a weekend (ISTR run: "2026-11-16 through 2026-11-22" for five
+    sessions ending on Friday the 20th)."""
+    nwin = a.get("news_window") or {}
+    try:
+        w_to = dt.date.fromisoformat(str(nwin.get("to"))[:10])
+        last = dt.date.fromisoformat(str((a.get("price_basis") or {}).get("session_date")
+                                         or nwin.get("to"))[:10])
+    except (TypeError, ValueError):
+        return None
+    return min(last, w_to).isoformat()
 
 
 def _release_dates(a: dict) -> list[str]:
@@ -922,9 +1061,16 @@ def build_claude_prompt(a: dict) -> str:
     now = dt.datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
     nwin = a.get("news_window") or {}
     w_from, w_to = nwin.get("from"), nwin.get("to")
+    # "(31 days)" beside "at most 30 days back" counted both ends; the span is
+    # now days back from the end, plus the trading sessions it holds
     try:
-        n_days = (dt.date.fromisoformat(w_to) - dt.date.fromisoformat(w_from)).days + 1
-        span = f" ({n_days} days)"
+        lo, hi = dt.date.fromisoformat(w_from), dt.date.fromisoformat(w_to)
+        last_s = str((a.get("price_basis") or {}).get("session_date") or w_to)[:10]
+        n_sess = sum(1 for k in range((hi - lo).days + 1)
+                     if mc.is_trading_day(lo + dt.timedelta(days=k))
+                     and (lo + dt.timedelta(days=k)).isoformat() <= last_s)
+        span = (f" ({(hi - lo).days} days back, {n_sess} trading "
+                f"session{'' if n_sess == 1 else 's'})")
     except (TypeError, ValueError):
         span = ""
     notes, ninfo = _prior_notes(sym, a)
@@ -937,14 +1083,14 @@ def build_claude_prompt(a: dict) -> str:
     # every ≥2σ session in the window: the ones this session must explain,
     # and the ones a sound earlier note already explains
     basis, mv = a.get("price_basis") or {}, a.get("move") or {}
-    to_explain, settled = _big_sessions_in_window(a, ninfo["explained"])
+    to_explain, settled, market = _big_sessions_in_window(a, ninfo["explained"])
     # an OK note under 24 hours old → research only what is new since it
     fresh = ninfo["fresh"]
     # Two kinds of session the 2σ test misses, explained as well without
     # touching move_cause: near misses (1.5σ up to 2σ, mostly the company's
     # own move), and — where the history is too short for any σ — moves of 5%
     # or more. On an incremental run only those the fresh note could not see.
-    done = {s["session_date"] for s in to_explain + settled}
+    done = {s["session_date"] for s in to_explain + settled + market}
     near = news_relevance.near_miss_sessions(a.get("recent_sessions"), w_from, done)
     short_history = is_new or (mv.get("z") is None and not a.get("recent_sessions")
                                and basis.get("day_move_pct") is not None)
@@ -954,13 +1100,15 @@ def build_claude_prompt(a: dict) -> str:
         near = news_relevance.sessions_closed_after(fresh["t"], near)
         large = [s for s in large if s.get("live")
                  or news_relevance.sessions_closed_after(fresh["t"], [s])]
+        market = [s for s in market
+                  if fresh["t"] < news_relevance.session_close_dt(s["session_date"])]
     older = ninfo["older"]
     listed = bool(to_explain or near or large)
     releases = _release_dates(a)
 
     # each session step 1 names gets its own Recent sessions row
-    keep = {s["session_date"] for s in to_explain + settled + near + large}
-    cav, snap, fx = _data_blocks(a, keep)
+    keep = {s["session_date"] for s in to_explain + settled + near + large + market}
+    cav, snap, fx = _data_blocks(a, keep, {s["session_date"] for s in market})
     recent_rows = a.get("recent_sessions") or []
     recent_dates = {x["date"] for x in _recent_split(recent_rows, keep)[0]}
     # listed sessions the rows do not reach (older payloads carried 10 rows)
@@ -1047,7 +1195,8 @@ def build_claude_prompt(a: dict) -> str:
         step1a, covered = "", ""          # the incremental list below replaces a–e
     elif daily_from:
         step1a = (f"   a. {news_what} for {w_from} through {w_to}, one search sweep "
-                  f"{sweep} for the last 5 trading sessions ({daily_from} through {w_to}) "
+                  f"{sweep} for the last 5 trading sessions ({daily_from} through "
+                  f"{_last_session(a) or w_to}) "
                   f"and one for each calendar week before that ({w_from} up to "
                   f"{daily_from}){own_date}{no_weekend}")
         covered = (f" — one sweep from {daily_from}, one per calendar week before it"
@@ -1065,24 +1214,42 @@ def build_claude_prompt(a: dict) -> str:
     # read rather than skipped (the TWLO run could only guess at a Form 144)
     forms_read = ("for an 8-K, the items named on its row and its exhibits; a Form 4 or "
                   "144 is an insider's trade or planned sale (who, how many shares, and "
-                  "whether under a preset trading plan); an NT 10-Q or NT 10-K is a late "
-                  "filing, a red flag to explain; an S-1 or 424B is an offering document")
+                  "whether under a preset trading plan); a Form 3 is a new insider's first "
+                  "report of holdings; an S-8 registers shares for employee stock plans; "
+                  "an NT 10-Q or NT 10-K is a late filing, a red flag to explain; an S-1 or "
+                  "424B is an offering document")
+    # EDGAR for filings newer than the list only when the list can be behind:
+    # on a weekend the list is current (the TWLO run fetched EDGAR on a Sunday)
+    newer = ("check EDGAR for anything newer than the list only when the snapshot is more "
+             "than one trading day old (C1 gives its date) or a story points to a filing "
+             "the list does not hold")
+    if fx["filings_forms"]:
+        gaps = [w for k, w in _LEFT_OUT_FORMS if not _covers(fx["filings_forms"], k)]
+    else:
+        gaps = (["6-K", "20-F"] if fx["filings_wide"] else
+                ["Form 4", "144", "Form 3", "S-8", "NT 10-Q and NT 10-K", "S-1", "424B",
+                 "6-K", "20-F"])
+    foreign = [g for g in gaps if g in ("6-K", "20-F")]
+    domestic = [g for g in gaps if g not in foreign]
+    left_out = ("; ".join(x for x in (", ".join(domestic),
+                                      ("a foreign issuer files " + " and ".join(foreign))
+                                      if foreign else "") if x))
     if fx["filings_listed"] and is_fund:
         step1b = ("   b. the fund's filings listed in <snapshot> (SEC filings since "
                   f"{fx['filings_since']}): read every one filed in the window — N-PORT "
                   "(its holdings), 497 or 497K (prospectus and strategy changes), N-CSR "
                   "(its reports) — plus the 19a-1 notices on the issuer's page (what each "
-                  "distribution was paid from), and check EDGAR only for anything newer "
-                  "than the list;")
+                  f"distribution was paid from), and {newer} (on EDGAR, search the trust's "
+                  "or fund family's name, not the ticker);")
     elif fx["filings_listed"]:
         step1b = ("   b. the SEC filings listed in <snapshot> (SEC filings since "
                   f"{fx['filings_since']}): read every one filed in the window — "
-                  f"{forms_read} — and check EDGAR only for anything newer than the list"
-                  + (", for the older ones it cuts off" if fx["filings_cut"] else "")
-                  + (" and for forms it leaves out (a foreign issuer files 6-K and 20-F)"
-                     if fx["filings_wide"] else
-                     " and for forms it leaves out (Form 4 and 144, NT 10-Q and NT 10-K, "
-                     "S-1 and 424B; a foreign issuer files 6-K and 20-F)")
+                  f"{forms_read} — and {newer}"
+                  + ("; check EDGAR as well for the older ones the list cuts off"
+                     if fx["filings_cut"] else "")
+                  + (f"; for forms the list leaves out ({left_out}), scan EDGAR's index "
+                     "for any in the window and open one of a kind, summarizing the rest "
+                     "from the index" if left_out else "")
                   + (f" (the index as JSON: {cik_json} — EDGAR's browse pages block "
                      "automated readers; if your fetch tool cuts that file short, use "
                      "the filings list on the company's investor-relations page)"
@@ -1091,8 +1258,9 @@ def build_claude_prompt(a: dict) -> str:
         step1b = (f"   b. the fund's SEC filings since {w_from}: N-PORT (its holdings), 497 "
                   "or 497K (prospectus and strategy changes), N-CSR (its reports) and "
                   "19a-1 notices (what each distribution was paid from) — a fund files "
-                  "these, not 8-K items; the EDGAR full-text search link is in "
-                  "<snapshot>, and the issuer's own page lists the same documents;")
+                  "these, not 8-K items, under its trust's name: search EDGAR for the "
+                  "trust or fund family, not the ticker (the full-text search link is in "
+                  "<snapshot>), and the issuer's own page lists the same documents;")
     else:
         step1b = (f"   b. SEC EDGAR filings since {w_from}, reading the item numbers of "
                   "every 8-K"
@@ -1101,16 +1269,19 @@ def build_claude_prompt(a: dict) -> str:
 
     # step 1c: who polices this kind of security
     legal = "SEC, DOJ, state attorneys general, subpoena, securities class actions"
+    # QQQI run: "each of" read literally was twenty searches
+    combine = " (the terms may be combined into one search per name)"
     if is_fund:
         step1c = (f"   c. the issuer by name (the sponsor or adviser behind the fund, not "
                   f"the ticker) with each of: {legal}; the same for the fund's three "
-                  "largest holdings; and any tax-rule change that touches how its "
-                  "distributions are taxed;")
+                  "largest holdings (the terms may be combined into one search per name: "
+                  "the issuer and each holding); and any tax-rule change that touches how "
+                  "its distributions are taxed;")
     elif is_bank:
         # one primary federal regulator, set by the charter: the ISTR run was
         # told to sweep a state regulator for a national bank
-        step1c = (f"   c. the company and its bank subsidiary by name with each of: {legal}; "
-                  "and search for enforcement actions by the bank's primary federal "
+        step1c = (f"   c. the company and its bank subsidiary by name with each of: {legal}"
+                  f"{combine}; and search for enforcement actions by the bank's primary federal "
                   "regulator, set by its charter — the OCC for a national bank (\"N.A.\" "
                   "or \"National\" in its name), the Federal Reserve for a state bank that "
                   "is a Fed member, the FDIC for one that is not — and, above $10 billion "
@@ -1120,6 +1291,7 @@ def build_claude_prompt(a: dict) -> str:
     else:
         step1c = (f"   c. the company name with each of: {legal}"
                   + (", export controls" if _mentions_export_rules(a) else "")
+                  + combine
                   + "; and search for enforcement actions by the company's main regulator "
                   "by name (the agency that licenses or polices its line of business) — "
                   "actions against the company, not its own legal-process pages, and do "
@@ -1185,13 +1357,15 @@ def build_claude_prompt(a: dict) -> str:
             f"   a. {news_what} since {ts}, and one search sweep for that period "
             f"{sweep}{own_date}{no_weekend}",
             f"   b. filings since {ts}: any row of the filing list in <snapshot> dated since "
-            "then, and EDGAR" + (" or the issuer's page" if is_fund else "")
-            + " for anything newer — read each one ("
+            "then" + (" and the issuer's page" if is_fund else "")
+            + f"; {newer} — read each one ("
             + ("N-PORT, 497, N-CSR, 19a-1 notices" if is_fund else forms_read) + ");",
         ]
         if ninfo["conditions"]:
             step1_items.append(f"   c. each open condition listed in <prior_notes>: one "
-                               f"search or filing each, since {ts}.")
+                               f"search or filing each, since {ts} — except one that "
+                               "cannot resolve before a future date, which is PENDING "
+                               "with that date and needs no search.")
         step1_items.append(
             "   The rest of a full run — the legal and regulator searches and the latest "
             "figures — is carried forward from that note with its date. Run the legal and "
@@ -1293,10 +1467,12 @@ def build_claude_prompt(a: dict) -> str:
                         "so and do not read them as a trend." if is_new else ""))
     if ninfo["conditions"]:
         step4.append("Check each open condition listed in <prior_notes> and say whether "
-                     "it has been met.")
+                     "it has been met (or is PENDING until a future date).")
     if ninfo["any"]:
         step4.append("Carry a fact forward from an OK or STALE note only after "
-                     "re-checking it, or date it (\"as of Nov 13\"). A note marked "
+                     "re-checking it, or date it (\"as of Nov 13\").")
+    if ninfo["invalid"]:
+        step4.append("A note marked "
                      "INVALID is not a basis for anything: redo its work for the sessions "
                      "inside this window and list its created_ts in `supersedes`; its failed "
                      "checks on sessions before the window are not redone here"
@@ -1354,9 +1530,11 @@ def build_claude_prompt(a: dict) -> str:
         "example a CLAUDE.md or a notes file), read them first: they count as "
         "instructions you were given, and their rules and triggers apply in steps 3 "
         "and 5. A project file your tool loaded into this session by itself (for "
-        "example a CLAUDE.md from another folder) counts as the user's notes in the "
-        "same way, and so does a file in the same folder that those notes point to "
-        "(for example a worklog they say to read). Notes like these drift, so read them this way: where two versions "
+        "example a CLAUDE.md from another folder) counts as the user's notes only when "
+        "it is about the user's own investing (rules, plans, positions); otherwise "
+        "ignore it. Notes that count bring along a file in the same folder that those "
+        "notes point to (for example a worklog they say to read). Notes like these "
+        "drift, so read them this way: where two versions "
         "of a rule conflict, the most recent dated one wins and the older one is "
         "named as replaced; a rule too vague to check against a number, a filing "
         "or an event is applied in the narrowest reading that is checkable, and you "
@@ -1375,7 +1553,8 @@ def build_claude_prompt(a: dict) -> str:
          "   To finish sooner: if you can start subagents (for example Claude Code's "
          "Task tool), run step 1 as three in parallel and collect all three results — (A) "
          f"search a; (B) {sub_b}; (C) searches c, plus one search for each "
-         "trigger in the user's notes and each open condition in <prior_notes>. Have "
+         "trigger in the user's notes and each open condition in <prior_notes> that can "
+         "already have resolved. Have "
          "each return rows of claim, source, date, a verbatim quote and the link it "
          "opened, and keep steps 2 to 8 yourself. Without subagents, run the "
          "searches in parallel batches."),
@@ -1443,6 +1622,17 @@ def build_claude_prompt(a: dict) -> str:
             "exists. Write it as \"reported cause: the results release of <date>\", quote "
             "the figure in it that most plausibly moved the stock, and count the session "
             "as explained.")
+    if market:
+        lines.append(
+            "   Explained by the market — moved 2σ or more, but less than 1σ net of the "
+            "market (move − beta × SPY's move, from its Recent sessions row), so no news "
+            "cause is needed: "
+            + "; ".join(f"{s['session_date']} ({dt.date.fromisoformat(s['session_date']):%a}): "
+                        f"market-wide move (net of market {signed(s['market_net_pct'], 2, '%')})"
+                        for s in market)
+            + ". Name each as a market move under `## What happened`; "
+            + ("it changes" if len(market) == 1 else "they change")
+            + " neither move_cause nor research_status.")
     if settled:
         lines.append(
             "   Already explained: " + ", ".join(s["session_date"] for s in settled)
@@ -1514,7 +1704,9 @@ def build_claude_prompt(a: dict) -> str:
         "Check every trigger, yours and the user's, with a search or a filing before "
         "you mark it, and name that search; UNKNOWN means the search could not "
         "settle it, not that it was skipped. PENDING means the event or filing the "
-        "trigger depends on has not happened yet: give the date it is due. "
+        "trigger depends on has not happened yet: give the date it is due. A trigger or "
+        "open condition that cannot resolve before a future date (the next earnings "
+        "release, for example) is marked PENDING with that date, without a search. "
         "Mark each trigger MET, NOT MET, PENDING or UNKNOWN, with the evidence (MET → "
         "`plan_triggers_met`, UNKNOWN → `plan_triggers_unknown`; a PENDING trigger "
         "stays in `proposed_triggers` with its due date). Any MET trigger "
@@ -1533,8 +1725,15 @@ def build_claude_prompt(a: dict) -> str:
         + ("the income it pays, its strategy and cost, risk, news" if is_fund else
            "valuation, thesis, risk, news")
         + " — not a short-term direction call. "
-        f"{stance_words} If research_status is partial or failed, the stance is "
-        "watch instead and stance_note starts with \"research incomplete\". A hold "
+        f"{stance_words} If research_status is failed, or partial because a required "
+        "search was not run, the stance is watch instead and stance_note starts with "
+        "\"research incomplete\". When every required search ran and only a listed "
+        "session's cause is still not found, research_status stays \"partial\" and "
+        "move_cause \"not_found\", but the stance may stay the one your analysis "
+        "supports (hold or buy, for example) where stance_note starts with \"research "
+        "incomplete\" and gives the reason the missing cause does not change the thesis; "
+        "without such a reason it is watch. The app still marks that note incomplete, "
+        "so a later run looks for the cause again. A hold "
         "or watch needs at least one upgrade_if and one downgrade_if condition, each "
         "dated and checkable — a number, a filing or an event, never a price direction — "
         "because a stance with no conditions cannot be told apart from no stance, "
@@ -1557,7 +1756,9 @@ def build_claude_prompt(a: dict) -> str:
         "or on the nothing-found line;",
         "   - every number has a source or the label \"snapshot\";",
         "   - every link in the evidence table is one you opened in this session, "
-        "and its quote is copied from that page;",
+        "and its quote is copied from that page — except a row for a page that refused "
+        "to open, which keeps its link marked \"(could not open)\", has no quote and "
+        "reads \"not verified\";",
         "   - nothing from an INVALID or SUPERSEDED note is carried forward;",
         "   - every text value in the frontmatter is in double quotes, and "
         "`sources_count` and `price_used` are numbers without quotes;",
@@ -1578,16 +1779,19 @@ def build_claude_prompt(a: dict) -> str:
         "",
         "The file holds your analysis only: the app already displays the snapshot, "
         "so leave this prompt, the tagged blocks and raw JSON out of it. Aim for "
-        "about 1,000 words excluding tables and stay under 1,300: a longer note is "
-        "skimmed, and the reader misses the part that matters. Body headings, in "
-        "this order:",
+        "about 1,100 words excluding tables and stay under 1,300: a longer note is "
+        "skimmed, and the reader misses the part that matters."
+        + (" On this incremental run aim for about 500 words and do not restate the "
+           "earlier note: point to it for anything unchanged." if fresh else "")
+        + " Body headings, in this order:",
         "",
         "1. `## TL;DR` — 2–3 sentences; a MET trigger comes first.",
         "2. `## What happened` — the window in date order; name sessions by date.",
         "3. `## Evidence & sources` — a table: claim | source | published | quote | "
         "link. The quote is a short verbatim phrase from the source (under 20 "
         "words) that supports the claim. List only links you actually opened in "
-        "this session; a claim you could not open a source for is \"not verified\". "
+        "this session, plus any page that refused to open: its link marked \"(could "
+        "not open)\" and its claim \"not verified\". "
         "Under the table, put the searches that found nothing on one line — "
         "\"Searched, nothing found: X; Y; Z\" — not a row each.",
         "4. `## Triggers, checked` — each trigger from step 3 as MET / NOT MET / "
@@ -1618,10 +1822,17 @@ def build_claude_prompt(a: dict) -> str:
         + " has its cause (or "
         "step 1 lists none); \"partial\" means a required search was not run, or "
         "the cause of a listed session was not found; \"failed\" means you had no "
-        "search tool or the research could not be done. `move_cause` is \"found\" "
+        "search tool or the research could not be done. A search that ran but whose "
+        "key page refused to open is logged as \"not verified\" (name the page under "
+        "`## Unknowns`); it does not by itself make research partial when the app's "
+        "lists in <snapshot> or another source cover the same ground. `news_view` is the "
+        "overall tone of news about this security in the window — "
+        + ("fund or issuer" if is_fund else "company") + " news, not the market's "
+        "moves. `move_cause` is \"found\" "
         "when every session step 1 lists as still needing a cause has one, "
         "\"not_found\" when one does not, and \"na\" only when step 1 lists no such "
-        "session (near misses and older sessions do not count here) — the app marks a "
+        "session (near misses, market-wide moves and older sessions do not count "
+        "here) — the app marks a "
         "note INVALID when a 2σ session in its window is left without "
         "\"found\". `review_by` is a date written "
         "YYYY-MM-DD. `proposed_triggers` holds only the triggers you set in step 3, "

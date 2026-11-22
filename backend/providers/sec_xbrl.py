@@ -76,8 +76,20 @@ INSTANT = {
     "goodwill": ["Goodwill"],
     "intangibles": ["IntangibleAssetsNetExcludingGoodwill", "FiniteLivedIntangibleAssetsNet"],
     "goodwill_intangibles": ["IntangibleAssetsNetIncludingGoodwill"],
-    "preferred_equity": ["PreferredStockValue", "PreferredStockValueOutstanding"],
+    # JPM stopped filing PreferredStockValue in 2009; its balance-sheet line is
+    # PreferredStockIncludingAdditionalPaidInCapitalNetOfDiscount ($21.0B at
+    # 2026-09-30) — the carrying value; the liquidation preference is last
+    "preferred_equity": ["PreferredStockValue", "PreferredStockValueOutstanding",
+                         "PreferredStockIncludingAdditionalPaidInCapitalNetOfDiscount",
+                         "PreferredStockLiquidationPreferenceValue"],
 }
+# preferred shares issued / outstanding (unit "shares"): a filing that reports
+# preferred shares but no preferred value cannot give a tangible book
+PREFERRED_SHARES = ["PreferredStockSharesOutstanding", "PreferredStockSharesIssued"]
+# intangibles are often filed only in the 10-K (JPM: FiniteLivedIntangible-
+# AssetsNet last filed for 2025-12-31 beside a 2026-09-30 balance sheet) —
+# the latest instant up to this many days before the balance-sheet date
+INTANGIBLES_MAX_AGE_DAYS = 370
 # share counts (unit "shares"): weighted-average counts are filed without a
 # share-class dimension, so they exist for multi-class companies too
 SHARES_DILUTED = ["WeightedAverageNumberOfDilutedSharesOutstanding"]
@@ -188,6 +200,20 @@ def _instant_at(rows: list[dict], end: dt.date | None = None) -> tuple[float | N
         if not c:
             return None, None
         r = max(c, key=lambda r: r.get("filed", ""))
+    return float(r["val"]), r["end"]
+
+
+def _instant_within(rows: list[dict], end: dt.date,
+                    max_age: int = INTANGIBLES_MAX_AGE_DAYS) -> tuple[float | None, str | None]:
+    """The fact at `end` (±3 days) when filed, else the latest instant up to
+    `max_age` days before it (a line filed only at fiscal-year end)."""
+    v, e = _instant_at(rows, end)
+    if v is not None:
+        return v, e
+    c = [r for r in rows or [] if 0 < (end - _d(r["end"])).days <= max_age]
+    if not c:
+        return None, None
+    r = max(c, key=lambda r: (r["end"], r.get("filed", "")))
     return float(r["val"]), r["end"]
 
 
@@ -311,10 +337,39 @@ def normalize(facts: dict) -> dict[str, Any]:
     filing = latest_filing(flows.get("revenue") or flows.get("net_income") or [], inc_end)
     cf_filing = latest_filing(flows.get("ocf") or [], cf_end)
 
-    # goodwill + other intangibles: the combined line when filed, else the parts
-    gw_int = at("goodwill_intangibles")
-    if gw_int is None and (at("goodwill") is not None or at("intangibles") is not None):
-        gw_int = (at("goodwill") or 0.0) + (at("intangibles") or 0.0)
+    # goodwill + other intangibles: the combined line when filed, else the
+    # parts — each at the balance-sheet date, or the latest instant within
+    # INTANGIBLES_MAX_AGE_DAYS before it (dated, so the report can say so)
+    def near(key):
+        if not inst.get(key) or not bal_date:
+            return None, None
+        return _instant_within(inst[key], bal_date)
+    gw_int, gwi_end = near("goodwill_intangibles")
+    gw_v, gw_end = near("goodwill")
+    int_v, int_end = near("intangibles")
+    # a combined line older than the parts at the balance-sheet date loses
+    if gw_int is not None and gwi_end != bal_end and (gw_end == bal_end or int_end == bal_end):
+        gw_int = None
+    missing_parts: list[str] = []
+    used: list[tuple[str, str | None]] = []
+    if gw_int is not None:
+        used = [("goodwill & intangibles", gwi_end)]
+    elif gw_v is not None or int_v is not None:
+        gw_int = (gw_v or 0.0) + (int_v or 0.0)
+        missing_parts = [n for n, v in (("goodwill", gw_v), ("other intangibles", int_v))
+                         if v is None]
+        used = [(n, e) for n, v, e in (("goodwill", gw_v, gw_end),
+                                       ("other intangibles", int_v, int_end)) if v is not None]
+    else:
+        missing_parts = ["goodwill", "other intangibles"]
+    # components taken from an earlier instant than the balance sheet
+    gwi_dates = {n: e for n, e in used if e and bal_end and e[:10] != bal_end[:10]}
+    pref, _ = (_instant_at(inst["preferred_equity"], bal_date)
+                      if inst.get("preferred_equity") and bal_date else (None, None))
+    pref_shares = None
+    if bal_date:
+        _, ps_rows = _facts(us, PREFERRED_SHARES, "shares", duration=False)
+        pref_shares = _instant_at(ps_rows, bal_date)[0] if ps_rows else None
 
     # weighted-average share counts for the latest income-statement quarter
     # (the 3-month fact; a 10-K's Q4 has none, then the fiscal-year average)
@@ -345,7 +400,13 @@ def normalize(facts: dict) -> dict[str, Any]:
                     "cash_only": cash, "st_investments": st_inv,
                     "equity_securities": eq_sec, "equity": at("equity"),
                     "goodwill_intangibles": gw_int,
-                    "preferred_equity": at("preferred_equity"),
+                    # parts not found (treated as 0) and parts dated before
+                    # the balance sheet (the latest filed instant)
+                    "goodwill_intangibles_missing": missing_parts,
+                    "goodwill_intangibles_dates": gwi_dates,
+                    "preferred_equity": pref,
+                    "preferred_found": pref is not None,
+                    "preferred_shares": pref_shares,
                     "as_of_date": bal_end,
                     "debt_note": "excludes lease liabilities"},
         "shares": shares, "bank_like": bank_like,

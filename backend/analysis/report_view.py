@@ -37,6 +37,8 @@ NI_OVER_OP_RATIO = 1.25       # net income > 1.25 × operating income → flag
 STATUTORY_TAX = 0.21          # the rate the "at a normal tax rate" figure uses
 SHARE_COUNT_TOLERANCE = 0.05  # two share-count sources further apart than this disagree
 DILUTED_TOLERANCE = 0.10      # diluted vs outstanding shares further apart than this
+SHARE_COUNT_WITHHOLD = 0.50   # share counts this far apart → market cap withheld
+RG_MAX_GAP_POINTS = 50.0      # vendor TTM vs filed-quarter revenue growth, in points
 BETA_MIN_CORRELATION = 0.3    # |correlation to SPY| below this → beta is noise
 LATEST_QUARTER_GAP_DAYS = 95  # last earnings date − latest quarter end > this → missing quarter
 
@@ -217,6 +219,40 @@ def trailing_distributions(events: list[dict], asof: dt.date,
 
 FWD_MAX_DEVIATION = 0.50      # latest payment vs the median of the prior ones
 FWD_GAP_RATIO = 1.75          # longest ÷ shortest gap between recent ex-dates
+FWD_PAIR_AGREE = 0.10         # the two latest payments within 10% = one level
+FWD_PRIOR_MAX_CV = 0.30       # earlier payments varying more than this → no "new level"
+
+
+def _median(xs: list[float]) -> float:
+    s = sorted(xs)
+    mid = len(s) // 2
+    return s[mid] if len(s) % 2 else (s[mid - 1] + s[mid]) / 2
+
+
+def sustained_level(ev: list[dict], per_year: int | None) -> bool:
+    """Have the two latest payments set a new level (a raise or a cut)?
+    True only when they agree within FWD_PAIR_AGREE, both sit more than
+    FWD_MAX_DEVIATION / 2 from the median of the payments before them (same
+    side), and those earlier payments were steady — coefficient of variation
+    (sample stdev ÷ mean) at most FWD_PRIOR_MAX_CV. `ev` sorted oldest first
+    with positive amounts. Pure."""
+    if len(ev) < 4:
+        return False
+    a, b = float(ev[-1]["amount"]), float(ev[-2]["amount"])
+    if not b or abs(a / b - 1) > FWD_PAIR_AGREE:
+        return False
+    before = [float(e["amount"]) for e in ev[:-2][-max(per_year or 4, 4):]]
+    if len(before) < 2:
+        return False
+    med, mean = _median(before), sum(before) / len(before)
+    if not med or not mean:
+        return False
+    sd = math.sqrt(sum((x - mean) ** 2 for x in before) / (len(before) - 1))
+    if sd / mean > FWD_PRIOR_MAX_CV:
+        return False
+    da, db = a / med - 1, b / med - 1
+    band = FWD_MAX_DEVIATION / 2
+    return abs(da) > band and abs(db) > band and (da > 0) == (db > 0)
 
 
 def forward_distribution(events: list[dict]) -> dict[str, Any]:
@@ -257,9 +293,14 @@ def forward_distribution(events: list[dict]) -> dict[str, Any]:
         out.update({"median_prior": med, "n_prior": len(prior)})
         dev = out["latest"] / med - 1 if med else 0.0
         # a new level that has already been paid twice is a raise or a cut,
-        # not a one-off (NVDA: $0.01 → $0.25, then $0.25 again)
-        prev = float(ev[-2]["amount"])
-        sustained = abs(out["latest"] / prev - 1) <= 0.10 if prev else False
+        # not a one-off (NVDA: $0.01 → $0.25, then $0.25 again) — but only
+        # when the two latest payments agree with each other, BOTH sit
+        # outside the band around the median of the payments before them,
+        # and those earlier payments were steady (coefficient of variation ≤
+        # FWD_PRIOR_MAX_CV). TQQQ 11/22: $0.171 then $0.156 after payments
+        # of $0.049–$0.109 read as a "new level" — a 1.51% forward yield
+        # beside 1.18% actually paid; its payouts simply vary.
+        sustained = sustained_level(ev, per_year)
         if abs(dev) > FWD_MAX_DEVIATION and not sustained:
             out["why"] = (f"variable distributions — the latest (${out['latest']:.4g}, ex "
                           f"{out['latest_date']}) is {abs(dev) * 100:.0f}% "
@@ -559,13 +600,56 @@ def build(inp: dict[str, Any]) -> dict[str, Any]:
                 "the offering or every share class"
                 + (f"; Yahoo lists {' and '.join(others)}" if others else "")
                 + "; check the prospectus")
+    # An ADR trades as a depositary receipt worth N ordinary shares; the share
+    # counts at hand are ordinary shares, ADR equivalents or a mix (TSM 11/22:
+    # 25,932M ordinary shares × the ADR price = $8.26T). The ratio is not in
+    # the data, so market cap and everything priced off it is withheld. Same
+    # when two share-count sources differ by more than 50%.
+    sub_type = str(sec.get("asset_sub_type") or "").upper()
+    # (Yahoo's listed-class count is not compared: for a multi-class company
+    # it is legitimately a fraction of the total — GOOGL class A ≈ half)
+    counts = [(v, what) for v, what in ((y_all, "Yahoo, all classes"),
+                                        (dil, "diluted weighted average")) if v]
+    far = [(v, what) for v, what in counts
+           if shares and max(v, shares) / min(v, shares) - 1 > SHARE_COUNT_WITHHOLD]
+    mcap_reason = None
+    if mcap and sub_type == "ADR":
+        others = [f"{sh(v)} {what}" for v, what in counts if abs(v / shares - 1) > 0.01]
+        mcap_reason = ("ADR — the share counts available are not in ADR units "
+                       f"({sh(shares)} {shares_src} used"
+                       + (f"; {', '.join(others)}" if others else "")
+                       + "); the ADR-to-ordinary-share ratio is not in the data, so market "
+                       "cap and every multiple priced off it is withheld")
+    elif mcap and far:
+        mcap_reason = (f"share-count sources differ by more than "
+                       f"{SHARE_COUNT_WITHHOLD * 100:.0f}% ({sh(shares)} {shares_src} used vs "
+                       + ", ".join(f"{sh(v)} {what}" for v, what in far)
+                       + ") — market cap and every multiple priced off it is withheld")
+    mcap_withheld = [f"market cap withheld — {mcap_reason}"] if mcap_reason else []
+    raw["market_cap_withheld"] = mcap_reason
     add(_field("market_cap", "Market cap", mcap, big_money(mcap),
                f"shares outstanding {shares_m:,.0f}M ({shares_src})"
                if shares_m else "shares outstanding unavailable",
                b.get("price_label"),
                f"report price × {sh(shares)} shares outstanding ({shares_src})"
                if shares else "report price", "price × shares outstanding",
-               warnings=mc_warn))
+               warnings=mc_warn + ([mcap_reason] if mcap_reason else []),
+               status="withheld" if mcap_reason else "ok"))
+    if mcap_reason:
+        mcap = None                       # nothing downstream prices off it
+
+    # A filer that reports in another currency (TSM: TWD) — absolute
+    # statement amounts are not dollars; ratios of two amounts in the same
+    # currency (margins, growth) are still right
+    fin_ccy = str(sec.get("financial_currency") or profile.get("financial_currency") or "USD").upper()
+    fx_reason = (f"reported in {fin_ccy} — the filing's amounts are not US dollars; not shown"
+                 if fin_ccy != "USD" else None)
+    raw["financial_currency"] = fin_ccy
+
+    def samt(v: float | None) -> str:
+        """A statement amount in the filing's currency ($1.2B / TWD 1.2B)."""
+        s = big_money(v)
+        return s if fin_ccy == "USD" or v is None else s.replace("$", f"{fin_ccy} ", 1)
 
     # EPS: statement quarters first, then Yahoo trailingEps, then vendor
     eps_q = _f(ttm.get("eps_diluted"))
@@ -607,7 +691,7 @@ def build(inp: dict[str, Any]) -> dict[str, Any]:
     non_op = (pre - op) if pre is not None and op is not None else None
     non_op_warn = None
     if non_op is not None and pre and pre > 0 and non_op / pre >= NON_OP_FLAG_SHARE:
-        non_op_warn = (f"TTM pretax income includes {big_money(non_op)} of non-operating "
+        non_op_warn = (f"TTM pretax income includes {samt(non_op)} of non-operating "
                        f"items ({non_op / pre * 100:.0f}% — e.g. gains on equity "
                        "securities); net income, net margin and P/E are flattered")
 
@@ -622,36 +706,41 @@ def build(inp: dict[str, Any]) -> dict[str, Any]:
     tax_warn = None
     if (tax_derived and tax_ttm < 0 and pre is not None and pre > 0
             and -tax_ttm >= TAX_BENEFIT_SHARE * pre):
-        tax_warn = (f"TTM net income exceeds pretax income by {big_money(-tax_ttm)} (a tax "
+        tax_warn = (f"TTM net income exceeds pretax income by {samt(-tax_ttm)} (a tax "
                     "benefit or discontinued operations) — net income "
-                    f"{big_money(ni_ttm)} on pretax income of {big_money(pre)}; the source "
+                    f"{samt(ni_ttm)} on pretax income of {samt(pre)}; the source "
                     "has no tax line to say which. EPS, P/E and net margin may be "
                     "flattered by a one-time item")
     elif (tax_ttm is not None and tax_ttm < 0 and pre is not None and pre > 0
             and -tax_ttm >= TAX_BENEFIT_SHARE * pre):
-        tax_warn = (f"TTM net income {big_money(ni_ttm)} includes an income-tax benefit of "
-                    f"{big_money(-tax_ttm)} on pretax income of {big_money(pre)} (for example "
+        tax_warn = (f"TTM net income {samt(ni_ttm)} includes an income-tax benefit of "
+                    f"{samt(-tax_ttm)} on pretax income of {samt(pre)} (for example "
                     "a deferred-tax valuation allowance released) — a one-time item; EPS, "
                     "P/E and net margin are flattered. Taxed at "
                     f"{STATUTORY_TAX * 100:.0f}% instead, net income would be about "
-                    f"{big_money(pre * (1 - STATUTORY_TAX))}")
+                    f"{samt(pre * (1 - STATUTORY_TAX))}")
     elif (not non_op_warn and ni_ttm is not None and op is not None and ni_ttm > 0
           and ni_ttm > NI_OVER_OP_RATIO * max(op, 0.0)):
-        tax_warn = (f"TTM net income {big_money(ni_ttm)} exceeds operating income "
-                    f"{big_money(op)} — the difference comes from below the operating line "
+        tax_warn = (f"TTM net income {samt(ni_ttm)} exceeds operating income "
+                    f"{samt(op)} — the difference comes from below the operating line "
                     "(non-operating gains or a tax benefit); EPS, P/E and net margin are "
                     "flattered")
     below_line = [w for w in (non_op_warn, tax_warn) if w]
 
+    # EPS in the filing's currency against a US-dollar price is not a P/E
+    fx_w = [fx_reason] if fx_reason else []
+    if fx_reason and eps is not None:
+        eps_status = "withheld"
+        raw["eps"] = None
     add(_field("eps_ttm", "EPS (TTM)", eps, money(eps), eps_src,
                periods.get("income") if eps_src.startswith("sum") else (inp.get("eps_check") or {}).get("as_of"),
                "trailing twelve months", "sum of the last 4 quarters' diluted EPS",
                warnings=eps_warn + (s_warn("income") if eps_src.startswith("sum") else [])
-               + ([tax_warn] if tax_warn else []),
+               + ([tax_warn] if tax_warn else []) + fx_w,
                status=eps_status))
 
     pe = price / eps if price and eps and eps > 0 and eps_status == "ok" else None
-    pe_warn = list(eps_warn) + below_line
+    pe_warn = list(eps_warn) + below_line + fx_w
     if eps is not None and eps <= 0:
         pe_warn.append("negative TTM EPS — P/E undefined")
     add(_field("pe_ttm", "P/E (TTM)", pe, ratio(pe, 1, ""), f"price ÷ EPS ({eps_src})",
@@ -664,12 +753,16 @@ def build(inp: dict[str, Any]) -> dict[str, Any]:
     add(_field("fcf_ttm", "Free cash flow (TTM)", fcf, big_money(fcf), s_src("cashflow"),
                periods.get("cashflow"), s_basis("cashflow"),
                "operating cash flow − capex, last 4 quarters",
-               warnings=s_warn("cashflow")))
-    p_fcf = mcap / fcf if mcap and fcf and fcf > 0 else None
+               warnings=s_warn("cashflow") + (fx_w if fcf is not None else []),
+               status="withheld" if fx_reason and fcf is not None else "ok"))
+    p_fcf = mcap / fcf if mcap and fcf and fcf > 0 and not fx_reason else None
+    pfcf_off = bool((mcap_reason or fx_reason) and fcf is not None)
     add(_field("p_fcf", "P/FCF (TTM)", p_fcf, ratio(p_fcf), "market cap ÷ TTM FCF",
                b.get("price_label"), f"report price; {s_basis('cashflow')}",
                "market cap ÷ TTM free cash flow",
-               warnings=s_warn("cashflow") + (["FCF ≤ 0 — P/FCF undefined"] if fcf is not None and fcf <= 0 else [])))
+               warnings=s_warn("cashflow") + (["FCF ≤ 0 — P/FCF undefined"] if fcf is not None and fcf <= 0 else [])
+               + (mcap_withheld if fcf is not None else []) + (fx_w if fcf is not None else []),
+               status="withheld" if pfcf_off else "ok"))
 
     debt, cash_st = _f(bal.get("total_debt")), _f(bal.get("cash_st") or bal.get("cash"))
     debt_missing = ["debt not found in the filing — EV and net cash withheld"] \
@@ -691,18 +784,24 @@ def build(inp: dict[str, Any]) -> dict[str, Any]:
     pre_listing = ([f"balance sheet predates the listing — IPO proceeds not included "
                     f"(balance sheet {bal_date}; first trading day {first_trade})"]
                    if bal_date and first_trade and bal_date < first_trade else [])
+    if fx_reason:
+        ev = None                         # US-dollar market cap + foreign-currency balance sheet
+    have_bal = debt is not None and cash_st is not None
+    ev_off = bool(have_bal and (mcap_reason or fx_reason))
     add(_field("ev", "Enterprise value", ev, big_money(ev),
                f"market cap + {s_src('balance')}",
                b.get("price_label"), f"report price; {s_basis('balance')}",
                "market cap + total debt − cash & short-term investments − marketable securities"
-               + debt_note, warnings=s_warn("balance") + debt_missing + pre_listing,
-               status="withheld" if pre_listing and ev is not None else "ok"))
+               + debt_note, warnings=s_warn("balance") + debt_missing + pre_listing
+               + (mcap_withheld if have_bal else []) + (fx_w if have_bal else []),
+               status="withheld" if (pre_listing and ev is not None) or ev_off else "ok"))
     add(_field("net_cash", "Net cash", net_cash,
                (f"{big_money(net_cash)} ({breakdown})" if net_cash is not None else "—"),
                s_src("balance"), bal.get("as_of_date") or periods.get("balance"),
                s_basis("balance"),
                "cash & short-term investments + marketable securities − total debt" + debt_note,
-               warnings=s_warn("balance") + pre_listing))
+               warnings=s_warn("balance") + pre_listing + (fx_w if net_cash is not None else []),
+               status="withheld" if fx_reason and net_cash is not None else "ok"))
 
     # margins: statement TTM + latest quarter, labeled
     rev = _f(ttm.get("revenue"))
@@ -757,25 +856,68 @@ def build(inp: dict[str, Any]) -> dict[str, Any]:
                "quarter revenue ÷ same quarter a year earlier − 1",
                warnings=s_warn("income") if q_yoy is not None else []))
     rg = _f(vendor.get("revenue_growth_ttm_pct"))
+    # The vendor's TTM growth is not recomputed and its revenue line is not
+    # stated. JPM 11/22: +109.0% vendor TTM beside +8.1% for the latest quarter
+    # from the filing. More than RG_MAX_GAP_POINTS apart, or a bank (whose
+    # "revenue" differs by source: net of interest expense or gross), the
+    # vendor figure is withheld.
+    rg_why = None
+    if rg is not None and is_bank:
+        rg_why = ("bank — the vendor's revenue line is not stated (banks report revenue "
+                  "net of interest expense or gross, by source); vendor TTM growth withheld"
+                  + (f"; the filing's latest quarter is {pct(q_yoy, 1, True)} YoY"
+                     if q_yoy is not None else ""))
+    elif rg is not None and q_yoy is not None and abs(rg - q_yoy) > RG_MAX_GAP_POINTS:
+        rg_why = (f"vendor TTM growth {pct(rg, 1, True)} vs {pct(q_yoy, 1, True)} for the "
+                  f"latest quarter in the filing ({q_yoy_txt}) — more than "
+                  f"{RG_MAX_GAP_POINTS:.0f} points apart; vendor figure withheld")
     add(_field("revenue_growth", "Revenue growth (TTM YoY)", rg, pct(rg, 1),
                "Finnhub vendor metric", vmeta.get("fetched_date"),
                "vendor TTM vs prior TTM", "vendor-computed (not recomputed here)",
                warnings=([f"vendor data fetched {vmeta.get('fetched_date')}, before the "
                           f"{smeta.get('last_earnings')} earnings release — may not include "
-                          "the latest quarter"] if vmeta.get("predates_earnings") else [])))
+                          "the latest quarter"] if vmeta.get("predates_earnings") else [])
+               + ([rg_why] if rg_why else []),
+               status="withheld" if rg_why else "ok"))
 
     # ── banks: the two ratios a bank is read on, from the same statements ────
     if is_bank:
         add(_field("bank_note", "Bank", True, BANK_NOTE, "TickerBands", None, "", "",
                    reason="; ".join(sec.get("why") or [])))
         equity = _f(bal.get("equity"))
-        pref = _f(bal.get("preferred_equity")) or 0.0
+        pref_raw = _f(bal.get("preferred_equity"))
+        pref = pref_raw or 0.0
+        pref_found = bool(bal.get("preferred_found", pref_raw is not None))
+        pref_shares = _f(bal.get("preferred_shares"))
         gwi = _f(bal.get("goodwill_intangibles"))
         tce = (equity - pref - gwi) if equity is not None and gwi is not None else None
-        p_tbv = mcap / tce if mcap and tce and tce > 0 else None
-        tbv_parts = (f"equity {big_money(equity)}"
-                     + (f" − preferred {big_money(pref)}" if pref else "")
-                     + f" − goodwill & intangibles {big_money(gwi)} = {big_money(tce)}"
+        tbv_warn: list[str] = []
+        tbv_withhold = None
+        if not pref_found:
+            if pref_shares:
+                # preferred shares on the balance sheet but no value for them:
+                # tangible COMMON equity cannot be computed
+                tbv_withhold = (f"the filing reports {pref_shares:,.0f} preferred shares "
+                                "but no preferred equity value — tangible common equity "
+                                "cannot be computed")
+            else:
+                tbv_warn.append("preferred equity not found — treated as 0; tangible book "
+                                "may be overstated")
+        gwi_missing = [m for m in (bal.get("goodwill_intangibles_missing") or [])
+                       if gwi is not None]
+        for m in gwi_missing:
+            tbv_warn.append(f"{m} not found — treated as 0; tangible book may be overstated")
+        gwi_dates = bal.get("goodwill_intangibles_dates") or {}
+        if gwi_dates:
+            tbv_warn.append("; ".join(f"{n} as of {d}" for n, d in gwi_dates.items())
+                            + f" (the latest filed figure; balance sheet {bal_date or '?'})")
+        if fx_reason and tce is not None:
+            tbv_withhold = tbv_withhold or fx_reason
+        p_tbv = mcap / tce if mcap and tce and tce > 0 and not tbv_withhold else None
+        raw["tangible_common_equity"] = tce
+        tbv_parts = (f"equity {samt(equity)}"
+                     + (f" − preferred {samt(pref)}" if pref else "")
+                     + f" − goodwill & intangibles {samt(gwi)} = {samt(tce)}"
                      ) if tce is not None else ""
         if tce is not None or equity is not None:
             add(_field("p_tbv", "Price / tangible book", p_tbv, ratio(p_tbv, 2),
@@ -787,13 +929,17 @@ def build(inp: dict[str, Any]) -> dict[str, Any]:
                        + (["goodwill / intangibles not found in the balance sheet — "
                            "tangible book not computed"] if tce is None else [])
                        + (["tangible common equity ≤ 0 — ratio undefined"]
-                          if tce is not None and tce <= 0 else []),
-                       tangible_common_equity=tce))
+                          if tce is not None and tce <= 0 else [])
+                       + tbv_warn + ([tbv_withhold] if tbv_withhold else [])
+                       + mcap_withheld,
+                       status="withheld" if tbv_withhold or (mcap_withheld and tce is not None)
+                       else "ok",
+                       tangible_common_equity=tce if not tbv_withhold else None))
         roe = ni_ttm / equity * 100 if ni_ttm is not None and equity and equity > 0 else None
         if roe is not None:
             add(_field("roe", "Return on equity (TTM)", roe, pct(roe, 1),
                        f"{s_src('income')} ÷ {s_src('balance')}", periods.get("income"),
-                       f"{s_basis('income')}; equity {big_money(equity)} at {bal_date or '?'} "
+                       f"{s_basis('income')}; equity {samt(equity)} at {bal_date or '?'} "
                        "(period end, not an average)",
                        "TTM net income ÷ total shareholders' equity",
                        warnings=s_warn("income") + [w for w in s_warn("balance")
@@ -895,10 +1041,45 @@ def build(inp: dict[str, Any]) -> dict[str, Any]:
             add(_field("fund_aum", "Net assets", aum, big_money(aum), p_src,
                        profile.get("as_of"), "fund total net assets", "as reported"))
         if nav:
-            add(_field("fund_nav", "NAV per share", nav, money(nav), p_src,
-                       profile.get("as_of"),
-                       "the source's latest published NAV (its date is not stated) — "
-                       "not compared with the report price", "as reported"))
+            # Yahoo's navPrice carries no date of its own: the row is dated by
+            # when the profile was fetched, and the NAV is never compared with
+            # the report price unless it is known to be the report session's
+            # (QQQI 11/22: NAV $48.15 beside a $45.58 close — the Nov 19 NAV)
+            nav_date = str(profile.get("nav_date") or "")[:10] or None
+            fetched = str(profile.get("as_of") or "")[:10] or None
+            sess = str(b.get("session_date") or "")[:10] or None
+            prior = _f(b.get("prior_close"))
+            nav_w: list[str] = []
+            prem = None
+            if nav_date and sess and nav_date == sess and price:
+                prem = (price / nav - 1) * 100
+            elif nav_date and sess and nav_date < sess:
+                nav_w.append(f"NAV as of {nav_date} is older than the report session ({sess}) "
+                             "— premium/discount not computed")
+            elif fetched and sess and fetched < sess:
+                nav_w.append(f"NAV fetched {fetched}, before the report session ({sess}) — "
+                             "older than the report price; premium/discount not computed")
+            else:
+                nav_w.append("the source does not date its NAV — it may predate the report "
+                             f"session ({sess or '?'}); premium/discount not computed")
+            if (prem is None and price and prior and abs(nav / prior - 1) <= 0.005
+                    and abs(nav / price - 1) > 0.01):
+                nav_w.append(f"NAV {money(nav)} is within 0.5% of the prior session's close "
+                             f"({money(prior)}) and {abs(nav / price - 1) * 100:.1f}% from "
+                             "the report price — likely the prior session's NAV")
+            add(_field("fund_nav", "NAV per share", nav,
+                       money(nav) + (f" (as of {nav_date})" if nav_date else
+                                     f" (fetched {fetched}; NAV date not stated)" if fetched else ""),
+                       p_src, nav_date or fetched,
+                       (f"published NAV as of {nav_date}" if nav_date else
+                        f"the source's latest published NAV, fetched {fetched or '?'} — its "
+                        "date is not stated")
+                       + (f"; {pct(prem, 2, True)} vs the report price" if prem is not None
+                          else " — not compared with the report price"),
+                       "as reported" + ("; premium/discount = price ÷ NAV − 1"
+                                        if prem is not None else ""),
+                       warnings=nav_w, nav_date=nav_date, fetched=fetched,
+                       premium_discount_pct=prem))
         cat = " · ".join(x for x in (profile.get("category"), profile.get("fund_family")) if x)
         if cat:
             add(_field("fund_category", "Category", cat, cat, p_src, profile.get("as_of"),

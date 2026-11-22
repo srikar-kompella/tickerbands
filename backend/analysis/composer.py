@@ -29,7 +29,10 @@ from analysis import (earnings_moves, fundamentals_ttm, market_clock, news_lex,
                       news_relevance, options_iv, price_basis, report_view,
                       research_quality,
                       setup_score, statements, value_lens, vol_bands)
+import time
+
 from cache.store import _get_row, get_or_fetch
+from cache.store import put as cache_put
 from db import connect
 from providers import registry
 from providers import mock
@@ -235,6 +238,71 @@ def _fetched_date(ts: float | None) -> str | None:
     return dt.date.fromtimestamp(ts).isoformat() if ts else None
 
 
+# A cached copy found lacking (old format, missing field, predates earnings)
+# is refetched with force=True. When that refresh fails, get_or_fetch hands
+# back the same stale copy — still lacking — and every later analyze() forced
+# another provider call (a loop for as long as the provider was down, or for
+# a whole earnings day while the 10-Q was not filed). One forced refresh per
+# key per REFRESH_RETRY_SECONDS: the attempt leaves a marker and no new
+# forced refresh is made while it exists.
+REFRESH_RETRY_SECONDS = 30 * 60
+
+
+def _refresh_recently_tried(key: str, window: int | None = None) -> bool:
+    window = REFRESH_RETRY_SECONDS if window is None else window
+    try:
+        row = _get_row(f"refresh_attempt:{key}")
+    except Exception:                     # the marker is an optimization only
+        return False
+    return bool(row and time.time() - row[1] < window)
+
+
+def _mark_refresh(key: str, outcome: str | None, reason: str | None = None) -> None:
+    try:
+        cache_put(f"refresh_attempt:{key}", {"outcome": outcome, "reason": reason})
+    except Exception:
+        pass
+
+
+def _forced_refresh(key: str, ttl: int, fetch_fn, w: dict) -> dict:
+    """One forced refresh of `key` unless one was tried within
+    REFRESH_RETRY_SECONDS (then `w`, the copy at hand, is returned). The
+    attempt is marked whatever its outcome — a refresh that came back stale
+    or still lacking must not be retried on the next request."""
+    if _refresh_recently_tried(key):
+        return w
+    try:
+        out = get_or_fetch(key, ttl, fetch_fn, force=True)
+    except ProviderError as e:
+        _mark_refresh(key, "error", e.reason)
+        raise
+    _mark_refresh(key, out["source"], out.get("error_reason"))
+    return out
+
+
+def _cached_with_backoff(key: str, ttl: int, fetch_fn, force: bool = False,
+                         backoff: int | None = None) -> dict:
+    """get_or_fetch for a provider whose errors are not cached: after a
+    failed fetch (an error, or the stale copy returned) no new attempt is
+    made for `backoff` seconds — the cached copy is served as is, or
+    ProviderError when there is none."""
+    if _refresh_recently_tried(key, backoff):
+        row = _get_row(key)
+        if row is None:
+            raise ProviderError("unavailable", f"{key}: last fetch failed; retrying later")
+        age = time.time() - row[1]
+        return {"data": row[0], "fetched_ts": row[1], "age_seconds": round(age, 1),
+                "source": "cache" if age < ttl else "stale"}
+    try:
+        w = get_or_fetch(key, ttl, fetch_fn, force=force)
+    except ProviderError as e:
+        _mark_refresh(key, "error", e.reason)
+        raise
+    if w["source"] == "stale":
+        _mark_refresh(key, "stale", w.get("error_reason"))
+    return w
+
+
 def _one_statement_source(key: str, fn, symbol: str, force: bool,
                           last_earnings: str | None) -> tuple[dict | None, dict]:
     """One statement source through the cache, refetched when an earnings
@@ -251,11 +319,16 @@ def _one_statement_source(key: str, fn, symbol: str, force: bool,
         # were carried (2026-11-22 format)
         or (w["source"] == "cache" and (w["data"] or {}).get("available")
             and "shares" not in w["data"])
+        # an SEC copy cached before the tangible-book inputs (preferred under
+        # the APIC tag, dated intangibles) were carried (2026-11-22 round 3)
+        or (w["source"] == "cache" and (w["data"] or {}).get("available")
+            and str(w["data"].get("source") or "").startswith("SEC")
+            and "preferred_found" not in (w["data"].get("balance") or {}))
         or (cov["covers_latest"] is False
             and ((last_earnings and fetched and fetched <= last_earnings[:10])
                  or (w.get("age_seconds") or 0) > 6 * 3600)))
     if needs:
-        w = get_or_fetch(key, config.TTL["statements"], lambda: fn(symbol), force=True)
+        w = _forced_refresh(key, config.TTL["statements"], lambda: fn(symbol), w)
         meta["refreshed"] = w["source"] == "live"
     meta.update({"fetched_date": _fetched_date(w.get("fetched_ts")),
                  "source_kind": w["source"]})
@@ -360,7 +433,7 @@ def _recent_filings(symbol: str, since: str, force: bool) -> dict | None:
         # filings (2026-11-22 wider list)
         if (w["source"] == "cache" and (d or {}).get("available")
                 and ("sic" not in d or "forms" not in d)):
-            d = get_or_fetch(key, 6 * 3600, lambda: fn(symbol, since), force=True)["data"]
+            d = _forced_refresh(key, 6 * 3600, lambda: fn(symbol, since), w)["data"]
         return d
     except (ProviderError, TypeError):
         return None
@@ -378,15 +451,10 @@ def _rating_changes(symbol: str, force: bool) -> dict | None:
         # from a quiet month (ANT: 0/0/0 days after listing)
         if (w["source"] == "cache" and (d or {}).get("source") == "Yahoo"
                 and not (d or {}).get("changes") and "no_feed" not in d):
-            d = get_or_fetch(key, config.TTL["analyst"], lambda: fn(symbol), force=True)["data"]
+            d = _forced_refresh(key, config.TTL["analyst"], lambda: fn(symbol), w)["data"]
         return d
     except (ProviderError, TypeError):
         return None
-
-
-def _last_report_date(symbol: str) -> str | None:
-    row = _get_row(f"report_last:{symbol.upper()}")
-    return (row[0] or {}).get("date") if row else None
 
 
 def _eps_check(symbol: str, force: bool, last_earnings: str | None = None) -> dict | None:
@@ -401,7 +469,7 @@ def _eps_check(symbol: str, force: bool, last_earnings: str | None = None) -> di
         fetched = _fetched_date(w.get("fetched_ts"))
         if (w["source"] == "cache" and last_earnings and fetched
                 and fetched <= last_earnings[:10]):
-            w = get_or_fetch(key, config.TTL["eps_check"], lambda: fn(symbol), force=True)
+            w = _forced_refresh(key, config.TTL["eps_check"], lambda: fn(symbol), w)
         return w["data"]
     except ProviderError:
         return None
@@ -851,11 +919,13 @@ def analyze(symbol: str, force: bool = False, now: dt.datetime | None = None,
     fenv = sections["fundamentals"]
     f_fetched = _fetched_date(fenv.get("fetched_ts"))
     if (last_earn and f_fetched and f_fetched <= last_earn
-            and now_ny.date().isoformat() > last_earn and fenv.get("status") == "ok"):
+            and now_ny.date().isoformat() > last_earn and fenv.get("status") == "ok"
+            and not _refresh_recently_tried(f"fundamentals:{symbol}")):
         fn = _providers()["fundamentals"]
         if fn:
             sections["fundamentals"] = _fetch_one("fundamentals", fn, "fundamentals",
                                                   symbol, True)[1]
+            _mark_refresh(f"fundamentals:{symbol}", sections["fundamentals"].get("status"))
             fenv = sections["fundamentals"]
             f_fetched = _fetched_date(fenv.get("fetched_ts")) or f_fetched
     vendor = fenv.get("data")
@@ -881,8 +951,10 @@ def analyze(symbol: str, force: bool = False, now: dt.datetime | None = None,
     # every completed ≥2σ session in the bars (plus the report's own last
     # session): notes are judged against all of them, so a failed news check
     # does not read as fine again after one ordinary day
+    # a ≥2σ session whose Recent sessions row is under 1σ net of the market
+    # is marked market-wide (`market_net_pct`) and judged by no rule
     big_sessions = news_relevance.big_sessions(
-        move, basis, research_quality.big_move_sessions(bars, div_events))
+        move, basis, research_quality.big_move_sessions(bars, div_events), recent)
     explained = research_quality.explained_sessions(notes, move, basis, big_sessions)
     flags = news_relevance.research_flags(news_row, claude_stance, move, basis, now_ny,
                                           big_sessions, explained)
@@ -927,7 +999,9 @@ def analyze(symbol: str, force: bool = False, now: dt.datetime | None = None,
     rv_view["data_as_of"] = report_view.data_as_of(
         rv_view, basis, stmts, smeta, headlines_view, claude_news, nwin)
 
-    mcap_dollars = (rv_view["fields"].get("market_cap") or {}).get("value")
+    mc_field = rv_view["fields"].get("market_cap") or {}
+    # a withheld market cap (ADR, share counts far apart) prices nothing
+    mcap_dollars = mc_field.get("value") if mc_field.get("status") == "ok" else None
     payload: dict[str, Any] = {
         "symbol": symbol,
         "generated_ts": dt.datetime.now().isoformat(timespec="seconds"),
@@ -967,6 +1041,13 @@ def analyze(symbol: str, force: bool = False, now: dt.datetime | None = None,
         "headlines_view": {k: v for k, v in headlines_view.items()
                            if k not in ("items", "all_relevant")},
         "sec_filings": filings,
+        # the EDGAR forms `sec_filings` was filtered to (fetch_recent_filings'
+        # list) — what the list covers; None when no filings were fetched
+        # (a fund or a non-SEC filer). sec_filings_omitted: filings past the cap
+        "sec_filing_forms": (((filings_payload or {}).get("forms")
+                              or list(sec_xbrl.FILING_FORMS)) if filings_payload else None),
+        "sec_filings_since": (filings_payload or {}).get("since"),
+        "sec_filings_omitted": (filings_payload or {}).get("omitted"),
         "sec_cik": (filings_payload or {}).get("cik"),
         "regulatory_hits": reg_hits,
         "move_cause": cause,
@@ -1026,22 +1107,48 @@ def _security_profile(symbol: str, force: bool) -> dict | None:
     fn = registry.resolve("security_profile")
     if fn is None:
         return None
+    key = f"security_profile:{symbol.upper()}"
     try:
-        return get_or_fetch(f"security_profile:{symbol.upper()}", config.TTL["eps_check"],
-                            lambda: fn(symbol), force=force)["data"]
+        # a network error is not cached by get_or_fetch: without the backoff
+        # every analyze() of the symbol made another Yahoo call while it failed
+        w = _cached_with_backoff(key, config.TTL["eps_check"], lambda: fn(symbol),
+                                 force=force, backoff=PROFILE_RETRY_SECONDS)
+        d = w["data"]
+        # a copy cached before the reporting currency was carried (round 3)
+        if (w["source"] == "cache" and (d or {}).get("available")
+                and "financial_currency" not in d):
+            d = _forced_refresh(key, config.TTL["eps_check"], lambda: fn(symbol), w)["data"]
+        return d
     except (ProviderError, TypeError):
         return None
 
 
+PROFILE_RETRY_SECONDS = 15 * 60
+EXHIBIT_FAIL_TTL = 3600        # an unreachable EDGAR index is retried after an hour
+
+
 def _release_exhibit(url: str | None) -> str | None:
     """The EX-99.1 URL of an earnings 8-K (cached 30 days — a filed exhibit
-    does not move). None when the index has none or EDGAR is unreachable."""
+    does not move). None when the index has none or EDGAR is unreachable; a
+    failure is cached as {"exhibit_url": None, "failed": …} and retried only
+    after EXHIBIT_FAIL_TTL (it used to be refetched — 10 s timeout — on every
+    analyze())."""
     fn = None if use_mock() else registry.resolve("sec_exhibit")
     if fn is None or not url:
         return None
+
+    def fetch() -> dict:
+        try:
+            return fn(url)
+        except ProviderError as e:
+            return {"exhibit_url": None, "failed": f"{e.reason}: {e.detail}"[:160]}
+    key = f"sec_exhibit:{url}"
     try:
-        return (get_or_fetch(f"sec_exhibit:{url}", 30 * 86400,
-                             lambda: fn(url))["data"] or {}).get("exhibit_url")
+        w = get_or_fetch(key, 30 * 86400, fetch)
+        d = w["data"] or {}
+        if d.get("failed") and (w.get("age_seconds") or 0) > EXHIBIT_FAIL_TTL:
+            d = get_or_fetch(key, 30 * 86400, fetch, force=True)["data"] or {}
+        return d.get("exhibit_url")
     except (ProviderError, TypeError):
         return None
 
@@ -1066,6 +1173,9 @@ def _security(symbol: str, quote: dict | None, history: list[dict], bars: list[d
         "sic": (filings_payload or {}).get("sic"),
         "sic_description": (filings_payload or {}).get("sic_description"),
         "asset_sub_type": (quote or {}).get("asset_sub_type"),
+        # the currency the company reports in (Yahoo financialCurrency; TSM:
+        # TWD) — absolute statement amounts are in it, not in US dollars
+        "financial_currency": (profile or {}).get("financial_currency"),
         "industry": (profile or {}).get("industry"),
         "profile": profile,
     })
@@ -1091,9 +1201,14 @@ def _value_lens_for(security: dict, rv_view: dict, mcap: float | None,
     cash-flow / EV rows for a bank, no EV when the report withheld it."""
     if security.get("is_fund"):
         return None
-    vl = _value_lens_with_freshness(mcap, stmts, smeta)
+    ccy = str(security.get("financial_currency") or "USD").upper()
+    vl = _value_lens_with_freshness(mcap, stmts, smeta, ccy)
     if vl and security.get("is_bank"):
         vl = value_lens.for_bank(vl)
+    # ADR / share counts far apart (market cap withheld) and non-USD filers
+    mc_why = ((rv_view.get("raw") or {}).get("market_cap_withheld"))
+    if vl and (mc_why or ccy != "USD"):
+        vl = value_lens.withhold_priced(vl, mc_why, ccy)
     ev_f = (rv_view.get("fields") or {}).get("ev") or {}
     pre = next((w for w in ev_f.get("warnings") or [] if "predates the listing" in w), None)
     if vl and pre and isinstance(vl.get("ev"), dict):
@@ -1104,8 +1219,8 @@ def _value_lens_for(security: dict, rv_view: dict, mcap: float | None,
 
 
 def _value_lens_with_freshness(mcap: float | None, stmts: dict | None,
-                               smeta: dict) -> dict | None:
-    vl = value_lens.build_value_lens(mcap, stmts)
+                               smeta: dict, currency: str = "USD") -> dict | None:
+    vl = value_lens.build_value_lens(mcap, stmts, currency)
     if vl and smeta.get("warning"):
         vl["warnings"] = [f"statements {smeta['warning']}"] + list(vl.get("warnings") or [])
     return vl

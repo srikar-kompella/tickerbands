@@ -449,7 +449,9 @@ def test_fund_has_no_company_fundamentals_rows_but_fund_rows():
     assert d["display"].startswith("2031-11-18 $0.58 · 2031-10-21 $0.63")
     assert F["fund_expense_ratio"]["display"] == "0.68%"
     assert F["fund_aum"]["display"] == "$9.4B"
-    assert F["fund_nav"]["display"] == "$50.12" and "not compared" in F["fund_nav"]["basis"]
+    # dated since round 3: Yahoo states no NAV date, so the fetch date is shown
+    assert F["fund_nav"]["display"] == "$50.12 (fetched 2031-11-22; NAV date not stated)"
+    assert "not compared" in F["fund_nav"]["basis"]
     assert F["fund_category"]["display"] == "Derivative Income · ZZ Funds"
 
 

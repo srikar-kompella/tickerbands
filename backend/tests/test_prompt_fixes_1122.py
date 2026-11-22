@@ -70,8 +70,8 @@ def test_stock_variant_generic_legal_list_and_no_fixed_export_controls(base):
     s1 = _step1(p)
     assert "NVDA, a stock they follow" in p
     assert ("c. the company name with each of: SEC, DOJ, state attorneys general, subpoena, "
-            "securities class actions; and search for enforcement actions by the company's "
-            "main regulator by name") in s1
+            "securities class actions (the terms may be combined into one search per name); "
+            "and search for enforcement actions by the company's main regulator by name") in s1
     assert "export controls" not in s1
     assert "not its own legal-process pages" in s1
     assert "do not count a law firm's \"investigation\" notice as a filed case" in s1
@@ -84,9 +84,9 @@ def test_stock_export_controls_only_when_the_snapshot_news_mentions_export_rules
     heads = [{"headline": "ZZ chip maker faces new export controls on its accelerators",
               "summary": "", "source": "Example Wire", "ts": None}]
     s1 = _step1(_prompt({**base, "headlines": heads}))
-    assert "securities class actions, export controls; and search for enforcement" in s1
+    assert "securities class actions, export controls (the terms may be combined" in s1
     reg = [{"headline": "Agency tightens export rules", "terms": ["export"]}]
-    assert ", export controls;" in _step1(_prompt({**base, "regulatory_hits": reg}))
+    assert ", export controls (the terms" in _step1(_prompt({**base, "regulatory_hits": reg}))
 
 
 def test_fund_variant(base):
@@ -165,7 +165,8 @@ def test_bank_variant(base):
     s1, snap = _step1(p), _block(p, "snapshot")
     assert "NVDA, a bank stock they follow" in p
     assert ("c. the company and its bank subsidiary by name with each of: SEC, DOJ, state "
-            "attorneys general, subpoena, securities class actions; and search for enforcement "
+            "attorneys general, subpoena, securities class actions (the terms may be combined "
+            "into one search per name); and search for enforcement "
             "actions by the bank's primary federal regulator, set by its charter") in s1
     assert "state banking regulator" not in s1
     assert "export controls" not in s1
@@ -259,8 +260,10 @@ def test_filings_are_listed_in_the_snapshot_and_step_1b_reads_them(base):
     assert ("b. the SEC filings listed in <snapshot> (SEC filings since 2026-11-16): read every "
             "one filed in the window — for an 8-K, the items named on its row and its "
             "exhibits; a Form 4 or 144 is an insider's trade or planned sale") in s1
-    assert ("and check EDGAR only for anything newer than the list and for forms it leaves out "
-            "(Form 4 and 144, NT 10-Q and NT 10-K, S-1 and 424B;") in s1
+    assert ("check EDGAR for anything newer than the list only when the snapshot is more "
+            "than one trading day old") in s1
+    assert ("for forms the list leaves out (Form 4, 144, Form 3, S-8, NT 10-Q and NT 10-K, "
+            "S-1, 424B; a foreign issuer files 6-K and 20-F)") in s1
     # the submissions JSON stays as the fallback, with what to do when it is cut short
     assert "https://data.sec.gov/submissions/CIK0000000002.json" in s1
     assert "if your fetch tool cuts that file short" in s1
@@ -349,7 +352,7 @@ def test_near_miss_is_listed_and_recorded_without_touching_move_cause(base):
     s4 = _step(p, "4. Analyze", "5. Lay out")
     assert "Do the same for each near miss listed there." in s4
     out = p[p.index("## Output contract"):]
-    assert "(near misses and older sessions do not count here)" in out
+    assert "(near misses, market-wide moves and older sessions do not count here)" in out
     _guards(p)
 
 
@@ -434,7 +437,7 @@ def test_window_wording_matches_the_code(tmp_db, monkeypatch):
     assert a["news_window"] == {"from": "2026-11-05", "to": "2026-11-21",
                                 "last_note": "2026-11-05"}
     s1 = _step1(_prompt(a))
-    assert ("Window: 2026-11-05 → 2026-11-21 (17 days) — since the last research note on this "
+    assert ("Window: 2026-11-05 → 2026-11-21 (16 days back, 12 trading sessions) — since the last research note on this "
             "ticker that still stands (OK or STALE in <prior_notes>), at most 30 days back, or "
             "the last 5 trading sessions, whichever is longer. Here it starts at the note of "
             "2026-11-05.") in s1
@@ -496,8 +499,9 @@ def test_pending_verdict_and_the_users_own_rules(base):
            "UNKNOWN" in p
     task = _step(p, "## Your task, in order", "1. Research first")
     assert ("A project file your tool loaded into this session by itself (for example a "
-            "CLAUDE.md from another folder) counts as the user's notes in the same way, and so "
-            "does a file in the same folder that those notes point to") in task
+            "CLAUDE.md from another folder) counts as the user's notes only when it is about "
+            "the user's own investing (rules, plans, positions); otherwise ignore it. Notes "
+            "that count bring along a file in the same folder that those notes point to") in task
     # the owned example uses the PENDING verdict too
     assert "the add trigger is PENDING until the Q1 release" in p
 

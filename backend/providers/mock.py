@@ -85,6 +85,7 @@ def fetch_security_profile(symbol: str) -> dict[str, Any]:
         "fund_family": "Mock Funds" if fund else None, "legal_type": None,
         "industry": None if fund else "Mock Industry", "sector": None,
         "shares_outstanding": None, "implied_shares_outstanding": None,
+        "financial_currency": "USD", "currency": "USD",
         "source": "mock", "as_of": _ny_today().isoformat(),
     }
 

@@ -238,7 +238,11 @@ def prior_note_status(notes: list[dict], move: dict | None, basis: dict | None,
     (big_move_sessions, from the daily bars) plus the report's last session
     (`move`, `basis`) — that lies inside its news window
     (news_relevance.sessions_to_explain), not only the last one, so a verdict
-    does not flip back to OK after one ordinary day.
+    does not flip back to OK after one ordinary day. A session the market
+    explains — net of the market under one daily σ, marked `market_net_pct`
+    by news_relevance.big_sessions from its Recent sessions row — is left
+    out of every rule below: it needs no cause and makes no note STALE.
+    Sessions without such a row keep the plain ≥2σ rule.
 
     First match wins:
       SUPERSEDED — a later note lists it in `supersedes`. It has already been

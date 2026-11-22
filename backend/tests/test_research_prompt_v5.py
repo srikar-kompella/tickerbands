@@ -378,7 +378,7 @@ def test_v5_step1_research_window_and_minimum_searches(p):
     assert "before any analysis" in step
     # the window runs from the last note that still stands (the STALE note of
     # Nov 13), and the sentence after it says which rule set the start
-    assert "Window: 2026-11-13 → 2026-11-21 (9 days)" in step
+    assert "Window: 2026-11-13 → 2026-11-21 (8 days back, 6 trading sessions)" in step
     assert ("since the last research note on this ticker that still stands (OK or STALE "
             "in <prior_notes>), at most 30 days back, or the last 5 trading sessions, "
             "whichever is longer. Here it starts at the note of 2026-11-13.") in step
@@ -389,7 +389,8 @@ def test_v5_step1_research_window_and_minimum_searches(p):
                  "2026-11-13 through 2026-11-21, one search sweep",
                  "b. SEC EDGAR filings since 2026-11-13, reading the item numbers of every 8-K",
                  "c. the company name with each of: SEC, DOJ, state attorneys general, "
-                 "subpoena, securities class actions; and search for enforcement actions "
+                 "subpoena, securities class actions (the terms may be combined into one "
+                 "search per name); and search for enforcement actions "
                  "by the company's main regulator by name",
                  "d. the latest earnings release",
                  "e. the company's investor-relations page for the next earnings date"):
@@ -418,8 +419,8 @@ def test_v5_no_search_tool_means_say_so_and_write_failed(p):
     # move_cause follows the sessions step 1 lists, not the last session alone
     assert ('`move_cause` is "found" when every session step 1 lists as still needing a '
             'cause has one, "not_found" when one does not, and "na" only when step 1 '
-            "lists no such session (near misses and older sessions do not count "
-            "here)") in out
+            "lists no such session (near misses, market-wide moves and older sessions "
+            "do not count here)") in out
     assert "when the last session moved less than 2σ" not in p
     assert "`review_by` is a date written YYYY-MM-DD" in out
     step7 = p[p.index("7. Check your work before writing"):p.index("8. Write the file")]
@@ -692,7 +693,7 @@ def test_v5_output_contract_headings_length_path_and_fallback(p):
                              "## Unknowns")
     at = [out.index(f"`{h}`") for h in BODY_HEADINGS]
     assert at == sorted(at)
-    assert "about 1,000 words excluding tables and stay under 1,300" in out
+    assert "about 1,100 words excluding tables and stay under 1,300" in out
     assert "claim | source | published | quote | link" in out
     assert "a short verbatim phrase from the source (under 20 words)" in out
     assert "List only links you actually opened in this session" in out
@@ -1393,7 +1394,7 @@ def test_v5_step1_short_window_is_the_news_page_one_sweep_and_listed_dates(
     assert a["news_window"] == {"from": "2026-11-16", "to": "2026-11-21"}
     p = _prompt(a)
     step1 = p[p.index("1. Research first"):p.index("2. Reconcile the data")]
-    assert "Window: 2026-11-16 → 2026-11-21 (6 days)" in step1
+    assert "Window: 2026-11-16 → 2026-11-21 (5 days back, 5 trading sessions)" in step1
     assert "Here it starts at the note of" not in step1 and "older than that" not in step1
     assert ("   a. company news — the company's own news or press-release page for "
             "2026-11-16 through 2026-11-21, and one search sweep for the window as a "
@@ -1421,7 +1422,7 @@ def test_v5_step1_window_starts_at_the_last_standing_note_and_stops_at_30_days(
                                 "last_note": "2026-08-04", "capped": True}
     p = _prompt(a)
     step1 = p[p.index("1. Research first"):p.index("2. Reconcile the data")]
-    assert "Window: 2026-10-24 → 2026-11-23 (31 days)" in step1
+    assert "Window: 2026-10-24 → 2026-11-23 (30 days back, 21 trading sessions)" in step1
     assert ("The last such note (2026-08-04) is older than that, so the window stops at "
             "30 days.") in step1
     assert ("   a. company news — the company's own news or press-release page for "

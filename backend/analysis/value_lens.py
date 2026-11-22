@@ -37,15 +37,17 @@ def _avg(vals: list[float | None]) -> tuple[float | None, int]:
     return (sum(xs) / len(xs), len(xs)) if xs else (None, 0)
 
 
-def _money(v: float | None) -> str:
+def _money(v: float | None, ccy: str = "USD") -> str:
+    """$1.2B — or 'TWD 1.2B' for a filer reporting in another currency."""
     if v is None:
         return "—"
     a, sign = abs(v), ("−" if v < 0 else "")
+    cur = "$" if (ccy or "USD").upper() == "USD" else f"{ccy.upper()} "
     if a >= 1e12:
-        return f"{sign}${a / 1e12:.2f}T"
+        return f"{sign}{cur}{a / 1e12:.2f}T"
     if a >= 1e9:
-        return f"{sign}${a / 1e9:.1f}B"
-    return f"{sign}${a / 1e6:.1f}M"
+        return f"{sign}{cur}{a / 1e9:.1f}B"
+    return f"{sign}{cur}{a / 1e6:.1f}M"
 
 
 def _cagr(newest: float | None, oldest: float | None, years: int) -> float | None:
@@ -55,11 +57,14 @@ def _cagr(newest: float | None, oldest: float | None, years: int) -> float | Non
 
 
 def build_value_lens(market_cap: float | None,
-                     stmts: dict | None) -> dict[str, Any] | None:
-    """market_cap in DOLLARS; stmts = financial_statements provider payload.
-    Returns the value-lens block or None when statements are unavailable."""
+                     stmts: dict | None, currency: str = "USD") -> dict[str, Any] | None:
+    """market_cap in DOLLARS; stmts = financial_statements provider payload;
+    `currency` = the currency the statements are reported in (amounts in
+    the labels carry it). Returns the value-lens block or None when
+    statements are unavailable."""
     if not stmts or not stmts.get("available"):
         return None
+    ccy = (currency or "USD").upper()
     ttm = stmts.get("ttm") or {}
     annual = stmts.get("annual") or []       # newest first
     bal = stmts.get("balance") or {}
@@ -116,9 +121,15 @@ def build_value_lens(market_cap: float | None,
     cagr5 = _cagr(revs[0], revs[span5], span5) if len(revs) >= 3 and span5 >= 2 else None
 
     def fy(i: int) -> str:
-        """'FY ended 2025-12-31 ($90.2M)' — which years the CAGR spans."""
+        """'FY ended 2025-12-31 ($90.2M)' — which years the CAGR spans. A row
+        with no end date reads 'latest FY' / 'FY −2 (undated)', never
+        'FY −0'."""
         end = str(annual[i].get("end") or "")[:10] if i < len(annual) else ""
-        return (f"FY ended {end}" if end else f"FY −{i}") + f" ({_money(revs[i])})"
+        if end:
+            name = f"FY ended {end}"
+        else:
+            name = "latest FY (undated)" if i == 0 else f"FY −{i} (undated)"
+        return f"{name} ({_money(revs[i], ccy)})"
 
     cagr3_basis = (f"reported FY revenues, 3-yr span: {fy(3)} → {fy(0)}"
                    if cagr3 is not None else "reported FY revenues, 3-yr span")
@@ -136,18 +147,18 @@ def build_value_lens(market_cap: float | None,
         if not (0.5 <= rev_ttm / revs[0] <= 2.0):
             # the two series cannot be the same revenue line — withhold
             warnings.append(
-                f"revenue CAGR withheld — TTM revenue {_money(rev_ttm)} is "
+                f"revenue CAGR withheld — TTM revenue {_money(rev_ttm, ccy)} is "
                 f"{gap * 100:+.0f}% vs the latest fiscal year"
                 + (f" (ended {fy_end})" if fy_end else "")
-                + f" {_money(revs[0])}; the fiscal-year series and the TTM figure "
+                + f" {_money(revs[0], ccy)}; the fiscal-year series and the TTM figure "
                 "look like different revenue definitions or sources")
             cagr3 = cagr5 = None
         elif abs(gap) >= 0.15:
             warnings.append(
                 "revenue CAGR is measured on fiscal years through "
                 + (fy_end or "the last 10-K")
-                + f"; TTM revenue {_money(rev_ttm)} is {gap * 100:+.0f}% vs that year "
-                f"({_money(revs[0])}) — the latest quarters (for example an "
+                + f"; TTM revenue {_money(rev_ttm, ccy)} is {gap * 100:+.0f}% vs that year "
+                f"({_money(revs[0], ccy)}) — the latest quarters (for example an "
                 "acquisition) are not in the CAGR")
 
     # approximate ROIC: NOPAT ÷ invested capital
@@ -249,8 +260,11 @@ def build_value_lens(market_cap: float | None,
     }
 
 
+# acquisitions_total: a bank's "cash paid for acquisitions" line (JPM: $12.3B
+# over 5 FYs) is mostly deposits/loan books taken over, not a corporate deal
+# spend comparable with a company's — blanked with the other cash-flow rows
 NOT_FOR_BANKS = ("fcf_ttm", "p_fcf", "p_fcf_avg", "ev", "roic_ttm", "roic_avg",
-                 "payout_of_fcf_pct")
+                 "payout_of_fcf_pct", "acquisitions_total")
 BANK_NOTE = ("bank: free cash flow, P/FCF, enterprise value and ROIC are not shown — "
              "deposits and borrowings fund the loan book, they are not corporate debt")
 
@@ -272,4 +286,42 @@ def for_bank(vl: dict | None) -> dict | None:
                                      if not w.startswith(drop)]
     out["readings"] = [r for r in out.get("readings") or []
                        if not r.startswith(("TTM free cash flow", "P/FCF", "ROIC"))]
+    return out
+
+
+# priced off market cap (US dollars) — wrong for an ADR whose share count is
+# not in ADR units, and for statements in another currency
+PRICE_MULTIPLES = ("p_fcf", "p_fcf_avg", "pe_avg", "ev")
+# absolute amounts in the filing's currency
+ABSOLUTE_AMOUNTS = ("fcf_ttm", "ev", "acquisitions_total")
+
+
+def withhold_priced(vl: dict | None, why: str | None = None,
+                    currency: str | None = None) -> dict | None:
+    """The lens when market cap is withheld (`why`, e.g. an ADR) and/or the
+    statements are reported in a non-USD `currency`: price multiples blank;
+    for a foreign currency also the absolute amounts. Ratios of two amounts
+    in the same currency (CAGR, ROIC~, payout of FCF) are kept."""
+    if not vl:
+        return vl
+    ccy = (currency or "USD").upper()
+    foreign = ccy != "USD"
+    if not why and not foreign:
+        return vl
+    out = dict(vl)
+    keys = set(PRICE_MULTIPLES) | (set(ABSOLUTE_AMOUNTS) if foreign else set())
+    for k in keys:
+        if isinstance(out.get(k), dict):
+            out[k] = {**out[k], "value": None}
+    out["net_cash"] = False
+    notes = []
+    if why:
+        notes.append(f"price multiples withheld — {why}")
+    if foreign:
+        notes.append(f"reported in {ccy} — free cash flow, EV, acquisitions and every "
+                     "multiple of the US-dollar market cap are not shown; growth and "
+                     "return ratios are currency-neutral")
+    drop = ("net cash position",)
+    out["warnings"] = notes + [w for w in out.get("warnings") or [] if not w.startswith(drop)]
+    out["readings"] = [r for r in out.get("readings") or [] if not r.startswith("P/FCF")]
     return out

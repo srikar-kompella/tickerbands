@@ -72,7 +72,10 @@ def get_report(symbol: str):
             d = {**d, "current_price": price,
                  "pct_since": round((price / d["decision_price"] - 1) * 100, 2)}
         decisions.append(d)
-    # the next report's news window starts here at the latest
+    # when this symbol's report was last exported — a record only: nothing
+    # reads it for the news window, which starts at the last research note
+    # that still stands (research_quality.last_research_date), not at the
+    # last exported report (an export is no news check)
     cache_put(f"report_last:{symbol.upper()}",
               {"date": dt.date.today().isoformat(),
                "ts": dt.datetime.now().isoformat(timespec="seconds")})

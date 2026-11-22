@@ -404,6 +404,11 @@ def security_profile_from_info(info: dict, as_of: str | None = None) -> dict[str
         # counts every class (they differ for multi-class companies)
         "shares_outstanding": num("sharesOutstanding") or None,
         "implied_shares_outstanding": num("impliedSharesOutstanding") or None,
+        # the currency the company REPORTS in (TSM: TWD) vs the currency the
+        # listing trades in — statement amounts are in the former
+        "financial_currency": (str(info.get("financialCurrency")).upper()
+                               if info.get("financialCurrency") else None),
+        "currency": str(info.get("currency")).upper() if info.get("currency") else None,
         "source": "Yahoo profile",
         "as_of": as_of,
     }

@@ -263,8 +263,43 @@ def session_close_dt(session_iso: str) -> dt.datetime:
 
 # ─── ≥2σ sessions a note is judged against ────────────────────────────────────
 
+def market_net(session_date: str, recent: list[dict] | None,
+               daily_sigma_pct: float | None = None,
+               sigma_date: str | None = None) -> float | None:
+    """The session's move net of the market (percent) when that net move is
+    under one daily σ — the market explains the session; None otherwise.
+
+    Read from the session's own `recent_sessions` row: `net_of_market_pct`
+    (move − beta × SPY's move) against that row's σ (|move ÷ z|). Where the
+    row has no z, `daily_sigma_pct` serves for `sigma_date` (the report's
+    own session, `move.daily_sigma_pct`). No row, no net figure (no beta or
+    no SPY bar) or no σ → None, and the session keeps the ≥2σ rule. A −3%
+    day at −2.4σ with SPY −2.6% and beta 1.1 is the market's day, not a
+    story the company needs."""
+    row = next((x for x in recent or []
+                if str(x.get("date") or "")[:10] == session_date), None)
+    if not row:
+        return None
+    net, chg, z = row.get("net_of_market_pct"), row.get("change_pct"), row.get("z")
+    if net is None:
+        return None
+    sigma = abs(chg / z) if (chg is not None and z) else None
+    if sigma is None and daily_sigma_pct and sigma_date == session_date:
+        sigma = abs(daily_sigma_pct)
+    if not sigma:
+        return None
+    return float(net) if abs(net) < sigma else None
+
+
+def is_market_move(s: dict) -> bool:
+    """A ≥2σ session the market explains (`market_net_pct` set by
+    big_sessions): it needs no news cause and fails no note."""
+    return s.get("market_net_pct") is not None
+
+
 def big_sessions(move: dict | None, basis: dict | None,
-                 sessions: list[dict] | None = None) -> list[dict]:
+                 sessions: list[dict] | None = None,
+                 recent: list[dict] | None = None) -> list[dict]:
     """Every COMPLETED session that moved ≥ 2σ, oldest first.
 
     `sessions` come from the daily bars (research_quality.big_move_sessions),
@@ -272,7 +307,14 @@ def big_sessions(move: dict | None, basis: dict | None,
     judging against the last session only let a failed news check return to
     OK one ordinary day later. The report's own last session (`move` +
     `basis`) overrides the bar-derived entry for its date, because its z is
-    the one the report shows; a session that is still trading is left out."""
+    the one the report shows; a session that is still trading is left out.
+
+    A session whose move net of the market is under one daily σ
+    (`market_net`, from its `recent` row) carries `market_net_pct`: it stays
+    in the list so the prompt can label it a market-wide move, and every
+    judging helper below (`sessions_to_explain`, `sessions_closed_after`)
+    leaves it out. The mark survives a second pass without `recent`, so the
+    composer's list, passed on as `sessions`, keeps it."""
     by: dict[str, dict] = {}
     for s in sessions or []:
         d, z = str(s.get("session_date") or "")[:10], s.get("z")
@@ -285,17 +327,34 @@ def big_sessions(move: dict | None, basis: dict | None,
         if live or (z is not None and abs(z) < BIG_MOVE_SIGMA):
             by.pop(sess, None)
         elif z is not None:
-            by[sess] = {"session_date": sess, "z": z, "move_pct": (move or {}).get("move_pct"),
-                        "label": (basis or {}).get("move_word")}
+            entry = {"session_date": sess, "z": z, "move_pct": (move or {}).get("move_pct"),
+                     "label": (basis or {}).get("move_word")}
+            if sess in by and is_market_move(by[sess]):
+                entry["market_net_pct"] = by[sess]["market_net_pct"]
+            by[sess] = entry
+    rows = {str(x.get("date") or "")[:10] for x in recent or []}
+    for d, s in by.items():
+        if d in rows:               # a row decides; without one an earlier mark stands
+            net = market_net(d, recent, (move or {}).get("daily_sigma_pct"), sess)
+            if net is not None:
+                s["market_net_pct"] = net
+            else:
+                s.pop("market_net_pct", None)
     return [by[k] for k in sorted(by)]
+
+
+def cause_sessions(big: list[dict]) -> list[dict]:
+    """The ≥2σ sessions that need a news cause: market-wide moves left out."""
+    return [s for s in big if not is_market_move(s)]
 
 
 def sessions_closed_after(t: dt.datetime | None, big: list[dict]) -> list[dict]:
     """The ≥2σ sessions that closed after a note written at `t` — moves it
-    cannot reflect. Empty when the time is unknown."""
+    cannot reflect. Empty when the time is unknown. Market-wide moves
+    (`is_market_move`) do not count: they ask nothing new of the note."""
     if t is None:
         return []
-    return [s for s in big if t < session_close_dt(s["session_date"])]
+    return [s for s in cause_sessions(big) if t < session_close_dt(s["session_date"])]
 
 
 WINDOW_SESSIONS = 5      # the prompt's news window is never shorter than 5 sessions
@@ -327,7 +386,9 @@ def sessions_to_explain(t: dt.datetime | None, big: list[dict], window: Any = No
     window can widen it and cannot narrow it, so a note that checked one day
     is still held to the whole week. Judging only the LAST closed session let
     a "no material news" note through one ordinary day after a −14% session.
-    With no readable time the note is taken as current (`last_session`)."""
+    With no readable time the note is taken as current (`last_session`).
+    A market-wide move (`is_market_move`) is never asked for."""
+    big = cause_sessions(big)
     if t is not None:
         last = mc.session_state(t)["last_session"]
     elif last_session:
@@ -454,12 +515,14 @@ def research_flags(claude_news: dict | None, claude_stance: dict | None,
                    move: dict | None, basis: dict | None,
                    now: dt.datetime | None = None,
                    sessions: list[dict] | None = None,
-                   explained: dict[str, dt.datetime] | None = None
+                   explained: dict[str, dt.datetime] | None = None,
+                   recent: list[dict] | None = None
                    ) -> dict[str, list[str]]:
     """Warnings for the stored news check and research stance. Each note is
     judged against every completed ≥2σ session inside its news window
     (`sessions_to_explain`), not only the last one, so a warning does not
-    disappear after one ordinary day.
+    disappear after one ordinary day. A ≥2σ session the market explains
+    (`market_net_pct`, see big_sessions) raises none of these flags.
 
       * the note's research was partial or failed, or its research_status
         could not be read → the check was not completed
@@ -486,7 +549,7 @@ def research_flags(claude_news: dict | None, claude_stance: dict | None,
                                "check does not say whether a cause was found")
     if not basis or not basis.get("session_date"):
         return out
-    big = big_sessions(move, basis, sessions)
+    big = big_sessions(move, basis, sessions, recent)
     last = basis["session_date"]
 
     if claude_news:

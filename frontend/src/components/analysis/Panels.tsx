@@ -94,8 +94,9 @@ export function securityKind(a: Analysis): SecurityKind | undefined {
     ?? (/ETF|FUND|COLLECTIVE/i.test(a.quote?.asset_type ?? '') ? 'fund' : undefined)
 }
 
-// `security_kind` puts new_listing before fund/bank, so a fund listed last week
-// reads "new_listing": the flags on `security` still say what it is.
+// `security_kind` precedence is fund → bank → new_listing, so a fund listed
+// last week reads "fund": whether it is new comes from is_new_listing /
+// security.new_listing, never from the kind alone.
 export const isFund = (a: Analysis): boolean => securityKind(a) === 'fund' || !!a.security?.is_fund
 export const isBank = (a: Analysis): boolean =>
   !isFund(a) && (securityKind(a) === 'bank' || !!a.security?.is_bank)

@@ -239,6 +239,9 @@ export interface BigMoveSession {
   z: number
   move_pct: number | null
   label?: string
+  // set when the move net of beta × SPY was under one daily σ: a market-wide
+  // move that needs no news cause
+  market_net_pct?: number | null
 }
 
 export interface Headline {
@@ -383,8 +386,10 @@ export interface ReportView {
 export type SecurityKind = 'stock' | 'fund' | 'bank' | 'new_listing'
 
 // The facts behind `security_kind` (backend report_view.classify_security).
-// `kind` is new_listing before fund/bank, so a fund listed last week is
-// kind "new_listing" with is_fund true. Every key optional — read defensively.
+// `kind` precedence is fund → bank → new_listing → stock, so a fund listed
+// last week is kind "fund" with new_listing / is_new_listing true (read those
+// flags, not `kind`, for new-listing behavior). Every key optional — read
+// defensively.
 export interface SecurityInfo {
   kind?: SecurityKind
   is_fund?: boolean

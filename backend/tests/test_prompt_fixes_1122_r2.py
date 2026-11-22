@@ -175,7 +175,8 @@ def test_incremental_run_is_news_filings_and_open_conditions(tmp_db, monkeypatch
     s1 = _step1(p)
     assert "   b. filings since 2026-11-21T09:00: any row of the filing list" in s1
     assert ("   c. each open condition listed in <prior_notes>: one search or filing each, "
-            "since 2026-11-21T09:00.") in s1
+            "since 2026-11-21T09:00 — except one that cannot resolve before a future date, "
+            "which is PENDING with that date and needs no search.") in s1
     assert ("Run the legal and regulator searches again only if a or b turns up a new "
             "headline or filing about the company.") in s1
     assert "state attorneys general" not in s1 and "d. the latest earnings release" not in s1
@@ -213,7 +214,7 @@ def test_same_day_insider_forms_share_a_row_and_a_cut_list_says_so(base):
             "(the other 3 are on EDGAR)") in snap
     assert snap.count(" 144 ") == 1
     assert f"- and {13 - rp.FILINGS_SHOWN} older, not listed (on EDGAR, back to 2026-11-01)" in snap
-    assert "check EDGAR only for anything newer than the list, for the older ones it cuts off" in s1
+    assert "check EDGAR as well for the older ones the list cuts off" in s1
 
 
 def test_fund_filing_list_replaces_the_full_text_search_line(base):
@@ -232,7 +233,7 @@ def test_fund_filing_list_replaces_the_full_text_search_line(base):
 def test_length_budget_triggers_and_referenced_notes(base):
     p = _prompt(base)
     out = p[p.index("## Output contract"):p.index("```markdown")]
-    assert "about 1,000 words excluding tables and stay under 1,300" in out
+    assert "about 1,100 words excluding tables and stay under 1,300" in out
     assert '"Searched, nothing found: X; Y; Z"' in out
     assert ("`proposed_triggers` holds only the triggers you set in step 3, not the user's "
             "own rules.") in out

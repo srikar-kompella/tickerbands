@@ -124,7 +124,8 @@ def note_statuses(tickers, now=None) -> dict[int, dict[str, Any]]:
         history = cached[0] if cached and isinstance(cached[0], list) else []
         divs = cached_dividend_events(sym)
         basis, bars = price_basis.build(None, history, divs, now=now)
-        sessions = research_quality.big_move_sessions(bars, divs)
+        sessions = _market_marked(bars, divs, basis,
+                                  research_quality.big_move_sessions(bars, divs))
         as_of = bars[-1]["date"] if bars else None
         for r, st in zip(rows, research_quality.prior_note_status(rows, None, basis, sessions)):
             status, reason = st["status"], st["reason"]
@@ -132,6 +133,29 @@ def note_statuses(tickers, now=None) -> dict[int, dict[str, Any]]:
                 status, reason = None, NO_HISTORY
             out[r["id"]] = {"status": status, "reason": reason, "as_of": as_of}
     return out
+
+
+def _market_marked(bars: list[dict], divs: list[dict], basis: dict,
+                   sessions: list[dict]) -> list[dict]:
+    """≥2σ sessions with the report's market-wide mark: a session whose move
+    net of beta × SPY is under one daily σ needs no news cause, so a note is
+    not judged STALE or INVALID over it. Uses SPY bars as last cached (the
+    screener never fetches); without them the plain 2σ rule applies — the
+    same fallback as the report."""
+    if not sessions or len(bars) < 22:
+        return sessions
+    try:
+        cached = _get_row("history:SPY")
+    except Exception:  # noqa: BLE001 — no SPY in cache: plain rule
+        return sessions
+    spy = vol_bands.completed_bars(cached[0]) if cached and isinstance(cached[0], list) else []
+    if len(spy) < 61:
+        return sessions
+    closes = [b["close"] for b in bars]
+    beta = vol_bands.beta_and_correlation(closes, [b["close"] for b in spy]).get("beta")
+    recent = vol_bands.recent_sessions(
+        bars, vol_bands.adjust_closes_for_dividends(bars, divs), spy, beta, n=25)
+    return news_relevance.big_sessions(None, basis, sessions, recent)
 
 
 def _stance_columns(conn, symbol: str, basis: dict, bars: list[dict], now,
@@ -150,8 +174,9 @@ def _stance_columns(conn, symbol: str, basis: dict, bars: list[dict], now,
         return {**_NO_STANCE, "stance_warnings": orphan}
     if held is not None:
         st["account_owned"] = symbol in held or SHARE_CLASSES.get(symbol) in held
-    big = news_relevance.big_sessions(
-        None, basis, research_quality.big_move_sessions(bars, cached_dividend_events(symbol)))
+    divs = cached_dividend_events(symbol)
+    big = _market_marked(bars, divs, basis, news_relevance.big_sessions(
+        None, basis, research_quality.big_move_sessions(bars, divs)))
     explained = research_quality.explained_sessions(rows, None, basis, big)
     today = market_clock.session_state(now)["today"]
     warnings = (news_relevance.research_flags(None, st, None, basis, sessions=big,
