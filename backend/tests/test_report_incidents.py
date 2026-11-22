@@ -127,7 +127,8 @@ def test_nvda_one_beta_labeled(nvda):
     page = build_report_html(nvda, [], [])
     assert "2.4" not in page.split("Beta vs SPY")[1][:200]   # vendor beta not shown
     p = build_claude_prompt(nvda)
-    assert "Use only the beta shown" in p
+    assert "Quote only the snapshot beta (60 daily returns vs SPY)" in p
+    assert "Beta vs SPY: 4.77 (60 daily returns vs SPY)" in p
 
 
 # ── rows 3–4, 11: news coverage + carried-forward notes ───────────────────────
@@ -151,13 +152,16 @@ def test_nvda_news_check_after_3_sigma_move_is_flagged(nvda):
 def test_nvda_prompt_demands_window_cause_and_regulatory_pass(nvda):
     from api.routes import build_claude_prompt
     p = build_claude_prompt(nvda)
-    assert "NEWS CHECK — window" in p and "→ 2026-11-21" in p
-    assert "You may NOT" in p and "no material news" in p
+    assert "Window: 2026-11-16 → 2026-11-21" in p
+    assert "Same-day headlines are not enough" in p
+    assert '"no material news" is not an available conclusion' in p
+    assert "two independent sources" in p and "cause not found after searching" in p
     for term in ("SEC", "DOJ", "state attorneys general", "export controls",
                  "class actions", "8-K"):
         assert term in p
-    assert "as of 2026-11-13" in p                 # prior notes are dated
-    assert "$130.03" in p and "NOT the price" in p
+    assert "- 2026-11-13T09:00:00 ·" in p          # prior notes are dated…
+    assert "STATUS: STALE" in p and "STATUS: INVALID" in p      # …and judged
+    assert "$130.03" in p and "an extended-hours quote, not the price" in p
     assert "Market cap: $3.03T" in p and "P/E (TTM): 13.5" in p
 
 
@@ -166,7 +170,9 @@ def test_nvda_old_discussions_dated_in_report(nvda):
     from discussions_svc.parser import list_discussions
     page = build_report_html(nvda, list_discussions("NVDA"), [])
     assert "Written 2026-11-13 — figures and facts in this note are as of that date" in page
-    assert "written before (or on the day of)" in page
+    assert "STALE — written before the ≥2σ session of 2026-11-20 closed" in page
+    # the Nov 21 note said "no material news" after that session
+    assert "INVALID — its news check failed" in page and "do not build on this note" in page
 
 
 # ── row 12: analyst feed; earlier: phantom score contribution ─────────────────

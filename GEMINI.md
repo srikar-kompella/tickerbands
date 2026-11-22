@@ -126,12 +126,21 @@ live regardless of which agent wrote it. Path:
 ~/.tickerbands/discussions/{TICKER}/{ISO_DATETIME}.md
 ```
 
-YAML frontmatter contract: required `ticker`, `created_ts`, `summary`, `tags`;
-optional `news_view`/`news_note`; `decision` = what the USER decided (price is
-auto-captured); `stance`/`stance_horizon`/`stance_note` = YOUR reasoned
-multi-month view — an honest "watch" or omission beats a forced verdict, and a
-stance is never a buy/sell instruction. New file per discussion, never append.
-Malformed files land in `discussions/_failed/`.
+YAML frontmatter contract (prompt version 5): `ticker`, `created_ts`,
+`prompt_version: 5`, `summary`, `tags`, `research_status`
+(complete/partial/failed), `news_window`, `news_view`, `news_note`,
+`move_cause`, `sources_count`, `price_used`, `owned`; `decision` = what the USER
+decided (optional, price is auto-captured); `stance`, `stance_horizon`,
+`stance_confidence`, `stance_note` = YOUR reasoned multi-month view, never a
+buy/sell instruction. A hold or watch needs dated `upgrade_if` and
+`downgrade_if` lists, or the app flags it as no stance; every stance carries
+`review_by` (flagged once it passes); unfinished research is `watch` with a
+note starting "research incomplete".
+Optional: `plan_triggers_met`/`plan_triggers_unknown`, `proposed_triggers` (the
+app does not store the user's plan; the session asks for it), `supersedes`.
+Double-quote every text value — a bare colon is invalid YAML. New file per
+discussion, never append. Malformed files land in `discussions/_failed/`.
+Full field table, checks and how to change the prompt: `docs/RESEARCH_PROMPT.md`.
 
 ## House rules for code you write here
 

@@ -16,7 +16,10 @@ from __future__ import annotations
 import datetime as dt
 from typing import Any
 
-# stance → what "working" means for the sign of EXCESS return
+# stance → what "working" means for the sign of EXCESS return. On a name the
+# user does not own, `sell` is the research prompt's "avoid / pass — would not
+# own it at this price and risk" (docs/RESEARCH_PROMPT.md); scoring it as a
+# call to lag SPY is the right reading of that too.
 _EXPECT = {"buy": +1, "sell": -1, "trim": -1, "hold": 0, "watch": 0}
 
 

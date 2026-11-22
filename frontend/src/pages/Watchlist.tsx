@@ -80,7 +80,8 @@ export default function Watchlist({ onAnalyze }: { onAnalyze: (s: string) => voi
         band_half_pct: null, implied_move_pct: null, implied_vs_band: null,
         days_to_earnings: null, yesterday_z: null,
         outside_band_yesterday: false, last_score: null, last_score_ts: null,
-        stance: null, stance_ts: null,
+        stance: null, stance_ts: null, stance_label: null, stance_owned: null,
+        stance_warnings: [],
       }
     })
   }, [base, quotes, enriched])
@@ -285,16 +286,29 @@ export default function Watchlist({ onAnalyze }: { onAnalyze: (s: string) => voi
                             </span>
                           : <span className="text-faint">—</span>}
                       </td>
-                      <td className="py-2.5 text-right" title={r.stance_ts
-                        ? `Claude's stance from ${fmtDate(r.stance_ts)} — open the ticker for reasoning`
-                        : 'No Claude discussion with a stance yet'}>
-                        {r.stance ? (
-                          <Badge tone={r.stance === 'buy' ? 'up'
-                            : r.stance === 'sell' || r.stance === 'trim' ? 'down' : 'accent'}
-                            className="text-[10px]">
-                            {r.stance.toUpperCase()}
-                          </Badge>
-                        ) : <span className="text-faint">—</span>}
+                      <td className="py-2.5 text-right">
+                        <span className="inline-flex items-center justify-end gap-1">
+                          <span title={r.stance_ts
+                            ? `Claude's stance from ${fmtDate(r.stance_ts)}`
+                              + (r.stance_label === 'AVOID' ? ' — sell on a name not owned means avoid' : '')
+                              + ' — open the ticker for reasoning'
+                            : 'No Claude discussion with a stance yet'}>
+                            {r.stance ? (
+                              <Badge tone={r.stance === 'buy' ? 'up'
+                                : r.stance === 'sell' || r.stance === 'trim' ? 'down' : 'accent'}
+                                className="text-[10px]">
+                                {r.stance_label ?? r.stance.toUpperCase()}
+                              </Badge>
+                            ) : <span className="text-faint">—</span>}
+                          </span>
+                          {/* the same warnings as the analysis header's re-check badge */}
+                          {(r.stance_warnings?.length ?? 0) > 0 && (
+                            <Badge tone="warn" className="text-[10px]"
+                              title={r.stance_warnings!.join('\n')}>
+                              ⚠ {r.stance_warnings!.length}
+                            </Badge>
+                          )}
+                        </span>
                       </td>
                       <td className="py-2.5 text-right">
                         <button onClick={() => setEditing(editing === r.symbol ? null : r.symbol)}

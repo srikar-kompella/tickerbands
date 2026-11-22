@@ -23,8 +23,9 @@ import datetime as dt
 from typing import Any
 
 from analysis import market_clock as mc
+from analysis import research_quality
 from analysis.fundamentals_ttm import DIVERGENCE_LIMIT, ttm_sum
-from analysis.news_relevance import MIN_HEADLINES_FOR_SENTIMENT, MIN_TAGGED_SOCIAL
+from analysis.news_relevance import MIN_HEADLINES_FOR_SENTIMENT, MIN_TAGGED_SOCIAL, signed
 
 BAND_Z = 1.28
 ANALYST_MAX_AGE_DAYS = 62     # Finnhub monthly snapshot older than ~2 months = stale
@@ -226,7 +227,7 @@ def build(inp: dict[str, Any]) -> dict[str, Any]:
     mv = inp.get("move") or {}
     sig_txt = "—"
     if mv.get("z") is not None:
-        sig_txt = (f"{mv['z']:+.2f}σ · {'outside' if mv.get('outside_band') else 'inside'}"
+        sig_txt = (f"{signed(mv['z'], 2, 'σ')} · {'outside' if mv.get('outside_band') else 'inside'}"
                    f" the 80% band ({session_label})")
     add(_field("day_move_sigma", "Move in σ", mv.get("z"), sig_txt,
                "TickerBands (realized vol)", b.get("session_date"),
@@ -321,8 +322,10 @@ def build(inp: dict[str, Any]) -> dict[str, Any]:
         if eps and abs(v - eps) / max(abs(v), abs(eps)) > DIVERGENCE_LIMIT:
             eps_warn.append(f"TTM EPS sources disagree >50% ({eps_src} {eps} vs {s} {v})")
         elif eps and abs(v - eps) / max(abs(v), abs(eps)) > 0.05:
-            eps_warn.append(f"{s} reports {round(v, 2)}"
-                            + ("" if "filed statements" in s else " (may predate the latest quarter)"))
+            eps_warn.append(f"filed statements give TTM EPS of {round(v, 2)} "
+                            f"({stmt_basis.replace('TTM = ', '', 1)})"
+                            if s.startswith("filed statements") else
+                            f"{s} reports {round(v, 2)} (may predate the latest quarter)")
     eps_status = "withheld" if any(">50%" in w for w in eps_warn) else "ok"
     raw["eps"] = eps if eps_status == "ok" else None
     add(_field("eps_ttm", "EPS (TTM)", eps, money(eps), eps_src,
@@ -595,11 +598,13 @@ def build(inp: dict[str, Any]) -> dict[str, Any]:
                warnings=flags.get("news") or []))
     cs = inp.get("claude_stance")
     add(_field("claude_stance", "Research stance", cs and cs.get("stance"),
-               (f"{(cs.get('stance') or '').upper()} · {cs.get('stance_horizon') or ''} — "
+               (f"{research_quality.stance_label(cs)} · {cs.get('stance_horizon') or ''} — "
                 f"{cs.get('stance_note') or ''}" if cs else "—"),
                "stored research discussion", cs and cs.get("created_ts"),
                "reasoned judgment, dated", "written by the research session; not computed",
-               warnings=flags.get("stance") or []))
+               warnings=flags.get("stance") or [],
+               # what would change it (prompt v5) — shown under the stance
+               **research_quality.stance_conditions(cs)))
 
     # social (sample size = tagged messages)
     so = inp.get("social") or {}

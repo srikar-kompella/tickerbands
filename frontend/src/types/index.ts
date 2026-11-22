@@ -23,7 +23,16 @@ export interface Discussion {
   decision_price: number | null
   created_ts: string
   file_mtime: string
+  // Whether the note can still be relied on (backend research_quality.
+  // prior_note_status, judged from the stored notes and the cached daily
+  // bars). null = not judged: no price history cached for the ticker, or the
+  // note is older than the 50 the app judges. Absent on an older backend.
+  status?: NoteStatus | null
+  status_reason?: string | null
+  status_as_of?: string | null      // last daily bar it was judged against
 }
+
+export type NoteStatus = 'OK' | 'STALE' | 'INVALID' | 'SUPERSEDED'
 
 export interface ScreenerRow {
   symbol: string
@@ -39,6 +48,12 @@ export interface ScreenerRow {
   last_score_ts: string | null
   stance: string | null
   stance_ts: string | null
+  // how the stance is shown: AVOID for a `sell` on a name not owned
+  stance_label?: string | null
+  // 'yes' | 'no' from the note, else from the cached account; null = unknown
+  stance_owned?: 'yes' | 'no' | null
+  // the same warnings the analysis header's re-check badge lists
+  stance_warnings?: string[]
   note: string
   tags: string[]
 }

@@ -142,6 +142,13 @@ export function NewsPanel({ a, g }: { a: Analysis; g: G }) {
   const bull = n?.available ? Math.round((n.bullish_pct ?? 0) * 100) : null
   const bear = n?.available ? Math.round((n.bearish_pct ?? 0) * 100) : null
   const lexicon = n?.method === 'headline-lexicon'
+  // What is wrong with the research news check (written before a ≥2σ session,
+  // cause not stated, research incomplete, from an older note…). Without
+  // these, "Claude: neutral — no material news" read as a clean result the
+  // day after a −14% session. Same list the report prints beside the row.
+  const newsWarns: string[] =
+    a.report_view?.fields?.claude_news?.warnings ?? a.research_flags?.news ?? []
+  const flagged = newsWarns.length > 0
   return (
     <SectionShell title="News" envelope={a.sections.news_sentiment} glossary={g.news_sentiment}>
       {n?.available ? (
@@ -172,15 +179,30 @@ export function NewsPanel({ a, g }: { a: Analysis; g: G }) {
       )}
 
       {/* Claude's live news check (from discussion frontmatter, ask #3) */}
-      {cn2 && (
-        <div className="mt-2.5 rounded-lg border border-accent/25 bg-accent/5 px-2.5 py-2">
-          <div className="flex items-center gap-2 text-xs">
-            <Badge tone={cn2.news_view === 'bullish' ? 'up' : cn2.news_view === 'bearish' ? 'down' : 'neutral'}>
-              Claude: {cn2.news_view}
-            </Badge>
-            <span className="text-faint">{fmtDate(cn2.created_ts)}</span>
+      {(cn2 || flagged) && (
+        <div className={cn('mt-2.5 rounded-lg border px-2.5 py-2',
+          flagged ? 'border-warn/30 bg-warn/5' : 'border-accent/25 bg-accent/5')}>
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            {cn2 ? (
+              <Badge
+                tone={flagged ? 'warn'
+                  : cn2.news_view === 'bullish' ? 'up' : cn2.news_view === 'bearish' ? 'down' : 'neutral'}
+                title={flagged
+                  ? `Do not read this news check as a result:\n${newsWarns.join('\n')}`
+                  : 'The research session\'s own news check — written by the session, not computed'}>
+                {flagged && '⚠ '}Claude: {cn2.news_view}
+              </Badge>
+            ) : (
+              <Badge tone="warn" title={newsWarns.join('\n')}>⚠ Claude: no news check shown</Badge>
+            )}
+            {cn2 && <span className="text-faint">{fmtDate(cn2.created_ts)}</span>}
           </div>
-          {cn2.news_note && <p className="mt-1 text-xs text-muted">{cn2.news_note}</p>}
+          {cn2?.news_note && <p className="mt-1 text-xs text-muted">{cn2.news_note}</p>}
+          {newsWarns.map((w, i) => (
+            <p key={i} className="mt-1.5 rounded-lg border border-yellow-500/30 bg-yellow-500/5 px-2.5 py-1.5 text-[11px] text-yellow-500">
+              ⚠ {w}
+            </p>
+          ))}
         </div>
       )}
 

@@ -11,6 +11,43 @@ import { cn } from '@/lib/utils'
 import { Badge, Card, EmptyState } from '@/components/ui'
 import type { Discussion } from '@/types'
 
+// Can the note still be relied on? Same judgment the research prompt and the
+// report give each note (backend research_quality.prior_note_status).
+const STATUS_TAIL: Record<string, string> = {
+  STALE: 'it cannot reflect that move',
+  INVALID: 'do not build on this note',
+  SUPERSEDED: 'do not build on this note',
+}
+
+function statusLine(d: Discussion): string | null {
+  if (!d.status || d.status === 'OK') return null
+  return `${d.status} — ${d.status_reason ?? 'no reason recorded'}; ${STATUS_TAIL[d.status]}`
+}
+
+function StatusChip({ d }: { d: Discussion }) {
+  const asOf = d.status_as_of ? `Judged against the daily bars through ${d.status_as_of}.` : ''
+  if (!d.status) {
+    // not judged (no cached price history) — say so rather than imply OK
+    return d.status_reason
+      ? <Badge className="text-[10px]" title={d.status_reason}>unchecked</Badge>
+      : null
+  }
+  if (d.status === 'OK') {
+    return (
+      <Badge className="text-[10px]"
+        title={`No check failed: the research was complete and no ≥2σ session was left unexplained or has closed since. ${asOf}`}>
+        OK
+      </Badge>
+    )
+  }
+  return (
+    <Badge tone={d.status === 'STALE' ? 'warn' : 'down'} className="text-[10px]"
+      title={`${statusLine(d)}. ${asOf}`}>
+      ⚠ {d.status}
+    </Badge>
+  )
+}
+
 function DiscussionCard({ d, currentHash }: { d: Discussion; currentHash?: string }) {
   const [open, setOpen] = useState(false)
   const stale = !!currentHash && !!d.context_hash && d.context_hash !== currentHash
@@ -27,6 +64,7 @@ function DiscussionCard({ d, currentHash }: { d: Discussion; currentHash?: strin
               <div className="flex flex-wrap items-center gap-2">
                 <Badge tone="accent">{d.ticker}</Badge>
                 <span className="text-xs text-faint tnum">{fmtDateTime(d.created_ts)}</span>
+                <StatusChip d={d} />
                 {d.tags.map((t) => <Badge key={t} className="text-[10px]">{t}</Badge>)}
                 {stale && (
                   <Badge tone="warn" className="text-[10px]"
@@ -46,6 +84,12 @@ function DiscussionCard({ d, currentHash }: { d: Discussion; currentHash?: strin
                 open ? 'whitespace-normal' : 'truncate')}>
                 {d.summary || 'Untitled discussion'}
               </p>
+              {statusLine(d) && (
+                <p className={cn('mt-1 text-[11px] leading-snug',
+                  d.status === 'STALE' ? 'text-warn' : 'text-down')}>
+                  ⚠ {statusLine(d)}
+                </p>
+              )}
             </div>
             <ChevronDown className={cn('mt-1 h-4 w-4 shrink-0 text-muted transition-transform', open && 'rotate-180')} />
           </div>

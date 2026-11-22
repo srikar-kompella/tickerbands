@@ -9,9 +9,18 @@ Q5c — the partial-write race, handled: on_created fires when a file APPEARS,
 not when the writer finishes; macOS FSEvents has no on_closed. So every
 created/modified event goes through a per-path DEBOUNCE (a fresh event resets
 the timer) and, when the timer fires, a STABILITY gate (size+mtime unchanged
-across a short window) before parsing. Parse failures retry ×3 (file may still
-be mid-write), then the file moves to discussions/_failed/ and an error event
-tells the UI, instead of silently ingesting a truncated discussion.
+across a short window) before parsing. Parse failures — of ANY exception
+type — retry ×3 (file may still be mid-write), then the file moves to
+discussions/_failed/ and an error event tells the UI, instead of silently
+ingesting a truncated discussion or leaving a file that is neither ingested
+nor quarantined. A database error while storing a good file is reported the
+same way, but the file stays where it is: the next write or the startup scan
+picks it up.
+
+The startup scan (catch_up_scan) applies the same rule to files written while
+the backend was down: a file that cannot be parsed is moved to _failed/ and
+named on the console. It used to be skipped without a word, so a rejected
+note sat in its ticker folder looking like any other and never showed up.
 """
 from __future__ import annotations
 
@@ -24,13 +33,16 @@ from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
 from config import DISCOVERIES_DIR, DISCUSSIONS_DIR, DISCUSSIONS_FAILED_DIR
-from discussions_svc.parser import (ParseError, delete_discussion,
-                                    parse_discussion_file, upsert_discussion)
+from discussions_svc.parser import (delete_discussion, parse_discussion_file,
+                                    upsert_discussion)
 from discussions_svc.stream import broadcaster
 
 DEBOUNCE_SECONDS = 1.0
 STABILITY_PROBE_SECONDS = 0.4
 PARSE_RETRIES = 3
+# the startup scan leaves a file touched this recently to the live watcher
+# (already running): it may still be mid-write
+RECENT_WRITE_SECONDS = 5.0
 
 
 def _is_discussion_md(path: str) -> bool:
@@ -59,30 +71,50 @@ def _wait_until_stable(path: str, timeout: float = 10.0) -> bool:
     return False
 
 
+def _quarantine(path: str) -> str | None:
+    """Move a file that cannot be parsed to discussions/_failed/. Returns
+    where it went, or None when the move itself failed (the file stays)."""
+    dest = os.path.join(DISCUSSIONS_FAILED_DIR, os.path.basename(path))
+    try:
+        os.makedirs(DISCUSSIONS_FAILED_DIR, exist_ok=True)
+        shutil.move(path, dest)
+    except OSError:
+        return None
+    return dest
+
+
 def _ingest(path: str) -> None:
     """Stability gate → parse (with retries) → upsert → SSE. Runs on a
     debounce-timer thread; all failure paths emit an event, never raise."""
     if not _wait_until_stable(path):
         return  # deleted mid-write, or writer never settled — a later event will retry
-    last_err = None
+    row, last_err = None, None
     for attempt in range(PARSE_RETRIES):
         try:
             row = parse_discussion_file(path)
+            break
+        except Exception as e:  # noqa: BLE001 — ParseError or anything else:
+            last_err = e        # the file is unreadable either way
+            time.sleep(0.5 * (attempt + 1))  # writer may still be flushing
+    if row is None:
+        # Genuinely malformed: quarantine + tell the UI (no silent data loss).
+        _quarantine(path)
+        broadcaster.publish_threadsafe(
+            {"type": "error", "file": os.path.basename(path), "detail": str(last_err)})
+        return
+    for attempt in range(PARSE_RETRIES):
+        try:
             row_id = upsert_discussion(row)
             broadcaster.publish_threadsafe(
                 {"type": "created", "ticker": row["ticker"], "id": row_id})
             return
-        except ParseError as e:
+        except Exception as e:  # noqa: BLE001 — e.g. the database is locked
             last_err = e
-            time.sleep(0.5 * (attempt + 1))  # writer may still be flushing
-    # Genuinely malformed: quarantine + tell the UI (no silent data loss).
-    try:
-        os.makedirs(DISCUSSIONS_FAILED_DIR, exist_ok=True)
-        shutil.move(path, os.path.join(DISCUSSIONS_FAILED_DIR, os.path.basename(path)))
-    except OSError:
-        pass
+            time.sleep(0.5 * (attempt + 1))
+    # the file is fine, the store is not: leave the file in place and say so
     broadcaster.publish_threadsafe(
-        {"type": "error", "file": os.path.basename(path), "detail": str(last_err)})
+        {"type": "error", "file": os.path.basename(path),
+         "detail": f"parsed but not stored: {last_err}"[:200]})
 
 
 class DiscussionHandler(FileSystemEventHandler):
@@ -165,19 +197,39 @@ class DiscoveryHandler(FileSystemEventHandler):
 def catch_up_scan() -> int:
     """Ingest files written while the backend was down (startup reconciliation).
     Files already in the DB with an unchanged mtime are skipped by upsert
-    semantics (idempotent). Returns number of files examined."""
+    semantics (idempotent). Returns number of files examined.
+
+    A file that cannot be parsed is quarantined to _failed/ like the live
+    watcher does, and named on the console with the reason — never skipped
+    silently. Two cases stay in place: a file touched in the last
+    RECENT_WRITE_SECONDS (it may be mid-write; the live watcher has it), and
+    a file that parsed but could not be stored (the store is at fault)."""
     count = 0
     for root, _dirs, files in os.walk(DISCUSSIONS_DIR):
         if os.sep + "_failed" in root:
             continue
         for fname in files:
             path = os.path.join(root, fname)
-            if _is_discussion_md(path):
-                count += 1
+            if not _is_discussion_md(path):
+                continue
+            count += 1
+            try:
+                row = parse_discussion_file(path)
+            except Exception as e:  # noqa: BLE001 — one bad file must not stop the scan
                 try:
-                    upsert_discussion(parse_discussion_file(path))
-                except ParseError:
-                    pass  # leave in place; live edits will re-trigger ingestion
+                    fresh = time.time() - os.path.getmtime(path) < RECENT_WRITE_SECONDS
+                except OSError:
+                    continue                      # gone since the walk
+                if fresh:
+                    continue
+                dest = _quarantine(path)
+                print(f"[tickerbands] discussion rejected at startup: {path} — {e}"
+                      + (f" (moved to {dest})" if dest else " (could not be moved to _failed/)"))
+                continue
+            try:
+                upsert_discussion(row)
+            except Exception as e:  # noqa: BLE001 — e.g. the database is locked
+                print(f"[tickerbands] discussion parsed but not stored: {path} — {e}")
     try:
         import frontmatter
         from analysis.discovery import ingest_sweep_frontmatter

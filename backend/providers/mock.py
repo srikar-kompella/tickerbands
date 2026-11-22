@@ -329,7 +329,7 @@ def fetch_account_positions() -> dict[str, Any]:
             "day_pl_pct": q["net_change_pct"],
         })
     positions.sort(key=lambda x: -x["market_value"])
-    cash = 4060.0
+    cash = 10_000.0
     total = sum(p["market_value"] for p in positions) + cash
     day_pl = sum(p["day_pl"] for p in positions)
     for p in positions:

@@ -167,13 +167,20 @@ User says: "I use Alpaca / Tradier / IBKR / Polygon / Tiingo / …". Steps:
 6. `TICKERBANDS_MOCK=1` anytime for a deterministic offline demo.
 
 ## Research discussions (the LLM loop — agent-agnostic)
-The app's "Ask Claude" button copies a prompt; ANY agent (or human) writes
+The app's "Ask Claude" button copies a prompt (v5); ANY agent (or human) writes
 `~/.tickerbands/discussions/{TICKER}/{ISO_DATETIME}.md` with the frontmatter
-the prompt specifies (`ticker, created_ts, summary, tags`, optional
-`news_view/news_note`, `decision` = what the USER decided (price
-auto-captured), `stance/stance_horizon/stance_note` = YOUR reasoned
-multi-month call — honest "watch"/omission beats a forced verdict). The
-watcher ingests it live; new file per discussion, never append.
+the prompt specifies: `ticker, created_ts, prompt_version: 5, summary, tags,
+research_status` (complete/partial/failed), `news_window/news_view/news_note/
+move_cause/sources_count/price_used/owned`, `decision` = what the USER decided
+(price auto-captured, optional), `stance/stance_horizon/stance_confidence/
+stance_note` = YOUR reasoned multi-month call. hold/watch need dated
+`upgrade_if` + `downgrade_if` lists or the app flags "no conditions"; every
+stance carries `review_by` (flagged once it passes); unfinished research is
+`watch` + "research incomplete", never a forced verdict. Optional: `plan_triggers_met/unknown`, `proposed_triggers`
+(the app does not store the user's plan — the session asks), `supersedes`.
+Double-quote every text value (a bare colon is invalid YAML). The watcher
+ingests it live; new file per discussion, never append. Fields, checks and how
+to change the prompt: `docs/RESEARCH_PROMPT.md`.
 
 ## House rules for code you write here
 Providers: pure fetch + shapes above, no analysis logic. Analysis: pure

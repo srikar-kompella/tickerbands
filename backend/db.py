@@ -136,6 +136,9 @@ MIGRATIONS = [
     "ALTER TABLE claude_discussions ADD COLUMN stance TEXT",
     "ALTER TABLE claude_discussions ADD COLUMN stance_horizon TEXT",
     "ALTER TABLE claude_discussions ADD COLUMN stance_note TEXT",
+    # prompt v5: research-quality fields (JSON) — status, window, conditions,
+    # plan-trigger results, superseded notes
+    "ALTER TABLE claude_discussions ADD COLUMN research_meta TEXT",
 ]
 
 

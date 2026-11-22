@@ -252,8 +252,13 @@ def test_stance_flow_end_to_end(client, tmp_db, tmp_discussions):
 def test_prompt_v5_stance_contract(client):
     p = client.get("/api/analysis/AAPL/prompt").json()["prompt"]
     assert "stance:" in p and "stance_horizon:" in p and "stance_note:" in p
-    assert "honest 'no stance' beats a forced one" in p
-    assert "NOT a short-term direction call" in p
+    assert "not a short-term direction call" in p
+    # v5: no "omit it" escape — an unclear picture is a watch with conditions,
+    # unfinished research is a watch labeled as such
+    assert "or omit" not in p
+    assert 'stance_note starts with "research incomplete"' in p
+    assert "at least one upgrade_if and one downgrade_if" in p
+    assert "upgrade_if:" in p and "downgrade_if:" in p and "review_by:" in p
 
 
 # ─── premium lens: breach math + composition + endpoints ───────────────────────

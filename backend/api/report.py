@@ -15,6 +15,8 @@ import datetime as dt
 import html
 from typing import Any
 
+from analysis import research_quality
+
 try:
     import markdown as _md
 
@@ -251,19 +253,25 @@ def build_report_html(a: dict, discussions: list[dict],
 
     disc_html = ""
     if discussions:
-        mv = a.get("move") or {}
-        big = mv.get("z") is not None and abs(mv["z"]) >= 2
-        sess = basis.get("session_date")
+        # OK / STALE / INVALID / SUPERSEDED per note — the same judgment the research prompt
+        # hands the next session (analysis/research_quality.py)
+        statuses = research_quality.prior_note_status(
+            discussions, a.get("move"), basis, a.get("big_move_sessions"))
         items_html = ""
-        for d in discussions:
+        for d, st in zip(discussions, statuses):
             tags = " ".join(f"<span class='tag'>{esc(t)}</span>" for t in (d.get("tags") or []))
             when = (d.get('created_ts') or '')[:10]
             note = (f"<div class='dated'>Written {esc(when)} — figures and facts in this note "
                     "are as of that date, not the report date.</div>")
-            if big and sess and when and when <= sess and basis.get("price_kind") != "live":
-                note += (f"<span class='chip'>⚠ written before (or on the day of) the "
-                         f"{mv['move_pct']:+.2f}% ({mv['z']:+.1f}σ) {esc(basis.get('move_word'))} "
-                         "session — may not reflect it</span>")
+            if st["status"] == research_quality.INVALID:
+                note += (f"<span class='chip bad'>⚠ INVALID — {esc(st['reason'])}; "
+                         "do not build on this note</span>")
+            elif st["status"] == research_quality.SUPERSEDED:
+                note += (f"<span class='chip bad'>⚠ SUPERSEDED — {esc(st['reason'])}; "
+                         "do not build on this note</span>")
+            elif st["status"] == research_quality.STALE:
+                note += (f"<span class='chip'>⚠ STALE — {esc(st['reason'])}; it cannot "
+                         "reflect that move</span>")
             items_html += f"""
             <div class="discussion">
               <h3>{esc(d.get('summary') or 'Discussion')} <span class="mut">· {esc((d.get('created_ts') or '')[:16].replace('T', ' '))}</span> {tags}</h3>
@@ -290,8 +298,25 @@ def build_report_html(a: dict, discussions: list[dict],
     stance_f = F.get("claude_stance") or {}
     stance_html = ""
     if stance_f.get("value"):
+        # what would change the stance (prompt v5): conditions, review date,
+        # confidence — written by the research session, shown as written
+        cond = []
+        if stance_f.get("upgrade_if"):
+            cond.append("Upgrade if: " + "; ".join(stance_f["upgrade_if"]))
+        if stance_f.get("downgrade_if"):
+            cond.append("Downgrade if: " + "; ".join(stance_f["downgrade_if"]))
+        meta = [f"review by {stance_f['review_by']}" if stance_f.get("review_by") else "",
+                f"confidence {stance_f['confidence']}" if stance_f.get("confidence") else ""]
+        if any(meta):
+            line = " · ".join(m for m in meta if m)
+            cond.append(line[0].upper() + line[1:])
+        cond_html = "".join(f"<div class='cond'>{esc(c)}</div>" for c in cond)
         stance_html = (f"<div><b>Research stance ({esc(str(stance_f.get('as_of') or '')[:10])})</b>"
-                       f"{esc(stance_f['display'])}{_chips(stance_f)}</div>")
+                       f"{esc(stance_f['display'])}{_chips(stance_f)}{cond_html}</div>")
+    elif stance_f.get("warnings"):
+        # no stance to show, but something about it needs saying (for example
+        # the newest note's stance could not be read)
+        stance_html = f"<div><b>Research stance</b>none shown{_chips(stance_f)}</div>"
     ah = F.get("after_hours") or {}
     ah_html = (f"<div class='mut'>{esc(ah['display'])}</div>" if ah.get("value") else "")
     band_f, sig_f, earn_f = F.get("band_next") or {}, F.get("day_move_sigma") or {}, F.get("earnings_next") or {}
@@ -321,6 +346,8 @@ def build_report_html(a: dict, discussions: list[dict],
   .alert {{ border:1px solid #f59e0b; background:#fffbeb; border-radius:8px; padding:8px 12px; margin:10px 0; }}
   .chip {{ display:inline-block; font-size:11px; color:#92400e; background:#fef3c7;
            border:1px solid #fcd34d; border-radius:6px; padding:1px 6px; margin:2px 4px 2px 0; }}
+  .chip.bad {{ color:#991b1b; background:#fee2e2; border-color:#fca5a5; }}
+  .cond {{ font-size:11.5px; color:var(--mut); }}
   .chiprow td {{ border-bottom:1px solid var(--line); padding-top:0; }}
   .dated {{ font-size:11.5px; color:var(--mut); font-style:italic; }}
   .grid {{ display:grid; grid-template-columns:1fr 1fr; gap:14px; }}

@@ -56,7 +56,7 @@ def test_portfolio_endpoint_shape_and_snapshot(client, tmp_db):
     r = client.get("/api/portfolio")
     assert r.status_code == 200
     p = r.json()
-    assert p["total_value"] > 0 and p["cash"] == 4060.0
+    assert p["total_value"] > 0 and p["cash"] == 10_000.0
     assert p["positions"][0]["market_value"] >= p["positions"][-1]["market_value"]
     for pos in p["positions"]:
         assert {"symbol", "qty", "market_value", "gain", "day_pl", "weight_pct"} <= set(pos)
@@ -138,9 +138,10 @@ def test_discussions_ordered_by_activity_not_created(client, tmp_db):
 
 def test_prompt_v3_new_file_mandate_and_news_check(client):
     p = client.get("/api/analysis/AAPL/prompt").json()["prompt"]
-    assert "ALWAYS create a NEW file per discussion" in p
+    assert "Create a new file for every discussion" in p
     assert "news_view:" in p and "news_note:" in p
     # 2026-11-21: a same-day-only check missed an SEC probe — the prompt now
     # demands the full window plus a regulatory/legal pass
-    assert "NEWS CHECK — window" in p and "Same-day headlines are NOT enough" in p
+    assert "Research first" in p and "Window: " in p
+    assert "Same-day headlines are not enough" in p
     assert "SEC" in p and "8-K" in p and "class actions" in p

@@ -155,6 +155,15 @@ export interface ClaudeNews {
   news_view: 'bullish' | 'neutral' | 'bearish'
   news_note: string | null
   created_ts: string
+  move_cause?: 'found' | 'not_found' | 'na'
+}
+
+// Warnings on the stored research news check and stance (backend
+// news_relevance.research_flags + research_quality.stance_flags). The same
+// lists are on report_view.fields.claude_news / claude_stance `.warnings`.
+export interface ResearchFlags {
+  news: string[]
+  stance: string[]
 }
 
 export interface VLMetric {
@@ -170,6 +179,31 @@ export interface TTMMetric {
   warning: string | null
 }
 
+// Research prompt v5 frontmatter (docs/RESEARCH_PROMPT.md). Every key is
+// optional — notes written before v5 carry none of them.
+export interface ResearchMeta {
+  prompt_version?: number
+  research_status?: 'complete' | 'partial' | 'failed'
+  news_window?: string
+  move_cause?: 'found' | 'not_found' | 'na'
+  sources_count?: number
+  price_used?: number
+  owned?: 'yes' | 'no'
+  stance_confidence?: 'low' | 'medium' | 'high'
+  review_by?: string
+  upgrade_if?: string[]
+  downgrade_if?: string[]
+  plan_triggers_met?: string[]
+  plan_triggers_unknown?: string[]
+  supersedes?: string[]
+  proposed_triggers?: string[]
+  parse_note?: string
+  // 'extended-hours' when price_used was written as an after-hours/pre-market price
+  price_used_note?: string
+  // key → the text the parser could not read (stance, news_view, review_by, price_used, an enum)
+  unreadable?: Record<string, string>
+}
+
 export interface ClaudeStance {
   id: number
   stance: 'buy' | 'sell' | 'hold' | 'trim' | 'watch'
@@ -179,6 +213,25 @@ export interface ClaudeStance {
   created_ts: string
   drift_pct?: number | null
   drift_material?: boolean
+  research_meta?: ResearchMeta
+  // a later note lists this one in `supersedes` (its created_ts)
+  superseded_by?: string
+  // a later note's stance could not be read; this older stance is still shown
+  newer_unreadable?: { created_ts: string; value: string }
+  // a later prompt-v5 note carries no stance at all (its created_ts)
+  newer_no_stance?: string
+  // whether the brokerage account holds the name (absent = no account data)
+  account_owned?: boolean
+  // how the stance is shown: AVOID for a `sell` on a name not owned
+  label?: string
+}
+
+// A completed session that moved ≥ 2σ; stored notes are judged against all of them.
+export interface BigMoveSession {
+  session_date: string
+  z: number
+  move_pct: number | null
+  label?: string
 }
 
 export interface Headline {
@@ -297,6 +350,14 @@ export interface ReportField {
   source?: string
   warnings: string[]
   tag?: string | null
+  // claude_stance only: what would change the stance (research prompt v5)
+  upgrade_if?: string[]
+  downgrade_if?: string[]
+  review_by?: string | null
+  confidence?: 'low' | 'medium' | 'high' | null
+  research_status?: 'complete' | 'partial' | 'failed' | null
+  plan_triggers_met?: string[]
+  plan_triggers_unknown?: string[]
 }
 
 export interface ReportView {
@@ -341,6 +402,8 @@ export interface Analysis {
   } | null
   ex_div: { today: boolean; amount: number | null; pending: boolean } | null
   claude_stance: ClaudeStance | null
+  research_flags?: ResearchFlags
+  big_move_sessions?: BigMoveSession[]
   headlines: Headline[] | null
   fundamentals: Fundamentals | null
   recommendations: Recommendations | null

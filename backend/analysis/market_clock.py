@@ -84,6 +84,24 @@ def to_ny(ts: dt.datetime) -> dt.datetime:
     return ts.astimezone(NY) if NY else ts
 
 
+# Zone of NAIVE timestamps the app itself wrote (a discussion's `created_ts`
+# comes from datetime.now() on the user's machine). None = the machine's own
+# zone; tests pin it so they pass on any machine.
+LOCAL_TZ: dt.tzinfo | None = None
+
+
+def local_to_ny(ts: dt.datetime) -> dt.datetime:
+    """Machine-local wall time → New York. A naive `ts` is read as local
+    machine time (LOCAL_TZ, else the system zone) — NOT as New York time: a
+    note written at 13:30 in Los Angeles was written after the 16:00 ET close.
+    An aware `ts` is simply converted."""
+    if NY is None:
+        return ts
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=LOCAL_TZ) if LOCAL_TZ is not None else ts.astimezone()
+    return ts.astimezone(NY)
+
+
 def session_state(now: dt.datetime | None = None) -> dict:
     """→ {state, today, last_session, last_close_ts, calendar_known}
 

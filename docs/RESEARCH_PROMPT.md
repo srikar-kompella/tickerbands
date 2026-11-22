@@ -1,0 +1,252 @@
+# Research prompt (version 5)
+
+The text the "Ask Claude" button copies into an agent session, the file contract that session writes, and the app-side checks that decide whether the resulting note can still be relied on.
+
+**Code:** `backend/api/research_prompt.py` (builder), `backend/discussions_svc/parser.py` (frontmatter parsing), `backend/analysis/research_quality.py` (note status, stance flags, ≥2σ sessions from the bars), `backend/analysis/news_relevance.py` (`research_flags`, `is_v5`, the session helpers). Wiring: `analysis/composer.py`, `analysis/screener.py` (Watchlist column, `note_statuses` for `GET /api/discussions`), `analysis/report_view.py`, `api/report.py`, `api/routes.py`, `discussions_svc/watcher.py`, `frontend/src/components/analysis/SnapshotHeader.tsx`, `frontend/src/components/analysis/Panels.tsx` (`NewsPanel`), `frontend/src/components/discussions/DiscussionTimeline.tsx`, `frontend/src/pages/Watchlist.tsx`. Tests: `backend/tests/test_research_prompt_v5.py`, `backend/tests/test_research_quality.py`, parser cases in `backend/tests/test_live_audit_fixes.py`. Field-level audit of the report itself: `docs/REPORT_FIELDS.md`.
+
+## 1. What it is and how to get it
+
+One static prompt per analysis snapshot. A session (any agent or human) researches the ticker, talks with the user, and writes one markdown file, `~/.tickerbands/discussions/{TICKER}/{ISO_DATETIME}.md`. The watcher ingests it and the parser turns its frontmatter into a `claude_discussions` row. A new file per discussion; earlier files are never edited.
+
+- `GET /api/analysis/{symbol}/prompt` returns `{"prompt", "context_hash"}`. It runs `composer.analyze()` and calls `build_claude_prompt()`, so the `context_hash` matches the exact snapshot in the text.
+- The **Ask Claude** button in the analysis header opens `AskClaudeModal`, which shows the same text to copy. The prompt can be regenerated at any time.
+- Continuity between sessions comes from `<prior_notes>` inside the prompt, not from chat history.
+
+## 2. Why v5 exists
+
+Each item is a failure the earlier prompt let through. v5 prevents it in the prompt and the app now checks for it afterwards.
+
+| Failure | What v5 does |
+|---|---|
+| A "no material news" note was written the day after a session that moved 2σ or more, because only same-day headlines were checked | Step 1 sets a news window (since the last report or 5 trading days, whichever is longer) with minimum searches, and names every 2σ+ session inside that window whose cause no sound earlier note states; for those "no material news" is not an allowed conclusion |
+| One ordinary session later the prompt said "the last session moved less than 2σ — an ordinary day that needs no story" and did not name the 2σ+ session still inside the window; a v5 note saying "no material company news" with `move_cause: na` passed as OK | The prompt and the app look at every 2σ+ session inside the news window, not only the last session. For a v5 note the structured field decides: with such a session in its window, anything other than `move_cause: found` makes the note INVALID |
+| A hold stance was built on that note | A note that leaves a 2σ+ session in its window without a cause is marked INVALID; a stance from a failed check is flagged. Both verdicts are held against every 2σ+ session in the daily bars, so they do not clear after one ordinary day |
+| An old note was restated as current | `<prior_notes>` carries STATUS per note; facts from OK or STALE notes must be re-checked or dated |
+| A beta from another site was quoted | Step 2: only the snapshot beta (60 daily returns vs SPY) may be quoted |
+| An after-hours quote was treated as the price | Caveat C1 names the one report price; C2 says the extended-hours quote is not the price; `price_used` is checked against the session close (0.5% when the note was written with the market closed) |
+| Watch/hold stances carried no conditions | Dated `upgrade_if`/`downgrade_if` conditions and a `review_by` date are required; without them the app flags the stance as no stance |
+| The v4 template's own example was invalid YAML when left unquoted (a colon inside a value) | Every text value is double-quoted in the template and the examples; the parser has a line-by-line fallback |
+| "Run steps 1 and 2 while you wait" cannot be done in a turn-based chat, and nothing tied the file to the user's answer | Ask, do steps 1 and 2 in the same turn, stop and wait; the file is written only after the user answers (or says they have no plan, or says to go ahead) |
+| Every non-buy on a name the user does not own became `watch` | Not-owned names get a negative stance: `sell` = avoid. The second example is a not-owned avoid |
+| A session with no search tool, or one that guessed, could still write a confident note | `research_status` is defined in the prompt; no search tool means say so and write `failed`; the evidence table carries a verbatim quote and only links opened in the session; a move under 2σ gets no invented story |
+| Values the parser could not read were dropped without a word (`stance: add`, `review_by: "Mar 9, 2031"`, `price_used: "$130.03 (after hours)"`, `news_view: negative`, `move_cause: "Not Found"`, a leftover `<…>`) | Common spellings are read; anything else is stored under `research_meta.unreadable` and flagged beside the stance or the news check; placeholders are removed from scalars and list items. In a v5 note an unreadable `research_status` or `move_cause` makes the note INVALID |
+| A newer note with no usable stance or news view left the older one on show as if it were current | The older stance or news check is still shown, with a flag naming the newer note |
+| A claude.ai reply saved whole ("Here is the complete file to save:" plus the fenced file) was ingested with that chat line as its summary | Up to 5 lines of chat in front of the fence, the fence and anything after its closing line are stripped; a body that still holds a `---` / `ticker:` block is rejected |
+| A reply that put the frontmatter in one code block and the analysis in a second, saved whole, left the closing fence, the chat line and the second fence on top of the body | A body whose first line is a bare code fence is rejected |
+| The app's News panel showed "Claude: neutral — No material … news today" with no warning, and the discussion timeline showed a failed note exactly like a sound one — the flags existed in the payload and nothing in the app read them | The News panel prints every news-check flag and turns the badge to the warning tone; `GET /api/discussions` carries a status per note and the timeline shows it as a chip |
+| A note that dropped its `prompt_version` line was judged by the lenient wording rule for older notes | Any note carrying `move_cause`, `research_status` or `news_window` is a v5 note, with or without that line |
+| A follow-up written from a prompt whose step 1 listed nothing (an earlier sound note had stated the cause) said `move_cause: na` as told, listed that earlier note in `supersedes`, and became INVALID — the superseded note no longer counted as the explanation | A superseded note that was otherwise sound keeps the sessions it explained |
+| With the last report months back, step 1a asked for company news "for each day of the window" — over a hundred daily searches — and step 7 asked the session to confirm it | Day by day for the last 5 sessions, week by week before that; every 2σ+ session still named on its own date; step 7 checks the same thing |
+| A session with no search tool had only two confident examples to copy | A third example: `research_status: "failed"`, stance `watch`, `stance_note` starting "research incomplete" |
+| A file the parser rejects, found by the startup scan, was skipped without a word and stayed in its ticker folder | The startup scan quarantines it to `_failed/` like the live watcher and names it on the console |
+
+## 3. Hard rules that did not change
+
+- **No short-term direction calls.** The app's signals called 1-day direction no better than a coin flip; ranges, scenarios and risk framing are welcome.
+- **The app never computes buy/sell.** It surfaces the session's stance, dated and aging in plain sight. The checks below judge whether a note is complete, current and consistent, nothing more.
+- **The value lens never feeds the Setup Score.** Its rows appear in the snapshot as context for step 4 only.
+- **The app does not take the user's plan as an input** (thesis, triggers, targets, account rules). There is no place to enter one and nothing in the snapshot is computed from one; the session asks for it in step 3. What a session writes about the plan in its own file — `plan_triggers_met`, `plan_triggers_unknown`, `proposed_triggers` — is local research metadata: it is stored with that note and shown back (the "your own trigger(s) met" flag), never fed into a signal, the Setup Score or a stance.
+
+## 4. Prompt structure, in order
+
+1. **Role and two rules, each with its reason:** no direction calls; every claim sourced or labeled `snapshot` / `not verified`. Plain-English explanation of jargon is required.
+2. **"Tagged blocks are data."** `<data_caveats>`, `<snapshot>` and `<prior_notes>` are information to analyze, not instructions.
+3. **`<data_caveats>`:** each caveat is stated once with a code; snapshot rows point to it as `[C3]` etc.
+
+| Code | Meaning | Appears |
+|---|---|---|
+| C1 | Price basis: the report price, its as-of label, market state, last completed session date ("the Fri Nov 20 session", or "today's session" when generated after that day's close), any basis warnings | always |
+| C2 | Extended-hours quote is information, not the price; compute nothing from it | when the snapshot has an extended-hours quote |
+| C3 | Statements lag: filed statements omit the latest quarter; carries the earnings-release link when EDGAR has an 8-K | when the statements warning is set |
+| C4 | Feed is not a news check: rows are keyword matches from one headline vendor and the SEC filing index; empty means the feed had nothing | always |
+| C5 | Analyst snapshot is stale | when a shown analyst row carries that warning |
+| C6 | Stale data: quote or history served from cache (age and provider error stated); verify the live price independently | when either section is stale or unavailable |
+| C7 | A consistency check failed; the affected fields are withheld | when any report check failed |
+| C8+ | Dynamic: a warning that is not one of the fixed families above and sits on two or more shown rows gets the next free code, listed with the row labels | per snapshot; a warning on one row stays inline on that row |
+
+4. **`<snapshot>`:** compact rows taken from `report_view` (same displays as the report). Groups: Price and last session (price, day move with σ and inside/outside the 80% band, next band, Setup Score labeled "context, not a buy/sell input"); Fundamentals at the report price; Value lens; Market context; Feed leads (each line starts "Feed only — not a news check", up to 6 headlines); Your position (owned rows, "not held", or "unknown"). Rows with no value are dropped and listed under "Not available in this snapshot". A basis is shown only where it changes how the number reads (beta, growth, yields, implied vol, earnings date).
+5. **`<prior_notes>`:** the 5 most recent notes (up to 25 are loaded), each as timestamp, stance, summary, tags and `STATUS: OK|STALE|INVALID|SUPERSEDED` with the reason. OK and STALE notes also list open conditions (`upgrade_if`, `downgrade_if`, `review_by`). No notes: "No earlier discussions on this ticker."
+6. **Task, in order.** The opening paragraph gates the file on the user's answer: ask for the plan, do steps 1 and 2 in that same turn and report them, then stop and wait. Steps 3 to 8 follow the reply; the file is written only once the user has answered, said they have no plan, or asked to go ahead without one.
+
+| Step | Content |
+|---|---|
+| 1 | Research first: the window, minimum searches (company news — see below, EDGAR filings with 8-K item numbers, regulatory/legal terms, latest earnings release, investor-relations page for the next earnings date); log empty searches. Company news (1a) is asked "for each day of the window" when the window is the 5-session minimum. When the window starts earlier (the last report was longer ago), 1a reads: day by day for the last 5 trading sessions, week by week before that (at least one search per calendar week), and on its own date for every session the step names as 2σ or more; searches b to e still cover the whole window. No web search tool: say so in the first line, do not invent sources, set `research_status: "failed"`. Added when the window holds a 2σ+ session that still needs a cause: the list "Sessions in this window that moved 2σ or more and still need a cause", one line per session (`2026-11-20 (Fri): −14.01%, −2.97σ`; the snapshot's own session reads "the Day move row in <snapshot>" so the figure is stated once; a session still trading at 2σ+ is listed too). For each: the cause with two independent sources, or "cause not found after searching: …". `move_cause: "found"` only when every listed session has its cause; otherwise `research_status: "partial"`, `move_cause: "not_found"`. A 2σ+ session whose cause an earlier OK or STALE note states with `move_cause: found` is not listed again; it appears on an "Already explained: …" line with the instruction to re-check it |
+| 2 | Reconcile: use the snapshot price for every price-dependent figure; show stale vs newer figures side by side; recompute TTM free cash flow when C3 applies; only the snapshot beta; label TTM vs quarter and forward vs trailing |
+| 3 | Ask for and check the plan. What is asked follows ownership — owned: thesis for the position, exit and add triggers, price targets; not owned: why they are looking, entry criteria (price, valuation or event), the size they would consider, what would take it off their list; unknown: whether they own it, then the matching set. Always: account rules that constrain a trade (the example given is neutral: "a position-size limit"). Mark each trigger MET / NOT MET / UNKNOWN; propose 2-3 checkable triggers if there is no plan; a MET trigger goes in the first TL;DR line |
+| 4 | Analyze. When step 1 lists sessions: competing explanations for each and which the evidence favors. When it lists none: no move needs a story; explain one only where research found material news. Then the least-certain point, claims tied to numbers; weigh the value lens (when present); check open conditions and carry facts from prior notes only after re-checking (when notes exist); redo INVALID notes and list them in `supersedes`; a SUPERSEDED note is already replaced — build nothing on it and leave it out of `supersedes` (said only when one is listed) |
+| 5 | Options table; rows follow ownership (owned: Hold / Add / Trim / Exit; not owned: Buy / Watch / Pass; unknown: ask) with shares, dollars, what must be true, main risk, account-rule conflicts |
+| 6 | One stance. Owned: hold, buy (= add), trim or sell — watch only when research is incomplete. Not owned: buy, watch or sell, where `sell` means avoid — would not own it at this price and risk (see "Stance values" below). Unknown ownership lists both. Partial or failed research forces `watch` with a `stance_note` starting "research incomplete"; hold/watch need dated, checkable `upgrade_if` and `downgrade_if`; record `decision` only if the user stated one |
+| 7 | Self-check: the user has answered the plan question (or said to go ahead), report price used, window covered (on a long window: "day by day from {date}, week by week before it, each 2σ session named in step 1 on its own date" — the same terms as 1a), every number sourced, every evidence link opened in this session with its quote copied from the page, nothing carried from an INVALID or SUPERSEDED note, all text values quoted, no `<…>` left, unused optional keys deleted |
+| 8 | Write the file per the output contract |
+
+7. **Output contract:** the path (home-relative, correct from any folder; claude.ai sessions output one code block), about 900 words excluding tables, then the body headings in `BODY_HEADINGS` order: `## TL;DR`, `## What happened`, `## Evidence & sources`, `## Your plan, checked`, `## What the numbers say`, `## Your options`, `## Stance & what would change it`, `## Unknowns`. The evidence table is `claim | source | published | quote | link`: the quote is a short verbatim phrase (under 20 words), only links opened in the session are listed, and each empty search gets its own row. The frontmatter paragraph defines `research_status` (complete = every minimum search run and every 2σ session listed in step 1 has its cause, or step 1 lists none; partial = a required search not run or a listed session's cause not found; failed = no search tool or research not possible) and `move_cause` (found = every listed session has its cause; not_found = one does not; na = only when step 1 lists no session — and it says the app marks the note INVALID otherwise). Then the frontmatter template and three filled examples inside `<examples>` (strict YAML, fictional, every ticker ZZ-prefixed): `ZZZT`, owned with a plan, hold with conditions; `ZZQX`, not owned with no plan, `sell` = avoid with `proposed_triggers`; `ZZKM`, a session with no web search tool — `research_status: "failed"`, stance `watch`, `stance_note` starting "research incomplete", dated conditions for when the searches are run.
+
+## 5. Frontmatter reference
+
+Text values are always double-quoted. An unquoted colon inside a value (for example `news_note: Nov 14: probe reported`) is invalid YAML and the whole note would be rejected. Lists use `["a", "b"]`. The parser, not the prompt, decides what is kept. A value it cannot read is never fatal, and for the keys below marked "unreadable → flagged" it is not dropped silently either: the raw text is stored in `research_meta.unreadable` (`{key: text}`) and a flag appears beside the stance (for `news_view`, beside the news check). The four enums (`research_status`, `move_cause`, `owned`, `stance_confidence`) are normalized before they are compared — case, surrounding quotes and a trailing dot are dropped, spaces and hyphens read as underscores — so `"Not Found"` and `not-found` are `not_found`; a value that still does not match fails closed as unreadable. A template slot left as `<…>` is removed wherever it appears — scalar or list item — before anything else is read. "Required" below means required by the prompt; the parser itself needs only a non-empty body (ticker falls back to the folder name, `created_ts` to file mtime, summary to the first body line).
+
+| Key | Since | Type / allowed values | Req. | Filled by | App behavior |
+|---|---|---|---|---|---|
+| `ticker` | v4 | string | yes | app | Uppercased; a leading `$` is dropped (`"$zzzt"` → `ZZZT`), in the folder name too; folder name if missing, or if YAML read it as a boolean (unquoted `ON`, `NO`, `YES`, `TRUE`); `_`-prefixed folders rejected |
+| `created_ts` | v4 | ISO datetime | yes | app | Timeline key; latest stance is chosen by it; drives STALE/INVALID tests and `supersedes` matching. Do not change. Written with the machine's local clock: a value without a UTC offset is read as local machine time and converted to New York time for the session-close comparisons. A YAML list gives its first item; a value that is neither text nor a date falls back to the file mtime |
+| `prompt_version` | v5 | integer (5) | yes | app | Stored in `research_meta`. 5 or more marks the note as v5 — and so does any of `move_cause`, `research_status`, `news_window`, readable or not (`news_relevance.is_v5`), so deleting this line does not move a note to the rules for notes from before v5 |
+| `summary` | v4 | string, one line | yes | session | Timeline line |
+| `tags` | v4 | list of kebab-case strings | yes | session | Shown as chips; a comma string, a mapping or a bare scalar is coerced to a list of strings |
+| `research_status` | v5 | `complete` / `partial` / `failed` | yes | session | `partial`/`failed` makes the note INVALID and raises the "research incomplete" flag on the stance and on the news check. `incomplete` is read as `partial`. Unreadable → flagged, and in a v5 note INVALID; missing in a v5 note → flagged |
+| `news_window` | v5 | `"YYYY-MM-DD..YYYY-MM-DD"` | yes | app prefilled, session edits to what it covered | Stored in `research_meta`. Sets how far back the note's 2σ+ sessions are looked for: its start can widen the check beyond the last 5 sessions, never narrow it |
+| `news_view` | v4 | `bullish` / `neutral` / `bearish` | yes | session | Research news check on the report and data-as-of. `positive` is read as `bullish`, `negative` as `bearish`, `mixed` as `neutral`. Any other word is unreadable → flagged on the news check; when the newest note has no readable `news_view` the older check stays on show with a flag saying so |
+| `news_note` | v4 | string: window, finding, source, date | yes | session | Shown with `news_view`. Its wording ("no material news") is judged only for notes from before v5, which have no `move_cause`: with a 2σ+ session in the window it marks the note INVALID. The log line of one empty search ("searched DOJ: no relevant results") is not that wording. A v5 note is judged on `move_cause`, whatever the wording |
+| `move_cause` | v5 | `found` / `not_found` / `na` | yes | session | `not_found` makes the note INVALID and raises a stance flag; `found` is trusted over the wording of `news_note`; `na` is right only when no 2σ+ session in the note's window still needed a cause. With such a session, a v5 note that says anything other than `found` (`na`, absent, unreadable) is INVALID and flagged. `n/a` is read as `na`. Unreadable → flagged, and in a v5 note INVALID |
+| `sources_count` | v5 | integer | yes | session | Stored only; a leading number is read ("7 sources"), anything else dropped |
+| `price_used` | v5 | number (`$` and `,` tolerated) | yes | session | Checked against the session close: 0.5% when the note was written with the market closed, 3% or inside the day's range when written during the session. Text that leads with a number or holds a `$` amount is read (`"$130.03 (after hours)"` → 130.03); wording such as after hours / pre-market / extended sets `research_meta.price_used_note: "extended-hours"` and raises a flag. Unreadable → flagged; missing in a v5 note → flagged |
+| `owned` | v5 | `yes` / `no` | yes | app prefilled; session fills when position unknown | With `stance: sell`, `no` makes the stance display as AVOID. Unquoted YAML yes/no booleans are converted. Absent: the app's own position data decides the label, where a brokerage account is connected. `no` on a position the account holds raises a flag |
+| `plan_triggers_met` | v5 | list of strings | optional | session | Raises the "your own trigger(s) met" flag; exposed on the stance field |
+| `plan_triggers_unknown` | v5 | list of strings | optional | session | Exposed on the stance field; not printed |
+| `proposed_triggers` | v5 | list of strings | optional | session | Stored only |
+| `decision` | v4 | `buy` / `sell` / `trim` / `hold` / `pass` | optional | session, only what the user stated | Decision journal; price auto-captured at ingest |
+| `stance` | v4 | `buy` / `sell` / `hold` / `trim` / `watch` | yes | session | The stance shown beside the ticker; the latest readable one wins. `add` is stored as `buy`; `exit`, `pass` and `avoid` as `sell`. Any other word — and a stance word left inside the template's brackets, `"<hold>"` — is unreadable → flagged ("stance unreadable"), so an older stance is not shown as if it were current. The untouched slot `"<buy|sell|hold|trim|watch>"` is no stance; in a v5 note that is newer than the stance on show it raises "newer note … carries no stance" |
+| `stance_horizon` | v4 | string, e.g. `3-6mo` | yes | session | Header chip |
+| `stance_confidence` | v5 | `low` / `medium` / `high` | yes | session | Shown on the report stance strip. Unreadable → flagged; missing in a v5 note → flagged |
+| `stance_note` | v4 | string, one line | yes | session | Header tooltip, report |
+| `upgrade_if` | v5 | list of dated, checkable conditions | yes for hold/watch | session | Missing for hold/watch raises "no conditions" flag; shown on report and tooltip |
+| `downgrade_if` | v5 | same | yes for hold/watch | session | As `upgrade_if` |
+| `review_by` | v5 | `YYYY-MM-DD` | yes | session | Past date raises the "expired" flag. Also read: `Mar 9, 2031`, `March 9 2031`, `9 Mar 2031`, `03/09/2031` (month first), `2031/03/09`; stored as ISO. Unreadable → flagged; missing in a v5 note → flagged |
+| `supersedes` | v5 | list of `created_ts` values | optional | session | Marks the named earlier notes SUPERSEDED (already replaced, so the next prompt does not ask for them to be superseded again); if the named note holds the stance on show and the superseding note has none, the stance is flagged "superseded by …" |
+| `context_hash` | v4 | `sha256:…` | yes | app | Ties the note to the snapshot. Do not change |
+
+Storage: `summary`, `tags`, `news_view`, `news_note`, `decision`, `stance`, `stance_horizon`, `stance_note`, `context_hash`, `created_ts` are columns. Every v5 key above (and `news_window`) goes into the `research_meta` JSON column. List keys also accept a `;`-separated string. A list item that YAML reads as a mapping (`- by 2031-03-01: SEC closes inquiry`) is stored as its original text, and an unquoted timestamp as its ISO text. Parser-written keys in `research_meta`: `parse_note` (the salvage parser was used), `unreadable` (`{key: raw text}` for `stance`, `news_view`, `review_by`, `price_used` and the enums), `price_used_note` (`"extended-hours"`).
+
+**Stance values.** `sell` has two readings, told apart by `owned`: on a name the user owns it is sell; on a name they do not own it is **avoid / pass — would not own it at this price and risk**. The stored value is `sell` in both cases, so nothing downstream changed: the scorecard (`analysis/scorecard.py`) scores `sell` as a call that the stock will lag SPY, which is also the right test of an avoid. Display only differs: `research_quality.stance_label` shows AVOID on the report strip and the header chip, and `<prior_notes>` prints `stance: sell (avoid — not owned)`. `decision` keeps its own `pass` value — that is the user's choice, not the session's stance.
+
+**Before parsing.** A UTF-8 BOM is removed, and so is a wrapping code fence (three backticks or tildes, optionally followed by `markdown`) when frontmatter starts right inside it — the claude.ai path, where the user saves a code block. Chat saved along with the file goes too: up to 5 non-blank lines in front of the fence ("Here is the complete file to save:"), provided the fence is followed by `---` and a `key:` line, and anything after the fence's closing line. A code block inside the body is kept.
+
+**Rejected, not ingested.** The file is refused with a `ParseError` rather than filed with raw YAML as its analysis when: the body still starts with `---` and either nothing was parsed (frontmatter never closed) or a second `key: value` block follows; or the body still holds a `---` line followed by `ticker:` — in a code fence or bare — which is a whole note the stripping above could not reach (more than 5 lines of chat in front, chat with no fence). One stray extra `---` in front of real prose is dropped, and a horizontal rule in the prose is fine. A body whose first line is a bare code fence (three or more backticks or tildes and nothing else) is refused too: it is what is left when a reply put the frontmatter in one code block and the analysis in a second and was saved whole — the first block's closing fence, the chat line and the second block's opening fence would be filed on top of the analysis. A body that opens with a labeled code block (three backticks followed by `python`) is fine. Any other exception while reading a file is raised as `ParseError` as well.
+
+**Watcher.** A file that fails to parse — whatever the exception type — is retried three times, then moved to `discussions/_failed/` with an error event for the UI, so a file is never left neither ingested nor quarantined. If the file parsed but the database write failed, the error event is sent and the file stays where it is (the next write or the startup scan ingests it). The startup scan (`catch_up_scan`) does the same for files written while the backend was down: a file that fails to parse is moved to `_failed/` and named on the console with the reason (`[tickerbands] discussion rejected at startup: … (moved to …)`), then the scan carries on. Two cases stay in place: a file modified in the last 5 seconds (it may be mid-write; the live watcher, already running, has it — otherwise the next start quarantines it), and a file that parsed but could not be stored (printed as `parsed but not stored`).
+
+**Salvage parser.** If strict YAML fails, `_salvage_frontmatter` re-reads the header line by line (first colon splits key and value; `[a, b]` becomes a list; surrounding quotes are stripped) and records `parse_note: "frontmatter was not strict YAML; recovered line by line"`. It needs at least one recognizable key. Inline lists are split on commas outside quotes, so `["recall cost above $5,000M", "x"]` is two items; an unquoted item that contains a comma is still split. It is a fallback, not a license: quote everything.
+
+## 6. App-side checks
+
+### ≥2σ sessions (`research_quality.big_move_sessions`, `news_relevance.big_sessions`)
+
+A note is judged against **every completed session that moved 2σ or more**, not only the last one. Judging against the last session alone let the failed Nov 21 note read OK again after one ordinary Monday.
+
+- `big_move_sessions(bars, div_events)` walks the completed daily bars and returns each session with |z| ≥ 2, using the report's own arithmetic: close ÷ prior close − 1 on dividend-adjusted closes, over the daily σ of the 20 returns before that session. A session keeps its z on every later day. It needs 21 closes ahead of a session, so the first bars of the history cannot be judged, and a session that has rolled out of the bar history no longer counts.
+- `big_sessions(move, basis, sessions)` merges that list with the report's last session. The report's z wins for its own date (it is the number on the page); a session that is still trading is left out.
+- The composer computes the list once and puts it in the payload as `big_move_sessions` (`{session_date, z, move_pct, label?}`); it is excluded from `context_hash` like the other derived layers. `prior_note_status`, `research_flags`, the prompt and the report all read it.
+
+Two questions are asked of each note, with `t` its `created_ts` in New York time:
+
+- **Which 2σ+ sessions closed after `t`?** The note cannot reflect those moves.
+- **Which 2σ+ sessions lie inside the note's news window?** (`news_relevance.sessions_to_explain`) The window is the last 5 sessions that had closed at `t` — the prompt's minimum — and starts earlier when the note's own `news_window` does. A stated window can widen the check and cannot narrow it, so a note that says it covered one day is still held to the week. The note's news check had to explain every one of those sessions. Looking only at the last closed session let a "no material news" note pass one ordinary day after a −14% session.
+
+**A session is asked for once.** `research_quality.explained_sessions` maps each 2σ+ session to the earliest note that is sound, says `move_cause: found`, and had that session in its window. A later note is not failed for leaving that session out, and the prompt lists it under "Already explained" instead of asking for its cause again. Sound means OK or STALE by the rules below, leaving supersession aside: STALE counts because it is about a later session, and a note that a later one lists in `supersedes` still counts when nothing else was wrong with it. Otherwise the compliant follow-up fails — its prompt listed nothing in step 1 because of that earlier note, it answered `move_cause: na` as told, and by replacing the note it would remove its own excuse. An INVALID note explains nothing, superseded or not, and a note is never excused by one written after it.
+
+### Prior-note STATUS (`research_quality.prior_note_status`)
+
+First matching rule wins, top to bottom. INVALID verdicts are sticky: none of them depends on what the latest session did. "v5 note" means `news_relevance.is_v5`: `prompt_version` ≥ 5, or the note carries `move_cause`, `research_status` or `news_window` (readable or not). `{sessions}` reads `session of 2026-11-20` or `sessions of 2026-11-17 and 2026-11-20`.
+
+| Rule | Status | Reason text |
+|---|---|---|
+| A later note lists this note's `created_ts` in `supersedes` (matched to the minute; a note cannot supersede a later note or itself) | SUPERSEDED | `replaced by the note of {created_ts to the minute}` |
+| `research_status` is partial or failed | INVALID | `its research was incomplete (research_status: {value})` |
+| v5 note, `research_status` unreadable | INVALID | `its research_status could not be read ('{text}') — the research cannot be taken as complete` |
+| `move_cause` is `not_found` | INVALID | `its news check did not find the cause of a ≥2σ session (move_cause: not_found)` |
+| v5 note, `move_cause` unreadable | INVALID | `its move_cause could not be read ('{text}') — the news check cannot be taken as done` |
+| v5 note with a 2σ+ session in its window that no earlier sound note explains, and `move_cause` is anything other than `found` | INVALID | `its news check does not state the cause of the ≥2σ {sessions} ({move_cause: na / move_cause absent}) — a v5 note needs move_cause: found for every ≥2σ session in its window` |
+| Note from before v5 with such a session in its window, and `news_view`/`news_note` reads as "no material news" (see below) | INVALID | `its news check failed — it reports no material news after the ≥2σ {sessions}` |
+| One 2σ+ session closed after the note was written | STALE | `written before the ≥2σ session of {session date} closed` |
+| Several did | STALE | `written before {n} ≥2σ sessions closed (latest {session date})` |
+| none of the above | OK | (none) |
+
+SUPERSEDED is its own status so that a later session is not told to supersede the note a second time; like INVALID it is not a basis for anything, and its open conditions are not listed.
+
+**For a v5 note the structured field decides.** `move_cause: found` is not failed by its wording: logging empty searches ("searched DOJ: no relevant results") is what the prompt asks for. With a 2σ+ session in the window, anything else — `not_found`, `na`, absent, unreadable — fails the note, whatever `news_note` says: "broad tech selloff, no obvious company catalyst identified" with `move_cause: na` used to pass because it matched no pattern. The wording pattern is kept only for notes from before v5, which have no `move_cause`. The pattern is a conclusion about the company's news: "no material / significant / major / notable / relevant / meaningful / company-specific" followed within two words by news, headlines, developments, catalyst, events, stories, updates or announcements; "nothing material / significant / notable"; or "no news". "No relevant results" for one search does not match.
+
+**Time zone.** `created_ts` is written with the machine's local clock. A value without a UTC offset is read as local machine time and converted to New York (`market_clock.local_to_ny`); a value with an offset (or `Z`) is converted from it. Tests pin "local" to New York through `market_clock.LOCAL_TZ`.
+
+### Stance flags (`research_quality.stance_flags`)
+
+Evaluated for the latest readable stance, in this order. Text in braces is filled in.
+
+| Condition | Warning |
+|---|---|
+| A later note lists the stance's note in `supersedes` and carries no readable stance itself | `superseded by the note of {created_ts to the minute}, which carries no readable stance — re-run research` |
+| A later note has a stance the parser could not read | `stance unreadable: '{text}' in the note of {created_ts to the minute} — the stance shown is from an older note` |
+| A later v5 note carries no stance at all (key deleted, or the template slot left as it was) | `newer note of {created_ts to the minute} carries no stance — the stance shown is from an older note` |
+| The note says `owned: no` and the account holds the position | `the note says not owned (owned: no) but the account holds this position — the stance was written for a name not held; re-run research` |
+| `research_status` partial or failed | `research incomplete (research_status: {value}) — the stance rests on an unfinished news check` |
+| stance is hold or watch and `upgrade_if` and/or `downgrade_if` is missing or empty | `{stance} with no conditions — treat as no stance (missing: {keys})` |
+| `review_by` is not a date | `review_by unreadable: '{text}' — the stance has no review date` |
+| `review_by` is before today | `expired — review_by {date} has passed; re-run research` |
+| `move_cause` is `not_found` | `the session did not find the cause of a ≥2σ move (move_cause: not_found)` |
+| `price_used` could not be read | `price_used unreadable: '{text}'` |
+| `price_used` was written as an after-hours / pre-market / extended price | `price_used is an extended-hours price — the report price is the official close` |
+| `price_used` is too far from every reference price (table below) | `price_used ${price} is {pct}% away from the {date} session close ${close} — the note was not computed at the report price` |
+| `prompt_version` ≥ 5 and any of `research_status`, `price_used`, `review_by`, `stance_confidence` is absent (and not already reported as unreadable) | `missing required field(s): {keys} — the note does not follow prompt v5` |
+| An enum value could not be read (`research_status`, `move_cause`, `owned`, `stance_confidence`) | `unreadable field(s): {key} '{text}', …` (an unreadable `news_view` is flagged on the news check instead) |
+| `plan_triggers_met` is non-empty | `your own trigger(s) met: {items joined by "; "}` |
+
+When there is no readable stance at all and the newest note's stance is unreadable, the composer raises `stance unreadable: '{text}' in the note of {created_ts} — no stance is shown`; the report prints "Research stance: none shown" with the chip and the header shows the re-check badge beside "none yet".
+
+**`price_used` reference prices** (`_reference_prices`), by when the note was written (New York time, `market_clock.session_state`):
+
+| Written | Reference | Tolerance |
+|---|---|---|
+| Market closed: weekend, holiday, or after the close | The last official close on or before the note's date | 0.5% |
+| Before the open on a trading day | The previous session's close | 0.5% |
+| While the session traded | That day's close, the prior close, or anywhere inside that day's low-high range | 3% |
+| Only the date is known | That day's close | 3% |
+
+The check is skipped with no bars, or when the note's own session has no bar yet. With the market closed the report price is the official close, so an after-hours quote 2 to 3% away is flagged; it used to pass a flat 3% tolerance.
+
+**AVOID and ownership** (`stance_owned`, `stance_label`). `sell` displays as AVOID when the stance was written for a name not owned. The note's `owned` decides; when the note does not say, the account does — the composer sets `account_owned` on the stance from the position section (a linked share class counts as held), the screener from the account as last cached. With no account data and no `owned`, the stored word is shown.
+
+**Flags from `news_relevance.research_flags`** share the stance list and use the same sessions (`failed_news_check`): `stance written {date}, before the {move} — re-run research before acting`; `stance came from a discussion whose news check missed the cause of the {move} — re-run research before acting` (a note from before v5, judged on the stance's own discussion; the `move_cause: not_found` case is covered by the stance flag above); `stance came from a discussion whose news check does not state the cause of the {move} ({move_cause: na / move_cause absent / move_cause unreadable: '…'}) — re-run research before acting` (a v5 note). `{move}` reads `−14.01% (−3.0σ) Fri Nov 20 session`; with several sessions the latest is given in full and the earlier ones by date.
+
+**News-check flags** (the "Research news check" row), in this order:
+
+| Condition | Warning |
+|---|---|
+| The newest note's `news_view` could not be read and an older check is shown (`pick_news`) | `news_view unreadable: '{text}' in the note of {created_ts} — the news check shown is from an older note` |
+| The newest note has no `news_view` and an older check is shown | `the newest note ({created_ts}) carries no news_view — the news check shown is from an older note` |
+| The newest note's `news_view` could not be read and there is no older check | `news_view unreadable: '{text}' in the note of {created_ts} — no news check is shown` |
+| The note's `research_status` is partial or failed | `research incomplete (research_status: {value}) — this news check was not completed; do not read it as a result` |
+| Its `research_status` could not be read | `research_status unreadable: '{text}' — this news check cannot be taken as completed` |
+| Its `move_cause` could not be read | `move_cause unreadable: '{text}' — the check does not say whether a cause was found` |
+| Written before a 2σ+ session closed | `news check written {date}, before the {move} — it could not cover that move` |
+| `move_cause: not_found` with a 2σ+ session in its window | `did not find the cause of the {move} (move_cause: not_found) — treat this check as failed, not neutral` |
+| v5 note, a 2σ+ session in its window, `move_cause` not `found` | `does not state the cause of the {move} ({move_cause …}) — a ≥2σ session in its window needs move_cause: found; treat this check as failed, not neutral` |
+| Note from before v5, "no material news" wording, a 2σ+ session in its window | `says no material news after a {move} — the move's reported cause was not found; treat this check as failed, not neutral` |
+| 3 or more days old | `news check is {n} days old` |
+
+### Where they surface
+
+| Surface | What shows |
+|---|---|
+| Report stance strip (`api/report.py`) | Stance line (AVOID for a not-owned `sell`), one warning chip per flag, "Upgrade if: …", "Downgrade if: …", then "Review by … · confidence …". With no readable stance but a flag: "none shown" plus the chip |
+| App News panel (`Panels.tsx` `NewsPanel`) | The "Claude: {view}" badge with the note, then one warning line per news-check flag (`report_view.fields.claude_news.warnings`, falling back to `research_flags.news`). With any flag the badge and the box take the warning tone and the badge reads "⚠ Claude: {view}"; with a flag and no check to show it reads "⚠ Claude: no news check shown" |
+| App discussion timeline (`DiscussionTimeline.tsx`) | A chip per note — `OK`, `⚠ STALE`, `⚠ INVALID`, `⚠ SUPERSEDED`, or `unchecked` — and, for anything but OK, a line under the summary: `{STATUS} — {reason}; do not build on this note` (STALE: `; it cannot reflect that move`). The chip's tooltip says which daily bar the note was judged through |
+| `GET /api/discussions` | Per note: `status` (`OK` / `STALE` / `INVALID` / `SUPERSEDED` / null), `status_reason`, `status_as_of` (the last daily bar it was judged against). `screener.note_statuses` runs `prior_note_status` over the ticker's 50 newest notes with the 2σ+ sessions from the daily history and dividends as last cached (`history:{TICKER}`, `dividends:{TICKER}`) — no provider call. With no cached history a note is not called OK: `status` is null and `status_reason` says it was not judged (SUPERSEDED and incomplete-research verdicts need no bars and still stand). It reads the bars only: the report's own last-session move is not consulted, and a session that is still trading is not counted |
+| Report discussion list | Per note: "Written {date} — figures and facts in this note are as of that date", plus a chip `INVALID — {reason}; do not build on this note`, `SUPERSEDED — {reason}; do not build on this note` or `STALE — {reason}; it cannot reflect that move` |
+| Report "Research news check" row | The news view and note, with one chip per news-check flag; "—" plus the chip when the newest note's view is unreadable and there is no older check |
+| Watchlist "Claude" column (`screener.py`, `Watchlist.tsx`) | The stance label (AVOID for a not-owned `sell`) and a `⚠ n` badge whose tooltip lists the same warnings as the header's re-check badge. Row keys: `stance`, `stance_ts`, `stance_label`, `stance_owned` (`yes` / `no` / null), `stance_warnings`. Built from what the row already has — the stored notes (one query), the bars fetched for the band, the account as last cached (ignored once a day old), the dividend history as last cached by an analysis of the ticker — with no provider call of its own. 2σ+ sessions are found on dividend-adjusted closes, as in the composer; a ticker never analyzed has no cached dividends and is judged on raw closes |
+| App header (`SnapshotHeader.tsx`) | Stance chip (`claude_stance.label`: AVOID for a not-owned `sell`) with tooltip (`stanceTip`): note, date (and price-drift line), upgrade/downgrade conditions, review date, confidence. A "re-check" badge appears when the stance has any warning — also beside "none yet" when no stance is readable; its tooltip lists them one per line |
+| Payload `claude_stance.research_meta` | The parsed v5 keys for the latest stance. `claude_stance.superseded_by`, `claude_stance.newer_unreadable` (`{created_ts, value}`) and `claude_stance.newer_no_stance` are set when a newer note supersedes it, has an unreadable stance, or (v5) carries none. `claude_stance.label` is the display word; `claude_stance.account_owned` is the account's view of ownership (absent with no account data) |
+| Payload `research_flags.news` | The news-check flags above (`pick_news` flags first) |
+| Payload `big_move_sessions` | Every completed 2σ+ session the notes are judged against |
+| Payload `research_flags.stance` | Older flags plus `stance_flags()` output (composer appends them) |
+| Payload `report_view.fields.claude_stance` | `warnings` (the same list the badge reads) plus the `stance_conditions()` keys: `upgrade_if`, `downgrade_if`, `review_by`, `confidence`, `research_status`, `plan_triggers_met`, `plan_triggers_unknown` |
+| `<prior_notes>` in the next prompt | STATUS and reason per note, so a later session does not build on a failed check |
+| Step 1 of the next prompt | Every 2σ+ session in the window that still needs a cause, by date; those already explained on their own line |
+
+## 7. Changing the prompt safely
+
+1. Edit `research_prompt.py` and **bump `PROMPT_VERSION`** for any change in wording that alters what sessions must do, or any change in the frontmatter.
+2. Keep the `created_ts` and `context_hash` lines in the template as the app writes them; sessions must leave them as given.
+3. A new or renamed frontmatter key needs: the template, `EXAMPLE`, `EXAMPLE_NOT_OWNED` and `EXAMPLE_FAILED` (fictional, ZZ-prefixed tickers, strict YAML), the parser (`_ENUMS`, `_LIST_KEYS` or `_research_meta`), `stance_flags` if it is checked (and `V5_REQUIRED` if the prompt requires it), the types in `frontend/src/types/analysis.ts`, and this document's table.
+4. Update `test_research_prompt_v5.py` (structure, each removal, template and all three examples through the strict YAML loader and the real parser), `test_research_quality.py` (status rules, flag texts) and the parser cases in `test_live_audit_fixes.py`. Other tests that read prompt text: `test_composer_and_api.py`, `test_value_lens.py`, `test_report_incidents.py`, `test_concurrency.py`, `test_round2.py` to `test_round4.py`.
+5. Changing a status reason or flag text means updating the tables in section 6 too; they quote the code.
+6. Keep the examples, tests, comments and docs free of real holdings, sizes, account values and anything that mirrors a real person's trading rules (their thresholds, dates or account limits) — also in disguised or look-alike form. Invent fixtures of a different kind, far-future dates, fictional tickers. There is deliberately no test that lists strings to avoid: such a list would itself record them.
+7. A new stance word needs a decision about the scorecard first (`analysis/scorecard.py` `_EXPECT`): map it to an existing value in `STANCE_ALIASES` (parser) rather than adding one, unless the scorecard is extended with it.

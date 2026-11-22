@@ -335,13 +335,13 @@ def test_prompt_warns_when_core_sections_stale(tmp_db, mock_mode):
     a["sections"]["quote"] = {"status": "stale", "error_reason": "auth_expired",
                               "age_seconds": 4 * 24 * 3600}
     p = build_claude_prompt(a)
-    assert "STALE DATA" in p
+    assert "C6 stale data" in p
     assert "96.0h" in p and "auth_expired" in p
-    assert "verify the live price" in p
+    assert "Verify the live price" in p
 
 
 def test_prompt_no_warning_when_fresh(tmp_db, mock_mode):
     from analysis import composer
     from api.routes import build_claude_prompt
     p = build_claude_prompt(composer.analyze("AAPL"))
-    assert "STALE DATA" not in p
+    assert "C6 stale data" not in p and "provider error" not in p

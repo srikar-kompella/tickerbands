@@ -37,6 +37,20 @@ export function SnapshotHeader({ a, onRefresh, refreshing, onAskClaude, watched,
   const sessionWord = pb?.move_word && pb.move_word !== 'today' ? `${pb.move_word} session` : 'today'
   const earnTag = rvf.earnings_next?.tag
 
+  // Research stance tooltip: the note, its date, then what would change it
+  // (prompt v5: upgrade/downgrade conditions, review date, confidence) — the
+  // same lines the report prints under the stance.
+  const sf = rvf.claude_stance
+  const stanceTip = a.claude_stance ? [
+    a.claude_stance.stance_note ?? '',
+    a.claude_stance.created_ts.slice(0, 10)
+      + (a.claude_stance.drift_material ? ' — price has moved beyond the expected range since this call' : ''),
+    sf?.upgrade_if?.length ? `Upgrade if: ${sf.upgrade_if.join('; ')}` : '',
+    sf?.downgrade_if?.length ? `Downgrade if: ${sf.downgrade_if.join('; ')}` : '',
+    [sf?.review_by ? `review by ${sf.review_by}` : '', sf?.confidence ? `confidence ${sf.confidence}` : '']
+      .filter(Boolean).join(' · '),
+  ].filter(Boolean).join('\n') : ''
+
   // A stale quote wearing a live face is the worst lie this header can tell —
   // surface it where the eye lands, not in a corner chip.
   const staleEnv = ['quote', 'history']
@@ -149,12 +163,14 @@ export function SnapshotHeader({ a, onRefresh, refreshing, onAskClaude, watched,
           </div>
           {a.claude_stance ? (
             <span className="mt-0.5 inline-flex items-center gap-1.5"
-              title={`${a.claude_stance.stance_note ?? ''}\n${a.claude_stance.created_ts.slice(0, 10)}${a.claude_stance.drift_material ? ' — price has moved beyond the expected range since this call' : ''}`}>
+              title={stanceTip}>
               <Badge tone={
                 a.claude_stance.stance === 'buy' ? 'up'
                   : a.claude_stance.stance === 'sell' || a.claude_stance.stance === 'trim' ? 'down'
                     : 'accent'}>
-                {a.claude_stance.stance.toUpperCase()}
+                {/* sell on a name the user does not own means avoid (prompt v5);
+                    the backend decides — the note's `owned`, else the account */}
+                {a.claude_stance.label ?? a.claude_stance.stance.toUpperCase()}
                 {a.claude_stance.stance_horizon && ` · ${a.claude_stance.stance_horizon}`}
               </Badge>
               {(rvf.claude_stance?.warnings?.length ?? 0) > 0 && (
@@ -179,11 +195,20 @@ export function SnapshotHeader({ a, onRefresh, refreshing, onAskClaude, watched,
               )}
             </span>
           ) : (
-            <button onClick={onAskClaude}
-              className="mt-0.5 text-xs text-faint underline decoration-dotted underline-offset-2 hover:text-accent"
-              title="No stance yet — run a Claude discussion and its reasoned call will appear here">
-              none yet — ask Claude
-            </button>
+            <span className="mt-0.5 inline-flex items-center gap-1.5">
+              <button onClick={onAskClaude}
+                className="text-xs text-faint underline decoration-dotted underline-offset-2 hover:text-accent"
+                title="No stance yet — run a Claude discussion and its reasoned call will appear here">
+                none yet — ask Claude
+              </button>
+              {/* e.g. the newest note's stance could not be read */}
+              {(rvf.claude_stance?.warnings?.length ?? 0) > 0 && (
+                <Badge tone="warn" className="text-[10px]"
+                  title={rvf.claude_stance!.warnings.join('\n')}>
+                  ⚠ re-check
+                </Badge>
+              )}
+            </span>
           )}
         </div>
 

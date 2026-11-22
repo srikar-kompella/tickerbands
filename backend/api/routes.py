@@ -9,14 +9,13 @@ from __future__ import annotations
 import datetime as dt
 import json
 
-import os
-
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 import config
 from analysis import composer
+from api.research_prompt import build_claude_prompt  # prompt v5; tests import it from here too
 from cache.store import invalidate
 from db import connect
 from discussions_svc.parser import list_discussions
@@ -28,16 +27,6 @@ router = APIRouter(prefix="/api")
 
 
 # ─── analysis ──────────────────────────────────────────────────────────────────
-
-
-def _home_path(path: str) -> str:
-    """Display form of an instance path: '~/...' when under the user's home.
-    Portable across machines and — unlike a cwd-relative path — unambiguous
-    no matter which folder the CLI session runs in (a cwd-relative path once
-    sent a discussion into a repo checkout instead of the instance dir)."""
-    home = os.path.expanduser("~")
-    return "~" + path[len(home):] if path.startswith(home + os.sep) else path
-
 
 @router.get("/analysis/{symbol}")
 def get_analysis(symbol: str, refresh: bool = Query(False)):
@@ -64,6 +53,7 @@ def get_report(symbol: str):
 
     from cache.store import put as cache_put
 
+    symbol = symbol.strip().lstrip("$")           # "$nvda", as tickers are written in chat
     try:
         # fresh_core: the quote, history and account are fetched past their
         # caches — a report never quotes a cached price as current
@@ -97,244 +87,6 @@ def get_prompt(symbol: str):
     analysis = composer.analyze(symbol)
     return {"prompt": build_claude_prompt(analysis),
             "context_hash": analysis["context_hash"]}
-
-
-def _value_lens_lines(a: dict) -> list[str]:
-    """Statement value lens → prompt. These analyses MUST inform the stance:
-    the research layer is where fundamentals affect buy/sell in this app —
-    computed signals never do (experiment verdict, n≈9,600)."""
-    vl = a.get("value_lens")
-    if not vl:
-        return []
-    def v(key, suffix=""):
-        m = vl.get(key) or {}
-        return f"{m['value']}{suffix}" if m.get("value") is not None else "n/a"
-    lines = [
-        "",
-        "## Statement value lens (weigh these in your stance — REQUIRED)",
-        f"- FCF (TTM): ${v('fcf_ttm')}M · P/FCF {v('p_fcf', 'x')} "
-        f"(vs {v('p_fcf_avg', 'x')} on multi-FY-avg FCF) · P/E on multi-FY-avg "
-        f"earnings {v('pe_avg', 'x')}",
-        f"- Dividends paid ÷ FCF: {v('payout_of_fcf_pct', '%')} · EV: ${v('ev')}M"
-        + (" · NET CASH position" if vl.get("net_cash") else ""),
-        f"- Revenue CAGR: {v('rev_cagr_3y', '%')} (3y) / {v('rev_cagr_5y', '%')} "
-        f"(~5y) · ROIC~: {v('roic_ttm', '%')} TTM / {v('roic_avg', '%')} multi-yr "
-        "(approximate) · acquisitions "
-        f"${v('acquisitions_total')}M over the reported FYs",
-    ]
-    for r in vl.get("readings") or []:
-        lines.append(f"- READ: {r}")
-    for w in vl.get("warnings") or []:
-        lines.append(f"- FLAG: {w}")
-    lines.append(
-        "- Your `stance:` must explicitly weigh this lens — cite the metrics "
-        "that drive your call AND the ones that argue against it. If the lens "
-        "contradicts the price action, say which you trust and why.")
-    return lines
-
-
-def _stale_warnings(a: dict) -> list[str]:
-    """If core sections are being served stale (provider failing → cached data),
-    the prompt must SAY SO — a research session once anchored its narrative on
-    a 4-day-old price because the snapshot looked fresh."""
-    warns = []
-    for sec in ("quote", "history"):
-        env = (a.get("sections") or {}).get(sec) or {}
-        if env.get("status") in ("stale", "unavailable"):
-            age_h = round((env.get("age_seconds") or 0) / 3600, 1)
-            reason = env.get("error_reason", "?")
-            warns.append(
-                f"- ⚠ STALE DATA: the {sec} below is {age_h}h old (provider "
-                f"error: {reason}). Do NOT trust these prices as current — "
-                "verify the live price independently before reasoning about "
-                "today's move, and say in your analysis that the snapshot was stale.")
-    return warns
-
-
-def build_claude_prompt(a: dict) -> str:
-    """Assemble the markdown prompt: analysis context + prior-discussion
-    continuity + a strict writing contract + exact frontmatter (the watcher's
-    parser depends on it).
-
-    The prompt itself is STATIC per snapshot and always regenerable from the
-    button — continuity across Claude sessions comes from the embedded prior
-    discussion summaries, not from chat history.
-    """
-    sym = a["symbol"]
-    now = dt.datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
-    q, band, move, score = a.get("quote") or {}, a.get("band"), a.get("move"), a.get("setup_score")
-
-    rv = a.get("report_view") or {}
-    F = rv.get("fields") or {}
-    asof = rv.get("data_as_of") or {}
-    basis = a.get("price_basis") or {}
-    nwin = a.get("news_window") or {}
-    flags = a.get("research_flags") or {}
-
-    def fl(key: str) -> str:
-        f = F.get(key)
-        if not f:
-            return ""
-        txt = f"- {f['label']}: {f['display']}"
-        if f.get("basis"):
-            txt += f" [{f['basis']}]"
-        if f.get("warnings"):
-            txt += " ⚠ " + "; ".join(f["warnings"])
-        return txt
-
-    lines = [
-        f"# Research discussion: {sym}",
-        "",
-        f"You are discussing a stock with {config.USER_NAME} for research/education. "
-        "IMPORTANT: do NOT predict price direction — the empirical evidence says "
-        "these signals cannot (1-day direction ≈ coin flip over ~9,600 backtested "
-        "predictions). Ranges and risk framing are fine; directional calls are not.",
-        "",
-        "## Data as of — read this first",
-        f"- Price basis: {asof.get('price')} ({asof.get('as_of')}). Market state at "
-        f"generation: {basis.get('state')}. Every price-dependent number below uses "
-        "this one price.",
-        *([f"- {F['after_hours']['display']} — an extended-hours quote, NOT the price; "
-           "do not compute anything from it."] if (F.get("after_hours") or {}).get("value") else []),
-        f"- Statements: {asof.get('statements')}",
-        f"- News: {asof.get('news')}",
-        *[f"- ⚠ {w}" for w in (basis.get("warnings") or [])],
-        *[f"- ⚠ CHECK FAILED (field withheld): {c['detail']}"
-          for c in (rv.get("checks") or []) if not c["ok"]],
-        "",
-        "## Current analysis snapshot (context for YOU — do not repeat it back)",
-        *_stale_warnings(a),
-        *[x for x in (fl("price"), fl("day_move"), fl("day_move_sigma"),
-                      fl("band_next")) if x],
-    ]
-    if score:
-        comp = ", ".join(
-            f"{c['component']}={c['value']}" if c["available"]
-            else f"{c['component']}=({c.get('status') or 'no data'})"
-            for c in score["components"])
-        lines.append(f"- Setup Score: {score['score']}/100 ({score['lean']}) from: {comp}")
-    lines += ["", "### Fundamentals at the report price (use THESE numbers)"]
-    lines += [x for x in (fl(k) for k in (
-        "market_cap", "pe_ttm", "eps_ttm", "p_fcf", "fcf_ttm", "ev", "net_cash",
-        "revenue_growth", "revenue_growth_q", "gross_margin", "operating_margin",
-        "net_margin", "net_margin_q", "div_yield_forward", "div_yield_trailing")) if x]
-    lines += ["", "### Context"]
-    lines += [x for x in (fl(k) for k in (
-        "beta", "correlation", "week52", "rv20", "put_call", "atm_iv",
-        "implied_move", "news_sentiment", "social", "analyst_mix", "analyst_actions",
-        "move_cause", "regulatory",
-        "earnings_next", "position_value", "position_pl", "position_day_pl",
-        "position_weight")) if x]
-    heads = (F.get("headlines") or {}).get("items") or []
-    lines.append(f"- Relevant headlines in the feed ({(F.get('headlines') or {}).get('display', '0')}):"
-                 + ("" if heads else " none — the feed is NOT a news check; search yourself"))
-    for h in heads[:6]:
-        when = dt.datetime.fromtimestamp(h["ts"]).strftime("%b %d") if h.get("ts") else "?"
-        lines.append(f"  - {when}: {h['headline']} ({h.get('source')})")
-    for w in (flags.get("news") or []):
-        lines.append(f"- ⚠ previous news check: {w}")
-    for w in (flags.get("stance") or []):
-        lines.append(f"- ⚠ previous stance: {w}")
-
-    # ── continuity: what past sessions already concluded about this ticker ────
-    prior = list_discussions(sym, limit=5)
-    if prior:
-        lines += ["", "## Prior discussions on this ticker (DATED — each is true only "
-                      "as of its date. Re-check anything you carry forward, or "
-                      "date it explicitly, e.g. 'as of Nov 13'; never restate an "
-                      "old note as current)"]
-        for d in prior:
-            tags = f" [{', '.join(d['tags'])}]" if d.get("tags") else ""
-            lines.append(f"- as of {d['created_ts'][:10]}: {d['summary'] or '(no summary)'}{tags}")
-
-    lines += [
-        "",
-        "## How to write the analysis — this is the part the user reads",
-        "- Audience: an intelligent person with NO finance background. Every "
-        "piece of jargon gets a plain-English gloss in the same sentence.",
-        "- Detailed reasoning, not conclusions-by-decree: every claim ties to a "
-        "number from the snapshot above, and you say WHY it matters.",
-        f"- NEWS CHECK — window {nwin.get('from')} → {nwin.get('to')} (since the "
-        "last report for this ticker or the last 5 trading days, whichever is "
-        "longer). Same-day headlines are NOT enough. Search the whole window, "
-        "then run a regulatory & legal pass: SEC (inquiries, probes, comment "
-        "letters), DOJ, state attorneys general, export controls, securities "
-        f"class actions, and 8-K filings since {nwin.get('from')}. Fold anything "
-        "material into the analysis; then set `news_view`/`news_note` (put the "
-        "window you checked in the note, e.g. 'Nov 14–21: …').",
-        *([f"- THE LAST SESSION MOVED {F['day_move']['display']} = "
-           f"{(a.get('move') or {}).get('z'):+.1f}σ (outside the 80% band). You MUST "
-           "find and state the reported cause, with source and date — or write "
-           "explicitly 'no cause found after searching <sources>'. You may NOT "
-           "write 'no material news' after a move this size."]
-          if (a.get("move") or {}).get("z") is not None
-          and abs(a["move"]["z"]) >= 2 else []),
-        "- NUMBERS: use the snapshot above for every price-dependent figure "
-        "(market cap, P/E, P/FCF, EV, yields, position value). If you cite an "
-        "outside figure, name its source and date. Use only the beta shown "
-        "(60 daily returns vs SPY) — do not quote betas from other sites. Say "
-        "whether a margin/ratio is TTM or latest-quarter, and whether a "
-        "dividend yield is forward or trailing. State earnings dates as "
-        "confirmed or estimated exactly as tagged above — and check the date on "
-        "the company's investor-relations page; if it differs, say so with the link.",
-        *([f"- LATEST QUARTER: results were released {(a.get('statements_meta') or {}).get('release', {}).get('date')} "
-           f"({(a.get('statements_meta') or {}).get('release', {}).get('url')}) but the 10-Q data "
-           "is not in the snapshot yet — read the release for the latest quarter's cash "
-           "flow and balance sheet before citing TTM figures."]
-          if (a.get("statements_meta") or {}).get("release")
-          and not (a.get("statements_meta") or {}).get("covers_latest", True) else []),
-        f"- TIME: the market was {basis.get('state')} when this snapshot was "
-        f"built; the day move refers to the {basis.get('move_word')} session. Do "
-        "not call a past session 'today'.",
-        "- If the user states a decision during the conversation (buy / sell / "
-        "trim / hold / pass), record it in the optional `decision:` frontmatter "
-        "— the app captures the price at that moment automatically and tracks "
-        "how the call aged in its Decisions view. Only record THEIR stated "
-        "decision; never invent one.",
-        "- Separately, give YOUR OWN research stance in the `stance:` "
-        "frontmatter (buy|sell|hold|trim|watch) with `stance_horizon:` (e.g. "
-        "3-6mo) and a one-line `stance_note:` justification. This is a "
-        "REASONED multi-month judgment from the full picture — valuation, "
-        "thesis, risk, news — NOT a short-term direction call (those are "
-        "empirically dead). If the picture is genuinely unclear, use "
-        "`stance: watch` or omit it — an honest 'no stance' beats a forced one. "
-        "The app shows your latest stance beside the ticker until a newer "
-        "discussion replaces it.",
-        "- Structure the body exactly as: `## TL;DR` (2–3 sentences) → "
-        "`## What's going on` → `## What the data says` (the reasoning core) → "
-        "`## Risks & what would change this view` → `## Bottom line`.",
-        "- Do NOT paste this prompt, the snapshot block, or raw JSON into the "
-        "file — the app already displays all of that. The file is your "
-        "analysis only.",
-        "",
-        *_value_lens_lines(a),
-        "## After the discussion — REQUIRED",
-        f"Write your analysis to `{_home_path(os.path.join(config.DISCUSSIONS_DIR, sym, f'{now}.md'))}` "
-        "(this path is under the TickerBands home — correct from ANY working "
-        "folder; do NOT write into a repo checkout) "
-        "with EXACTLY this frontmatter structure (the app auto-ingests it).",
-        "ALWAYS create a NEW file per discussion — never append to or edit a "
-        "previous discussion file; each conversation is its own timeline entry.",
-        "",
-        "```markdown",
-        "---",
-        f"ticker: {sym}",
-        f"created_ts: {now}",
-        "summary: <your TL;DR compressed to one line — this is the timeline display>",
-        "tags: [<one-or-two-kebab-case-tags>]",
-        "news_view: <bullish|neutral|bearish — only if you checked the news>",
-        "news_note: <window checked + what it found, e.g. 'Nov 14–21: SEC probe reported (Reuters 11/20)…'>",
-        "decision: <buy|sell|trim|hold|pass — ONLY if the user stated one>",
-        "stance: <buy|sell|hold|trim|watch — YOUR reasoned multi-month call, or omit>",
-        "stance_horizon: <e.g. 3-6mo>",
-        "stance_note: <one line of reasoning behind the stance>",
-        f"context_hash: {a['context_hash']}",
-        "---",
-        "## TL;DR",
-        "<the analysis body per the structure above>",
-        "```",
-    ]
-    return "\n".join(lines)
 
 
 def _pv() -> dict:
@@ -1114,7 +866,22 @@ def import_portfolio_watchlist():
 
 @router.get("/discussions")
 def get_discussions(ticker: str | None = None, limit: int = Query(100, le=500)):
-    return list_discussions(ticker, limit)
+    """Stored discussions, newest activity first. Each carries `status`
+    (OK / STALE / INVALID / SUPERSEDED, or null when it could not be judged),
+    `status_reason` and `status_as_of` — whether the note can still be relied
+    on, judged from the notes and the cached daily history (no provider call)."""
+    from analysis.screener import note_statuses
+    rows = list_discussions(ticker, limit)
+    try:
+        statuses = note_statuses({r["ticker"] for r in rows})
+    except Exception:  # noqa: BLE001 — the timeline loads without the chips
+        statuses = {}
+    for r in rows:
+        st = statuses.get(r["id"]) or {}
+        r["status"] = st.get("status")
+        r["status_reason"] = st.get("reason") or None
+        r["status_as_of"] = st.get("as_of")
+    return rows
 
 
 @router.get("/discussions/stream")

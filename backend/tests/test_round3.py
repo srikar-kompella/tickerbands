@@ -239,5 +239,6 @@ def test_report_clean_ticker_without_history(client):
 
 def test_prompt_v4_decision_contract(client):
     p = client.get("/api/analysis/AAPL/prompt").json()["prompt"]
-    assert "decision: <buy|sell|trim|hold|pass" in p
+    assert 'decision: "<buy|sell|trim|hold|pass>"' in p
+    assert "only a decision the user stated" in p
     assert "never invent one" in p

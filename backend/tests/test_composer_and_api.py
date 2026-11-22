@@ -172,14 +172,14 @@ def test_api_prompt_contract(client):
     home = _os.path.expanduser("~")
     shown = "~" + full[len(home):] if full.startswith(home + _os.sep) else full
     assert shown in p, "prompt must show the home-anchored (~) instance path"
-    assert "ANY working folder" in p
-    assert "ticker: AAPL" in p and "context_hash:" in p and "summary:" in p
-    # honesty constraint baked into the prompt itself:
-    assert "do NOT predict price direction" in p
+    assert "any working folder" in p
+    assert 'ticker: "AAPL"' in p and "context_hash: sha256:" in p and "summary:" in p
+    # honesty constraint baked into the prompt itself (v5: rule + its reason):
+    assert "No direction calls" in p and "coin flip" in p
     # writing contract: plain-English, structured, no context echo
-    assert "NO finance background" in p
+    assert "no finance background" in p
     assert "## TL;DR" in p
-    assert "Do NOT paste this prompt" in p
+    assert "leave this prompt, the tagged blocks and raw JSON out of it" in p
     assert r.json()["context_hash"].startswith("sha256:")
 
 
@@ -191,11 +191,14 @@ def test_api_prompt_embeds_prior_discussions(client, tmp_discussions):
               "summary: Decided range is fair; wait for earnings", "tags: [decision]"])
     assert catch_up_scan() >= 1
     p = client.get("/api/analysis/AAPL/prompt").json()["prompt"]
-    assert "Prior discussions on this ticker" in p
-    assert "Decided range is fair; wait for earnings" in p
-    # and a fresh ticker has no phantom section:
+    notes = p[p.index("\n<prior_notes>\n"):p.index("</prior_notes>")]
+    assert "Decided range is fair; wait for earnings" in notes
+    assert "2026-07-10T09:00:00" in notes and "STATUS: OK" in notes
+    # and a fresh ticker has no phantom notes:
     p2 = client.get("/api/analysis/XOM/prompt").json()["prompt"]
-    assert "Prior discussions" not in p2
+    notes2 = p2[p2.index("\n<prior_notes>\n"):p2.index("</prior_notes>")]
+    assert "No earlier discussions on this ticker." in notes2
+    assert "STATUS:" not in notes2 and "wait for earnings" not in p2
 
 
 def test_api_symbol_search(client):

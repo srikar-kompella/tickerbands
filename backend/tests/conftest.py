@@ -68,6 +68,15 @@ def write_md(dirpath, ticker, name, frontmatter_lines, body="# Analysis\n\nSolid
 
 
 @pytest.fixture(autouse=True)
+def _notes_written_on_new_york_time(monkeypatch):
+    """A discussion's naive `created_ts` is machine-local time. Pin "local" to
+    New York so note-vs-session-close tests give the same answer on any
+    machine; tests of the conversion itself set another zone."""
+    from analysis import market_clock as mc
+    monkeypatch.setattr(mc, "LOCAL_TZ", mc.NY)
+
+
+@pytest.fixture(autouse=True)
 def _clean_secret_store_state():
     """The in-process secret cache + stall flag must never leak between tests."""
     from providers import base

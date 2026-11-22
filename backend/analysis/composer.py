@@ -26,8 +26,8 @@ from typing import Any, Callable  # noqa: F401
 
 import config
 from analysis import (earnings_moves, fundamentals_ttm, market_clock, news_lex,
-                      news_relevance, price_basis, report_view, setup_score,
-                      statements, value_lens, vol_bands)
+                      news_relevance, price_basis, report_view, research_quality,
+                      setup_score, statements, value_lens, vol_bands)
 from cache.store import _get_row, get_or_fetch
 from db import connect
 from providers import registry
@@ -565,7 +565,7 @@ def _context_hash(payload: dict) -> str:
             if k not in {"generated_ts", "sections", "score_history",
                          # derived presentation layer + clock-dependent bits
                          "report_view", "news_window", "research_flags",
-                         "statements_meta"}}
+                         "big_move_sessions", "statements_meta"}}
     if isinstance(slim.get("price_basis"), dict):
         slim["price_basis"] = {k: v for k, v in slim["price_basis"].items()
                                if k != "generated_ny"}
@@ -582,7 +582,7 @@ def analyze(symbol: str, force: bool = False, now: dt.datetime | None = None,
     `now` is injectable (replay tests). `fresh_core=True` (the report) forces
     the quote, history and account past their caches — a report must never
     quote a cached price as current."""
-    symbol = symbol.upper().strip()
+    symbol = symbol.strip().lstrip("$").upper().strip()   # "$nvda" → "NVDA"
     clk = market_clock.session_state(now)
     now_ny = clk["now"]
     sections = _fetch_sections(symbol, force,
@@ -805,15 +805,42 @@ def analyze(symbol: str, force: bool = False, now: dt.datetime | None = None,
                     if is_equity and (sections["earnings"].get("data") or {}).get("available")
                     else None)
 
-    claude_news = _latest_claude_news(symbol)
-    claude_stance = _stance_with_drift(_latest_claude_stance(symbol), bars, band)
-    flags = news_relevance.research_flags(claude_news, claude_stance, move, basis, now_ny)
+    pos_data = sections["position"].get("data") or {}
+    notes = _discussion_rows(symbol)
+    news_row, news_pick_flags = research_quality.pick_news(notes)
+    stance_row, orphan_stance_flags = research_quality.pick_stance(notes)
+    claude_stance = _stance_with_drift(stance_row, bars, band)
+    if claude_stance:
+        claude_stance = dict(claude_stance)
+        if "owned" in pos_data:
+            # the account's view of ownership: decides AVOID vs SELL when the
+            # note does not say, and is checked against a note that says "no"
+            claude_stance["account_owned"] = bool(pos_data.get("owned")
+                                                  or pos_data.get("linked"))
+        claude_stance["label"] = research_quality.stance_label(claude_stance)
+    # every completed ≥2σ session in the bars (plus the report's own last
+    # session): notes are judged against all of them, so a failed news check
+    # does not read as fine again after one ordinary day
+    big_sessions = news_relevance.big_sessions(
+        move, basis, research_quality.big_move_sessions(bars, div_events))
+    explained = research_quality.explained_sessions(notes, move, basis, big_sessions)
+    flags = news_relevance.research_flags(news_row, claude_stance, move, basis, now_ny,
+                                          big_sessions, explained)
+    flags["news"] = news_pick_flags + flags["news"]
+    # v5 stance checks (incomplete research, no conditions, expired, own
+    # trigger met…) join the same warnings the header badge and report read
+    flags["stance"] = (orphan_stance_flags + flags["stance"]
+                       + research_quality.stance_flags(claude_stance, bars, now_ny.date()))
+    if claude_stance:
+        # the stance's own news fields were only needed for the check above
+        claude_stance = {k: v for k, v in claude_stance.items()
+                         if k not in ("news_view", "news_note")}
+    claude_news = _public_news(news_row)
     reg_hits = news_relevance.regulatory_scan(headlines_view["all_relevant"], nwin["from"])
     cause = news_relevance.move_cause(headlines_view["all_relevant"], filings,
                                       (move or {}).get("session_date"), (move or {}).get("z"))
     rating_changes = _rating_changes(symbol, force) if is_equity else None
 
-    pos_data = sections["position"].get("data") or {}
     rv_view = report_view.build({
         "symbol": symbol, "basis": basis, "move": move, "band": band,
         "signals": signals, "quote": quote, "vendor": vendor,
@@ -863,6 +890,7 @@ def analyze(symbol: str, force: bool = False, now: dt.datetime | None = None,
         "claude_news": claude_news,
         "claude_stance": claude_stance,
         "research_flags": flags,
+        "big_move_sessions": big_sessions,
         "news_window": nwin,
         "headlines": headlines_view["items"],
         "headlines_view": {k: v for k, v in headlines_view.items()
@@ -938,37 +966,46 @@ def _stance_with_drift(stance: dict | None, bars: list[dict],
     return stance
 
 
-def _latest_claude_stance(symbol: str) -> dict | None:
-    """Most recent research stance from a discussion session. The app SURFACES
-    this judgment (dated, reasoned, aging in plain sight) — it never computes
-    a buy/sell/hold itself: the computed signals demonstrably can't call
-    direction, and a reasoned multi-month judgment is a different animal."""
+def _discussion_rows(symbol: str, limit: int = 50) -> list[dict]:
+    """One ticker's stored discussions, newest first, `research_meta` parsed —
+    the rows the stance, the news check and their flags are picked from
+    (research_quality.pick_stance / pick_news).
+
+    The app SURFACES the session's judgment (dated, reasoned, aging in plain
+    sight) — it never computes a buy/sell/hold itself: the computed signals
+    demonstrably can't call direction, and a reasoned multi-month judgment is
+    a different animal. The news check is shown with its timestamp; the
+    reader judges staleness, and the flags say what is wrong with it."""
     conn = connect()
     try:
-        row = conn.execute(
+        rows = [dict(r) for r in conn.execute(
             "SELECT id, stance, stance_horizon, stance_note, context_hash, "
-            "created_ts FROM claude_discussions "
-            "WHERE ticker = ? AND stance IS NOT NULL "
-            "ORDER BY created_ts DESC LIMIT 1", (symbol.upper(),)).fetchone()
-        return dict(row) if row else None
+            "created_ts, research_meta, news_view, news_note "
+            "FROM claude_discussions WHERE ticker = ? "
+            "ORDER BY created_ts DESC LIMIT ?", (symbol.upper(), limit))]
     finally:
         conn.close()
+    for r in rows:
+        try:
+            r["research_meta"] = json.loads(r.get("research_meta") or "{}")
+        except (TypeError, ValueError):
+            r["research_meta"] = {}
+        if not isinstance(r["research_meta"], dict):
+            r["research_meta"] = {}
+    return rows
 
 
-def _latest_claude_news(symbol: str) -> dict | None:
-    """Most recent Claude-supplied news view for this ticker (ask #3 fallback):
-    discussions can carry `news_view` / `news_note` frontmatter after a live
-    news check in the CLI session. Shown with its timestamp — the reader
-    judges staleness; we don't silently expire someone's judgment."""
-    conn = connect()
-    try:
-        row = conn.execute(
-            "SELECT news_view, news_note, created_ts FROM claude_discussions "
-            "WHERE ticker = ? AND news_view IS NOT NULL "
-            "ORDER BY created_ts DESC LIMIT 1", (symbol.upper(),)).fetchone()
-        return dict(row) if row else None
-    finally:
-        conn.close()
+def _public_news(row: dict | None) -> dict | None:
+    """The news check as the payload carries it: the view, the note, its
+    date, and `move_cause` (prompt v5) — the one research_meta key the UI
+    reads. The rest of the row was only needed to judge the check."""
+    if not row:
+        return None
+    out = {k: row.get(k) for k in ("news_view", "news_note", "created_ts")}
+    cause = (row.get("research_meta") or {}).get("move_cause")
+    if cause:
+        out["move_cause"] = cause
+    return out
 
 
 def _touch_watchlist(symbol: str) -> None:

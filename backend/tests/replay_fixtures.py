@@ -270,16 +270,22 @@ def install(monkeypatch, providers: dict) -> None:
 
 def add_discussion(ticker: str, created_ts: str, summary: str, body: str = "## TL;DR\n\nNote.",
                    **cols) -> None:
+    """Insert one stored discussion. `research_meta` (dict) carries the
+    prompt-v5 frontmatter fields the parser would have stored."""
+    import json
+
     from db import connect
+    meta = cols.get("research_meta")
     conn = connect()
     try:
         conn.execute(
             "INSERT INTO claude_discussions (ticker, file_path, response_markdown, summary, "
             "tags, created_ts, file_mtime, news_view, news_note, stance, stance_horizon, "
-            "stance_note) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            "stance_note, research_meta) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (ticker, f"/replay/{ticker}/{created_ts}.md", body, summary, "[]",
              created_ts, created_ts, cols.get("news_view"), cols.get("news_note"),
-             cols.get("stance"), cols.get("stance_horizon"), cols.get("stance_note")))
+             cols.get("stance"), cols.get("stance_horizon"), cols.get("stance_note"),
+             json.dumps(meta) if meta else None))
         conn.commit()
     finally:
         conn.close()

@@ -72,8 +72,9 @@ def test_prompt_carries_lens_and_stance_mandate(tmp_db, mock_mode):
     a = composer.analyze("NVDA")
     assert a["value_lens"] is not None                        # mock statements flow
     p = build_claude_prompt(a)
-    assert "Statement value lens" in p
-    assert "weigh these in your stance" in p
+    snap = p[p.index("\n<snapshot>\n"):p.index("</snapshot>")]
+    assert "Value lens — statement-derived comparisons" in snap    # merged into the snapshot
+    assert "Weigh the value-lens rows" in p
     assert "argue against it" in p                            # the mandate line
 
 

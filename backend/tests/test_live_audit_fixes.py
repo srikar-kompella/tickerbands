@@ -392,3 +392,545 @@ def test_discussion_stored_under_old_and_new_path_is_merged(tmp_db, tmp_path, mo
     assert len(rows) == 1 and rows[0]["file_path"] == str(f)
     assert rows[0]["decision_price"] == 280.10
     assert dedupe_linked_paths() == {"merged": 0, "removed": 0}     # idempotent
+
+
+# ── prompt v5 / research quality ─────────────────────────────────────────────
+
+def test_unquoted_colon_in_frontmatter_is_salvaged_not_dropped(tmp_path):
+    """The v4 prompt's own example (`news_note: Nov 14–21: SEC probe …`) is
+    invalid YAML when written unquoted — the whole file used to be rejected."""
+    from discussions_svc.parser import parse_discussion_file
+    f = tmp_path / "NVDA" / "x.md"
+    f.parent.mkdir()
+    f.write_text("---\nticker: NVDA\ncreated_ts: 2026-11-22T10:00:00\n"
+                 "news_note: Nov 14–21: SEC probe reported (Reuters 11/20)\n"
+                 "stance: hold\nupgrade_if: [revenue growth >= 12% in the Q1 release, SEC closes inquiry]\n"
+                 "research_status: complete\nprice_used: $125.53\n---\n## TL;DR\nBody.")
+    row = parse_discussion_file(str(f))
+    assert row["news_note"] == "Nov 14–21: SEC probe reported (Reuters 11/20)"
+    assert row["stance"] == "hold"
+    import json
+    rm = json.loads(row["research_meta"])
+    assert rm["upgrade_if"] == ["revenue growth >= 12% in the Q1 release", "SEC closes inquiry"]
+    assert rm["research_status"] == "complete" and rm["price_used"] == 125.53
+    assert "recovered line by line" in rm["parse_note"]
+
+
+def test_research_meta_parsed_from_valid_yaml(tmp_path):
+    from discussions_svc.parser import parse_discussion_file
+    import json
+    f = tmp_path / "AXP.md"
+    f.write_text('---\nticker: AXP\nprompt_version: 5\nresearch_status: partial\n'
+                 'owned: yes\nmove_cause: not_found\nsupersedes: ["2026-11-21T10:05:00"]\n'
+                 'downgrade_if:\n  - "credit losses above 3%"\nreview_by: 2027-01-31\n'
+                 'stance_confidence: Medium\n---\nbody')
+    rm = json.loads(parse_discussion_file(str(f))["research_meta"])
+    assert rm == {"research_status": "partial", "move_cause": "not_found", "owned": "yes",
+                  "stance_confidence": "medium", "supersedes": ["2026-11-21T10:05:00"],
+                  "downgrade_if": ["credit losses above 3%"], "review_by": "2027-01-31",
+                  "prompt_version": 5}
+
+
+# ── parser: nothing the prompt requires is dropped or mangled silently ───────
+
+def _parse(tmp_path, text, ticker="ZZZT", name="note.md", raw=False):
+    from discussions_svc.parser import parse_discussion_file
+    import json
+    d = tmp_path / ticker
+    d.mkdir(exist_ok=True)
+    f = d / name
+    if raw:
+        f.write_bytes(text)
+    else:
+        f.write_text(text, encoding="utf-8")
+    row = parse_discussion_file(str(f))
+    return row, json.loads(row["research_meta"] or "{}")
+
+
+def test_template_placeholders_are_dropped_from_scalars_and_list_items(tmp_path):
+    """A leftover "<…>" used to be stored: `upgrade_if` with only the
+    placeholder hid the no-conditions flag, and a placeholder under
+    `plan_triggers_met` showed as a met trigger."""
+    from analysis import research_quality as rq
+    import datetime as dt
+    row, rm = _parse(tmp_path, """---
+ticker: "ZZZT"
+created_ts: 2031-02-03T10:15:00
+prompt_version: 5
+summary: "<your TL;DR in one line — shown on the timeline>"
+tags: ["<kebab-case-tag>", "plan-check"]
+research_status: "complete"
+price_used: 12.34
+stance: "hold"
+stance_horizon: "<for example 3-6mo>"
+stance_confidence: "medium"
+stance_note: '<one line of reasoning behind the stance>'
+upgrade_if: ["<dated, checkable condition>"]
+downgrade_if: ["<dated, checkable condition>", "by 2031-03-15: recall cost above $5M"]
+plan_triggers_met: ["<a trigger of the user's that is met, with the evidence>"]
+plan_triggers_unknown:
+  - "<a trigger you could not check>"
+review_by: "<YYYY-MM-DD>"
+supersedes: ["<created_ts of an earlier note this one replaces>"]
+---
+## TL;DR
+Body line.""")
+    assert "upgrade_if" not in rm and "plan_triggers_met" not in rm
+    assert "plan_triggers_unknown" not in rm and "supersedes" not in rm
+    assert rm["downgrade_if"] == ["by 2031-03-15: recall cost above $5M"]
+    assert "review_by" not in rm and "unreadable" not in rm
+    assert row["summary"] == "TL;DR" and row["stance_note"] is None
+    assert row["stance_horizon"] is None and row["tags"] == '["plan-check"]'
+    w = rq.stance_flags({**row, "research_meta": rm}, None, dt.date(2031, 2, 3))
+    assert "hold with no conditions — treat as no stance (missing: upgrade_if)" in w
+    assert not any("trigger(s) met" in x for x in w)
+    assert any(x.startswith("missing required field(s): review_by") for x in w)
+    # text that merely contains angle brackets is kept
+    row, rm = _parse(tmp_path, '---\nticker: ZZZT\nupgrade_if: ["margin <40% or >45%"]\n'
+                               'stance_note: "P/E < 12 and FCF yield > 6%"\n---\nbody',
+                     name="b.md")
+    assert rm["upgrade_if"] == ["margin <40% or >45%"]
+    assert row["stance_note"] == "P/E < 12 and FCF yield > 6%"
+
+
+def test_stance_words_add_exit_pass_are_mapped_and_unknown_ones_are_reported(tmp_path):
+    for i, (written, want) in enumerate([("add", "buy"), ("Exit", "sell"), ("pass", "sell"),
+                                         ("avoid", "sell"), ('"Trim."', "trim"),
+                                         ("watch", "watch")]):
+        row, rm = _parse(tmp_path, f"---\nticker: ZZZT\nstance: {written}\n---\nbody",
+                         name=f"s{i}.md")
+        assert row["stance"] == want, written
+        assert "unreadable" not in rm
+    row, rm = _parse(tmp_path, '---\nticker: ZZZT\nstance: "accumulate on dips"\n---\nbody',
+                     name="u.md")
+    assert row["stance"] is None and rm["unreadable"] == {"stance": "accumulate on dips"}
+    # no stance key at all is not "unreadable"
+    row, rm = _parse(tmp_path, "---\nticker: ZZZT\nsummary: s\n---\nbody", name="n.md")
+    assert row["stance"] is None and "unreadable" not in rm
+
+
+def test_price_used_and_review_by_are_read_or_reported_never_dropped(tmp_path):
+    row, rm = _parse(tmp_path, '---\nticker: ZZZT\nprompt_version: 5\n'
+                               'price_used: "$130.03 (after hours)"\n'
+                               'review_by: "Mar 9, 2027"\nsources_count: "7 sources"\n'
+                               '---\nbody')
+    assert rm["price_used"] == 130.03 and rm["price_used_note"] == "extended-hours"
+    assert rm["review_by"] == "2027-03-09" and rm["sources_count"] == 7
+    assert "unreadable" not in rm
+    for written, want in (("1,234.50", 1234.5), ("$12.34", 12.34), ("12.34 USD", 12.34),
+                          ("pre-market $12.80", 12.8)):
+        _, rm = _parse(tmp_path, f'---\nticker: ZZZT\nprice_used: "{written}"\n---\nbody',
+                       name="p.md")
+        assert rm["price_used"] == want, written
+    assert rm["price_used_note"] == "extended-hours"            # the pre-market one
+    # a number buried in text is not guessed at; a non-date is not a date
+    _, rm = _parse(tmp_path, '---\nticker: ZZZT\nprice_used: "Nov 20 close"\n'
+                             'review_by: "after the next earnings"\n'
+                             'research_status: "done"\n---\nbody', name="q.md")
+    assert "price_used" not in rm and "review_by" not in rm and "research_status" not in rm
+    assert rm["unreadable"] == {"research_status": "done", "price_used": "Nov 20 close",
+                                "review_by": "after the next earnings"}
+    from analysis import research_quality as rq
+    import datetime as dt
+    w = rq.stance_flags({"stance": "buy", "created_ts": "2031-02-03T10:15:00",
+                         "research_meta": rm}, None, dt.date(2031, 2, 3))
+    assert "review_by unreadable: 'after the next earnings' — the stance has no review date" in w
+    assert "price_used unreadable: 'Nov 20 close'" in w
+    assert "unreadable field(s): research_status 'done'" in w
+
+
+def test_salvage_keeps_a_comma_inside_a_quoted_list_item(tmp_path):
+    row, rm = _parse(tmp_path, """---
+ticker: ZZZT
+news_note: Jan 27–Feb 3: recall reported (Example Wire 01/30)
+stance: hold
+downgrade_if: ["recall cost above $5,000M", 'any restatement, of any year', the user's stop is hit, plain item]
+upgrade_if: ["by 2031-05-05: revenue growth above 10%, per the Q1 release"]
+tags: [a, "b, c"]
+---
+body""")
+    assert "recovered line by line" in rm["parse_note"]          # the salvage path ran
+    assert rm["downgrade_if"] == ["recall cost above $5,000M", "any restatement, of any year",
+                                  "the user's stop is hit", "plain item"]
+    assert rm["upgrade_if"] == ["by 2031-05-05: revenue growth above 10%, per the Q1 release"]
+    assert row["tags"] == '["a", "b, c"]'
+
+
+def test_yaml_list_item_read_as_a_mapping_is_stored_as_its_text(tmp_path):
+    row, rm = _parse(tmp_path, """---
+ticker: ZZZT
+stance: watch
+upgrade_if:
+  - by 2027-03-01: SEC closes inquiry
+  - "by 2027-04-01: guidance raised"
+downgrade_if: [by 2027-03-15: an 8-K item 4.02 is filed, plain item]
+supersedes: [2031-01-28T09:00:00]
+---
+body""")
+    assert "parse_note" not in rm                                # strict YAML accepted it
+    assert rm["upgrade_if"] == ["by 2027-03-01: SEC closes inquiry",
+                                "by 2027-04-01: guidance raised"]
+    assert rm["downgrade_if"] == ["by 2027-03-15: an 8-K item 4.02 is filed", "plain item"]
+    assert rm["supersedes"] == ["2031-01-28T09:00:00"]
+    assert not [x for k in ("upgrade_if", "downgrade_if") for x in rm[k] if "{" in x]
+
+
+def test_unquoted_boolean_looking_ticker_falls_back_to_the_folder(tmp_path):
+    for i, written in enumerate(("ON", "NO", "YES", "TRUE", "true")):
+        row, _ = _parse(tmp_path, f"---\nticker: {written}\nsummary: s\n---\nbody",
+                        ticker="ON", name=f"t{i}.md")
+        assert row["ticker"] == "ON", written
+    row, _ = _parse(tmp_path, '---\nticker: "ON"\n---\nbody', ticker="elsewhere")
+    assert row["ticker"] == "ON"                                 # quoted → taken as written
+
+
+V5_FILE = ('---\nticker: "ZZZT"\ncreated_ts: 2031-02-03T10:15:00\nprompt_version: 5\n'
+           'summary: "Recall is the reported cause"\nstance: "hold"\n'
+           'research_status: "complete"\n---\n## TL;DR\nBody line.\n')
+
+
+def test_file_saved_with_its_markdown_fence_or_a_bom_still_parses(tmp_path):
+    want_row, want_rm = _parse(tmp_path, V5_FILE, name="plain.md")
+    assert want_row["stance"] == "hold" and want_rm["research_status"] == "complete"
+    variants = {
+        "fence.md": "```markdown\n" + V5_FILE + "```\n",
+        "fence_md.md": "```md\n" + V5_FILE + "```",
+        "fence_bare.md": "\n```\n" + V5_FILE + "\n```\n\n",
+        "fence_open_only.md": "```markdown\n" + V5_FILE,
+        "crlf.md": V5_FILE.replace("\n", "\r\n"),
+        "blank_lines_first.md": "\n\n" + V5_FILE,
+    }
+    for name, text in variants.items():
+        row, rm = _parse(tmp_path, text, name=name)
+        for k in ("ticker", "summary", "stance", "created_ts", "response_markdown"):
+            assert row[k] == want_row[k], (name, k)
+        assert rm == want_rm, name
+    for name, data in (("bom.md", b"\xef\xbb\xbf" + V5_FILE.encode()),
+                       ("bom_fence.md", b"\xef\xbb\xbf```markdown\n" + V5_FILE.encode()
+                        + b"```\n")):
+        row, rm = _parse(tmp_path, data, name=name, raw=True)
+        assert row["summary"] == "Recall is the reported cause" and row["stance"] == "hold", name
+        assert rm == want_rm, name
+    # a body that simply opens with a code block is not a wrapped file
+    row, _ = _parse(tmp_path, "```python\nprint(1)\n```\nrest", name="code.md")
+    assert row["response_markdown"].startswith("```python")
+
+
+def test_unclosed_frontmatter_is_rejected_not_ingested_as_the_body(tmp_path):
+    from discussions_svc.parser import ParseError
+    for name, text in (("unclosed.md", '---\nticker: "ZZZT"\nstance: "hold"\n## TL;DR\nBody'),
+                       ("two_blocks.md", '---\nticker: "ZZZT"\n---\n---\nstance: "hold"\n'
+                                         '---\n## TL;DR\nBody'),
+                       ("fenced_unclosed.md", "```markdown\n---\nticker: ZZZT\nbody\n```")):
+        with pytest.raises(ParseError, match="still starts with '---'"):
+            _parse(tmp_path, text, name=name)
+    # one stray extra delimiter in front of real prose is dropped, not fatal
+    row, _ = _parse(tmp_path, V5_FILE.replace("---\n## TL;DR", "---\n---\n## TL;DR"),
+                    name="stray_rule.md")
+    assert row["response_markdown"] == "## TL;DR\nBody line." and row["stance"] == "hold"
+    with pytest.raises(ParseError, match="empty body"):
+        _parse(tmp_path, '---\nticker: "ZZZT"\n---\n---\n', name="only_rule.md")
+
+
+
+# ── parser: chat text around the file, near-miss values, odd YAML shapes ─────
+
+def test_chat_line_before_the_fence_is_stripped_not_ingested_as_the_summary(tmp_path):
+    """A claude.ai reply saved whole — "Here is the complete file to save:"
+    then the fenced file — used to ingest as a note whose summary was that
+    line, with every frontmatter field lost."""
+    want_row, want_rm = _parse(tmp_path, V5_FILE, name="plain.md")
+    variants = {
+        "pre.md": "Here is the complete file to save:\n\n```markdown\n" + V5_FILE + "```\n",
+        "pre_two.md": "Done.\nSave this at the path above:\n```\n" + V5_FILE + "```",
+        "pre_post.md": ("Here is the complete file to save:\n```markdown\n" + V5_FILE
+                        + "```\n\nLet me know if you want the stance changed."),
+        "post_only.md": "```markdown\n" + V5_FILE + "```\nSaved as requested.\n",
+        "tilde.md": "Here it is:\n~~~markdown\n" + V5_FILE + "~~~\n",
+    }
+    for name, text in variants.items():
+        row, rm = _parse(tmp_path, text, name=name)
+        for k in ("ticker", "summary", "stance", "created_ts", "response_markdown"):
+            assert row[k] == want_row[k], (name, k)
+        assert rm == want_rm, name
+    # a code block inside the body survives, with or without chat around the file
+    with_code = V5_FILE + "\n```python\nprint(1)\n```\nAfter the block.\n"
+    for name, text in (("code.md", "```markdown\n" + with_code + "```\n"),
+                       ("code_pre.md", "Here you go:\n```markdown\n" + with_code + "```\n")):
+        row, _ = _parse(tmp_path, text, name=name)
+        assert row["response_markdown"].endswith("```python\nprint(1)\n```\nAfter the block."), name
+        assert row["stance"] == "hold", name
+
+
+def test_raw_frontmatter_left_in_the_body_is_rejected(tmp_path):
+    """What the stripping cannot undo is refused, never filed as the analysis."""
+    from discussions_svc.parser import ParseError
+    long_chat = "\n".join(f"Chat line {i}." for i in range(8))
+    for name, text in (
+            ("long_chat.md", long_chat + "\n```markdown\n" + V5_FILE + "```\n"),
+            ("bare.md", "Here is the complete file to save:\n" + V5_FILE),
+            ("twice.md", V5_FILE + "\nAnd again:\n```markdown\n" + V5_FILE + "```\n")):
+        with pytest.raises(ParseError, match="frontmatter block"):
+            _parse(tmp_path, text, name=name)
+    # a horizontal rule in the prose is not a frontmatter block
+    row, _ = _parse(tmp_path, V5_FILE + "\n---\n\nSecond section.\n", name="rule.md")
+    assert row["response_markdown"].endswith("---\n\nSecond section.")
+    # a fence that does not open a note is not a wrapper
+    row, _ = _parse(tmp_path, "Intro line\n```\n---\nnot yaml at all\n```\nrest", name="x.md")
+    assert row["summary"] == "Intro line"
+
+
+def test_news_view_aliases_are_read_and_other_words_are_reported(tmp_path):
+    for i, (written, want) in enumerate([("negative", "bearish"), ("Positive", "bullish"),
+                                         ("mixed", "neutral"), ('"Bearish."', "bearish"),
+                                         ("neutral", "neutral")]):
+        row, rm = _parse(tmp_path, f"---\nticker: ZZZT\nnews_view: {written}\n---\nbody",
+                         name=f"v{i}.md")
+        assert row["news_view"] == want, written
+        assert "unreadable" not in rm
+    row, rm = _parse(tmp_path, '---\nticker: ZZZT\nnews_view: "cautiously optimistic"\n---\nbody',
+                     name="u.md")
+    assert row["news_view"] is None
+    assert rm["unreadable"] == {"news_view": "cautiously optimistic"}
+    # absent, or the template slot left as it was, is not "unreadable"
+    for name, line in (("a.md", "summary: s"),
+                       ("t.md", 'news_view: "<bullish|neutral|bearish>"')):
+        row, rm = _parse(tmp_path, f"---\nticker: ZZZT\n{line}\n---\nbody", name=name)
+        assert row["news_view"] is None and "unreadable" not in rm, name
+
+
+def test_stance_word_left_in_template_brackets_is_unreadable_not_that_stance(tmp_path):
+    for i, written in enumerate(('"<hold>"', "<Hold>", '"<add>"', "'<watch>'")):
+        row, rm = _parse(tmp_path, f"---\nticker: ZZZT\nstance: {written}\n---\nbody",
+                         name=f"b{i}.md")
+        assert row["stance"] is None, written
+        assert rm["unreadable"]["stance"].strip("\"'").lower() == written.strip("\"'").lower()
+    # the untouched slot is simply no stance
+    row, rm = _parse(tmp_path, '---\nticker: ZZZT\nstance: "<buy|sell|hold|trim|watch>"\n'
+                               '---\nbody', name="slot.md")
+    assert row["stance"] is None and "unreadable" not in rm
+
+
+def test_near_miss_enum_values_are_normalized_or_fail_closed(tmp_path):
+    row, rm = _parse(tmp_path, '---\nticker: ZZZT\nprompt_version: 5\n'
+                               'research_status: "Incomplete"\nmove_cause: "Not Found"\n'
+                               'owned: " NO "\nstance_confidence: "HIGH."\n---\nbody')
+    assert rm["research_status"] == "partial" and rm["move_cause"] == "not_found"
+    assert rm["owned"] == "no" and rm["stance_confidence"] == "high"
+    assert "unreadable" not in rm
+    for i, (written, want) in enumerate([("not-found", "not_found"), ("NOT_FOUND", "not_found"),
+                                         ("Found", "found"), ("N/A", "na"), ("na", "na")]):
+        _, rm = _parse(tmp_path, f'---\nticker: ZZZT\nmove_cause: "{written}"\n---\nbody',
+                       name=f"m{i}.md")
+        assert rm["move_cause"] == want, written
+    # anything else is not guessed at: it is unreadable, and a v5 note with an
+    # unreadable research_status or move_cause is INVALID
+    row, rm = _parse(tmp_path, '---\nticker: ZZZT\ncreated_ts: 2031-02-03T10:15:00\n'
+                               'prompt_version: 5\nresearch_status: "mostly complete"\n'
+                               'move_cause: "macro, probably"\nstance: "hold"\n---\nbody',
+                     name="bad.md")
+    assert "research_status" not in rm and "move_cause" not in rm
+    assert rm["unreadable"] == {"research_status": "mostly complete",
+                                "move_cause": "macro, probably"}
+    from analysis import research_quality as rq
+    got = rq.prior_note_status([{**row, "research_meta": rm}], None, None)
+    assert got[0]["status"] == "INVALID"
+    assert "research_status could not be read ('mostly complete')" in got[0]["reason"]
+
+
+def test_odd_yaml_shapes_are_coerced_not_fatal(tmp_path):
+    import json
+    row, _ = _parse(tmp_path, "---\nticker: ZZZT\ntags: 7\n"
+                              "created_ts: [2031-02-03T10:15:00, 2031-02-04T09:00:00]\n"
+                              "summary: [a, b]\nprompt: {k: v}\n---\nbody", name="odd.md")
+    assert json.loads(row["tags"]) == ["7"]
+    assert row["created_ts"] == "2031-02-03T10:15:00"
+    assert isinstance(row["summary"], str) and isinstance(row["prompt"], str)
+    row, _ = _parse(tmp_path, "---\nticker: ZZZT\ntags: {theme: ai, kind: review}\n"
+                              "created_ts: {a: 1}\n---\nbody", name="odd2.md")
+    assert json.loads(row["tags"]) == ["theme: ai", "kind: review"]
+    assert row["created_ts"] == row["file_mtime"]            # not text, not a date → mtime
+    row, _ = _parse(tmp_path, "---\nticker: ZZZT\ntags: [a, 3, 2031-02-03]\ncreated_ts: 20310203\n"
+                              "---\nbody", name="odd3.md")
+    assert json.loads(row["tags"]) == ["a", "3", "2031-02-03"]
+    assert row["created_ts"] == row["file_mtime"]
+
+
+def test_any_parse_failure_is_a_parse_error(tmp_path, monkeypatch):
+    """An exception nobody anticipated must not leave a file neither
+    ingested nor quarantined."""
+    from discussions_svc import parser
+    monkeypatch.setattr(parser, "_research_meta",
+                        lambda meta: (_ for _ in ()).throw(KeyError("boom")))
+    with pytest.raises(parser.ParseError, match="could not read the file: KeyError"):
+        _parse(tmp_path, V5_FILE, name="boom.md")
+
+
+def test_watcher_quarantines_on_any_exception_and_keeps_a_good_file_on_a_db_error(
+        tmp_db, tmp_discussions, monkeypatch):
+    from tests.conftest import write_md
+    from discussions_svc import watcher
+    from discussions_svc.parser import list_discussions
+    monkeypatch.setattr(watcher.time, "sleep", lambda s: None)
+    monkeypatch.setattr(watcher, "_wait_until_stable", lambda p: True)
+    events = []
+    monkeypatch.setattr(watcher.broadcaster, "publish_threadsafe", events.append)
+
+    # not a ParseError: still quarantined, with an error event
+    real_parse = watcher.parse_discussion_file
+    path = write_md(tmp_discussions, "ZZZT", "odd.md", ["ticker: ZZZT", "summary: s"])
+    monkeypatch.setattr(watcher, "parse_discussion_file",
+                        lambda p: (_ for _ in ()).throw(TypeError("unhashable type")))
+    watcher._ingest(path)
+    assert not (tmp_discussions / "ZZZT" / "odd.md").exists()
+    assert (tmp_discussions / "_failed" / "odd.md").exists()
+    assert events == [{"type": "error", "file": "odd.md", "detail": "unhashable type"}]
+    assert list_discussions("ZZZT") == []
+
+    # the file is fine but the store fails: reported, and the file stays put
+    monkeypatch.setattr(watcher, "parse_discussion_file", real_parse)
+    events.clear()
+    good = write_md(tmp_discussions, "ZZZT", "good.md", ["ticker: ZZZT", "summary: s"])
+    monkeypatch.setattr(watcher, "upsert_discussion",
+                        lambda row: (_ for _ in ()).throw(RuntimeError("database is locked")))
+    watcher._ingest(good)
+    assert (tmp_discussions / "ZZZT" / "good.md").exists()
+    assert not (tmp_discussions / "_failed" / "good.md").exists()
+    assert events == [{"type": "error", "file": "good.md",
+                       "detail": "parsed but not stored: database is locked"}]
+
+
+def test_catch_up_scan_survives_a_file_that_raises(tmp_db, tmp_discussions, monkeypatch):
+    from tests.conftest import write_md
+    from discussions_svc import watcher
+    from discussions_svc.parser import list_discussions
+    write_md(tmp_discussions, "AAA", "1.md", ["ticker: AAA", "summary: first"])
+    write_md(tmp_discussions, "BBB", "2.md", ["ticker: BBB", "summary: second"])
+    real = watcher.parse_discussion_file
+
+    def flaky(path):
+        if "/AAA/" in path:
+            raise ValueError("unexpected")
+        return real(path)
+    monkeypatch.setattr(watcher, "parse_discussion_file", flaky)
+    assert watcher.catch_up_scan() >= 2
+    assert [d["summary"] for d in list_discussions("BBB")] == ["second"]
+    assert list_discussions("AAA") == []
+
+
+# ── final-review fixes: split fences, "$" tickers, the startup scan ──────────
+
+def test_note_saved_from_two_code_blocks_is_rejected(tmp_path):
+    """A reply that put the frontmatter in one code block and the analysis in
+    a second one, saved whole: the first fence is stripped as the wrapper,
+    and what is left under the frontmatter is the first block's closing
+    fence, the chat line and the second block's opening fence. That residue
+    used to be filed as the analysis."""
+    from discussions_svc.parser import ParseError
+    at = V5_FILE.index("## TL;DR")
+    front, body = V5_FILE[:at], V5_FILE[at:]
+    variants = {
+        "split_pre.md": ("Here is the frontmatter:\n```markdown\n" + front
+                         + "```\nAnd the analysis:\n```markdown\n" + body + "```\n"),
+        "split.md": ("```markdown\n" + front + "```\n\nAnd the analysis:\n\n```markdown\n"
+                     + body + "```\n"),
+        "split_no_chat.md": "```\n" + front + "```\n```\n" + body + "```",
+        "split_tilde.md": ("Part one:\n~~~markdown\n" + front + "~~~\nPart two:\n~~~\n"
+                           + body + "~~~\n"),
+        # no wrapper to strip at all: frontmatter, then a stray bare fence
+        "stray_fence.md": front + "```\n" + body,
+    }
+    for name, text in variants.items():
+        with pytest.raises(ParseError, match="starts with a bare code fence"):
+            _parse(tmp_path, text, name=name)
+    # a body that opens with a labeled code block is still a body
+    row, _ = _parse(tmp_path, front + "```python\nprint(1)\n```\n" + body, name="code_first.md")
+    assert row["response_markdown"].startswith("```python\nprint(1)\n```\n## TL;DR")
+    # and one whole fenced file still parses, with a code block inside the body
+    row, _ = _parse(tmp_path, "```markdown\n" + V5_FILE + "\n```\nx = 1\n```\nDone.\n```\n",
+                    name="inner_code.md")
+    assert row["response_markdown"] == "## TL;DR\nBody line.\n\n```\nx = 1\n```\nDone."
+
+
+def test_leading_dollar_sign_is_dropped_from_the_ticker(tmp_path):
+    for i, written in enumerate(('"$zzzt"', "$ZZZT", "' $zzzt '", "ZZZT")):
+        row, _ = _parse(tmp_path, f"---\nticker: {written}\n---\nbody", name=f"t{i}.md")
+        assert row["ticker"] == "ZZZT", written
+    # only a "$": the folder name decides, and a "$" there is dropped too
+    row, _ = _parse(tmp_path, '---\nticker: "$"\n---\nbody', ticker="$zzqx", name="d.md")
+    assert row["ticker"] == "ZZQX"
+
+
+def test_list_discussions_accepts_a_dollar_prefixed_ticker(tmp_db):
+    from discussions_svc.parser import list_discussions
+    rf.add_discussion("ZZZT", "2031-02-03T10:15:00", "One note")
+    assert [d["summary"] for d in list_discussions("$zzzt")] == ["One note"]
+
+
+def test_catch_up_scan_quarantines_a_rejected_file_and_says_so(
+        tmp_db, tmp_discussions, capsys, monkeypatch):
+    """The startup scan used to skip a file the parser rejects without a
+    word: it stayed in its ticker folder, never ingested, never reported."""
+    import os
+    import time
+
+    from tests.conftest import write_md
+    from discussions_svc import watcher
+    from discussions_svc.parser import list_discussions
+    write_md(tmp_discussions, "ZZZT", "good.md", ["ticker: ZZZT", "summary: fine"])
+    unclosed = '---\nticker: "ZZZT"\nstance: "hold"\n## TL;DR\nBody'
+    bad = tmp_discussions / "ZZZT" / "bad.md"
+    bad.write_text(unclosed)
+    old = time.time() - 60
+    os.utime(bad, (old, old))
+    fresh = tmp_discussions / "ZZZT" / "fresh.md"     # touched just now: may be mid-write
+    fresh.write_text(unclosed)
+
+    assert watcher.catch_up_scan() >= 3
+    assert not bad.exists() and (tmp_discussions / "_failed" / "bad.md").exists()
+    assert (tmp_discussions / "_failed" / "bad.md").read_text() == unclosed
+    assert fresh.exists() and not (tmp_discussions / "_failed" / "fresh.md").exists()
+    out = capsys.readouterr().out
+    line, = [ln for ln in out.splitlines() if "rejected at startup" in ln]
+    assert line.startswith("[tickerbands] discussion rejected at startup: ")
+    assert "bad.md" in line and "still starts with '---'" in line
+    assert f"(moved to {tmp_discussions / '_failed' / 'bad.md'})" in line
+    assert "fresh.md" not in out
+    assert [d["summary"] for d in list_discussions("ZZZT")] == ["fine"]
+
+    # the next scan does not look inside _failed/ again; once the fresh file
+    # has settled it is quarantined too
+    os.utime(fresh, (old, old))
+    assert watcher.catch_up_scan() == 2
+    assert not fresh.exists() and (tmp_discussions / "_failed" / "fresh.md").exists()
+    assert "fresh.md" in capsys.readouterr().out
+    assert watcher.catch_up_scan() == 1
+
+    # a file that parses but cannot be stored stays where it is, and is named
+    good2 = write_md(tmp_discussions, "ZZZT", "good2.md", ["ticker: ZZZT", "summary: later"])
+    os.utime(good2, (old, old))
+    monkeypatch.setattr(watcher, "upsert_discussion",
+                        lambda row: (_ for _ in ()).throw(RuntimeError("database is locked")))
+    assert watcher.catch_up_scan() == 2
+    assert os.path.exists(good2) and not (tmp_discussions / "_failed" / "good2.md").exists()
+    out = capsys.readouterr().out
+    assert "discussion parsed but not stored" in out and "database is locked" in out
+
+
+def test_catch_up_scan_reports_a_file_it_could_not_move(tmp_db, tmp_discussions, capsys,
+                                                        monkeypatch):
+    import os
+    import time
+
+    from discussions_svc import watcher
+    (tmp_discussions / "ZZZT").mkdir()
+    bad = tmp_discussions / "ZZZT" / "bad.md"
+    bad.write_text("---\nticker: ZZZT\n---\n")           # empty body
+    old = time.time() - 60
+    os.utime(bad, (old, old))
+    monkeypatch.setattr(watcher.shutil, "move",
+                        lambda *a: (_ for _ in ()).throw(OSError("read-only")))
+    assert watcher.catch_up_scan() == 1
+    assert bad.exists()
+    out = capsys.readouterr().out
+    assert "empty body" in out and "(could not be moved to _failed/)" in out
