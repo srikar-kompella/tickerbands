@@ -14,13 +14,15 @@ import json
 from typing import Any, Callable
 
 import config
-from analysis import vol_bands
+from analysis import price_basis, vol_bands
 from cache.store import get_or_fetch
 from db import connect
 from providers.base import ProviderError
 
 
-def _cached(section: str, symbol: str, fn: Callable, ttl_key: str, force: bool):
+def _cached(section: str, symbol: str, fn: Callable | None, ttl_key: str, force: bool):
+    if fn is None:          # capability not configured → that column is "—"
+        return None
     try:
         return get_or_fetch(f"{section}:{symbol}", config.TTL[ttl_key],
                             lambda: fn(symbol), force=force)["data"]
@@ -28,7 +30,8 @@ def _cached(section: str, symbol: str, fn: Callable, ttl_key: str, force: bool):
         return None
 
 
-def screen_symbol(symbol: str, providers: dict, force: bool = False) -> dict[str, Any]:
+def screen_symbol(symbol: str, providers: dict, force: bool = False,
+                  now=None) -> dict[str, Any]:
     """One watchlist row. Never raises — a symbol that fails everything still
     returns a row (the UI shows dashes, not a hole in the table)."""
     symbol = symbol.upper()
@@ -37,10 +40,14 @@ def screen_symbol(symbol: str, providers: dict, force: bool = False) -> dict[str
     options = _cached("options", symbol, providers["options"], "options", force)
     earnings = _cached("earnings", symbol, providers["earnings"], "earnings", force)
 
+    # one price basis, same as the report (analysis/price_basis.py)
+    basis, bars = price_basis.build(quote, history, now=now)
     row: dict[str, Any] = {
         "symbol": symbol,
-        "price": quote.get("last") if quote else None,
-        "day_pct": quote.get("net_change_pct") if quote else None,
+        "price": basis.get("price") if basis.get("price") is not None
+                 else ((quote or {}).get("regular_last") or (quote or {}).get("last")),
+        "day_pct": basis.get("day_move_pct"),
+        "day_label": basis.get("move_word"),
         "band_half_pct": None,
         "implied_move_pct": None,
         "implied_vs_band": None,      # >1 ⇒ options pricing more than recent vol
@@ -51,7 +58,8 @@ def screen_symbol(symbol: str, providers: dict, force: bool = False) -> dict[str
         "last_score_ts": None,
     }
 
-    bars = vol_bands.completed_bars(history)
+    # bars end with the last COMPLETED session: when open that's yesterday;
+    # otherwise it's the session the day move refers to
     if len(bars) >= 22:
         closes = [b["close"] for b in bars]
         volumes = [b["volume"] for b in bars]

@@ -19,7 +19,7 @@ type SortKey = 'attention' | 'symbol' | 'day_pct' | 'band_half_pct'
 
 const HEADERS: { key: SortKey; label: string; title: string }[] = [
   { key: 'symbol', label: 'Symbol', title: 'Ticker' },
-  { key: 'day_pct', label: 'Today', title: "Today's move" },
+  { key: 'day_pct', label: 'Day', title: "Last session's move (today's when the market is open)" },
   { key: 'band_half_pct', label: 'Band ±%', title: '80% expected range half-width (realized vol)' },
   { key: 'implied_vs_band', label: 'Impl/Band', title: 'Options implied move ÷ our band — >1.3 usually means an event is priced in' },
   { key: 'days_to_earnings', label: 'Earnings', title: 'Days until next report' },
@@ -239,14 +239,21 @@ export default function Watchlist({ onAnalyze }: { onAnalyze: (s: string) => voi
                       {(() => {
                         const aq = quotes?.[r.symbol]
                         const useAh = ahOn && !!aq?.is_extended && aq.ah_change_pct != null
-                        const v = useAh ? aq!.ah_change_pct : r.day_pct
+                        // the session's move is the number; after-hours is a
+                        // small secondary note (same rule as the report header)
+                        const v = r.day_pct
                         return (
                           <td className={cn('tnum py-2.5 text-right', plColor(v))}
-                            title={useAh ? `After-hours move (close: ${fmtPct(r.day_pct, 2, true)})` : undefined}>
+                            title={useAh ? `After hours: ${fmtPct(aq!.ah_change_pct, 2, true)} vs the official close` : undefined}>
                             {v != null ? (
                               <>
                                 {fmtPct(v, 2, true)}
-                                {useAh && <Moon className="mb-0.5 ml-1 inline h-2.5 w-2.5 text-accent" />}
+                                {useAh && (
+                                  <span className={cn('ml-1 text-[10px]', plColor(aq!.ah_change_pct))}>
+                                    <Moon className="mb-0.5 mr-0.5 inline h-2.5 w-2.5 text-accent" />
+                                    {fmtPct(aq!.ah_change_pct, 1, true)}
+                                  </span>
+                                )}
                               </>
                             ) : <Pending active={!quotes} />}
                           </td>

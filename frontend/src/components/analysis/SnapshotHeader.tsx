@@ -22,13 +22,20 @@ export function SnapshotHeader({ a, onRefresh, refreshing, onAskClaude, watched,
   const q = a.quote
   const { on: ahOn, toggle: ahToggle } = useExtendedHours()
 
-  // After-hours display (on by default): when an extended session is live and
-  // the toggle is on, the big number IS the AH price, with the official close
-  // shown muted beneath. Toggle off → regular-session view only.
-  const showAH = ahOn && !!q?.is_extended && q?.ah_price != null
-  const price = showAH ? q!.ah_price! : (q?.regular_last ?? q?.last ?? 0)
-  const chg = showAH ? (q!.ah_change_pct ?? null)
-    : (q?.regular_change_pct ?? q?.net_change_pct ?? null)
+  // One price basis, same as the report (2026-11-21 audit): the big number is
+  // the live regular-session price when the market is open, otherwise the
+  // official close of the last session. An extended-hours trade is a labeled
+  // second line (toggle shows/hides it) — never the headline number. (The
+  // old header showed a stale pre-market print, $144.12 +14.81%, as NVDA's
+  // price on a Saturday.)
+  const pb = a.price_basis
+  const rvf = a.report_view?.fields ?? {}
+  const ah = pb?.after_hours ?? null
+  const showAH = ahOn && !!ah
+  const price = pb?.price ?? q?.regular_last ?? q?.last ?? 0
+  const chg = pb ? pb.day_move_pct : (q?.regular_change_pct ?? q?.net_change_pct ?? null)
+  const sessionWord = pb?.move_word && pb.move_word !== 'today' ? `${pb.move_word} session` : 'today'
+  const earnTag = rvf.earnings_next?.tag
 
   // A stale quote wearing a live face is the worst lie this header can tell —
   // surface it where the eye lands, not in a corner chip.
@@ -70,11 +77,7 @@ export function SnapshotHeader({ a, onRefresh, refreshing, onAskClaude, watched,
             <span className={cn('tnum text-sm font-semibold', plColor(chg))}>
               {fmtPct(chg, 2, true)}
             </span>
-            {showAH && (
-              <Badge tone="accent" className="text-[10px]" title="Extended-hours trade — regular close shown below">
-                <Moon className="h-2.5 w-2.5" /> AH
-              </Badge>
-            )}
+            <span className="text-[11px] text-faint">{sessionWord}</span>
             {a.ex_div?.today && (
               a.ex_div.amount != null ? (
                 <Badge tone="warn" className="text-[10px]"
@@ -89,9 +92,13 @@ export function SnapshotHeader({ a, onRefresh, refreshing, onAskClaude, watched,
               )
             )}
           </div>
-          {showAH && q?.regular_last != null && (
-            <div className="tnum text-[11px] text-faint">
-              at close {fmtMoney(q.regular_last)} ({fmtPct(q.regular_change_pct, 2, true)})
+          {pb?.price_label && (
+            <div className="text-[11px] text-faint">{pb.price_label}</div>
+          )}
+          {showAH && ah && (
+            <div className="tnum flex items-center gap-1 text-[11px] text-muted"
+              title="Extended-hours trade — shown for information; nothing on this page is computed from it">
+              <Moon className="h-2.5 w-2.5" /> {fmtMoney(ah.price)} ({fmtPct(ah.change_pct, 2, true)}) · {ah.label}
             </div>
           )}
         </div>
@@ -99,7 +106,7 @@ export function SnapshotHeader({ a, onRefresh, refreshing, onAskClaude, watched,
         {a.band && (
           <div className="border-l border-border pl-5">
             <div className="flex items-center gap-1 text-[10px] uppercase tracking-wide text-faint">
-              80% expected range <GlossaryTip entry={glossary.expected_range} />
+              80% range · {pb?.price_kind === 'live' ? "today's session" : 'next session'} <GlossaryTip entry={glossary.expected_range} />
             </div>
             <div className="tnum text-sm font-medium">
               {fmtMoney(a.band.low)} – {fmtMoney(a.band.high)}
@@ -111,7 +118,7 @@ export function SnapshotHeader({ a, onRefresh, refreshing, onAskClaude, watched,
         {a.move && (
           <div className="border-l border-border pl-5">
             <div className="flex items-center gap-1 text-[10px] uppercase tracking-wide text-faint">
-              today's move <GlossaryTip entry={glossary.move_z} />
+              {pb?.move_word && pb.move_word !== 'today' ? `move · ${pb.move_word}` : "today's move"} <GlossaryTip entry={glossary.move_z} />
             </div>
             <Badge tone={a.move.outside_band ? 'warn' : 'neutral'} className="tnum mt-0.5">
               {a.move.z >= 0 ? '+' : ''}{a.move.z.toFixed(2)}σ
@@ -128,6 +135,7 @@ export function SnapshotHeader({ a, onRefresh, refreshing, onAskClaude, watched,
             <Badge tone={a.earnings.days_until <= 5 ? 'warn' : 'neutral'} className="mt-0.5">
               <CalendarClock className="h-3 w-3" />
               {a.earnings.days_until === 0 ? 'today' : `in ${a.earnings.days_until}d`}
+              {earnTag && <span className="ml-1 text-[10px] opacity-75">{earnTag === 'confirmed' ? 'confirmed' : 'est.'}</span>}
             </Badge>
           </div>
         )}
@@ -149,6 +157,12 @@ export function SnapshotHeader({ a, onRefresh, refreshing, onAskClaude, watched,
                 {a.claude_stance.stance.toUpperCase()}
                 {a.claude_stance.stance_horizon && ` · ${a.claude_stance.stance_horizon}`}
               </Badge>
+              {(rvf.claude_stance?.warnings?.length ?? 0) > 0 && (
+                <Badge tone="warn" className="text-[10px]"
+                  title={rvf.claude_stance!.warnings.join('\n')}>
+                  ⚠ re-check
+                </Badge>
+              )}
               <span className="text-[10px] text-faint tnum">
                 {a.claude_stance.created_ts.slice(5, 10)}
                 {a.claude_stance.drift_material && a.claude_stance.drift_pct != null &&

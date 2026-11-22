@@ -38,27 +38,54 @@ export function FundamentalsPanel({ a, g }: { a: Analysis; g: G }) {
   // divergence warnings — vendor metrics alone rendered ECO at 40x / 0.8%
   // when the real trailing figures were ~6.4x / ~13%.
   const t = a.fundamentals_ttm
-  const warns = [t?.pe_ttm?.warning, t?.yield_ttm?.warning].filter(Boolean) as string[]
+  // 2026-11-21 audit: the same checked, single-price fields the report uses
+  // (market cap / P/E / margins / yields recomputed at the report price,
+  // basis-labeled). Falls back to the older block when absent.
+  type RVField = { label: string; display: string; status: string; basis?: string; warnings?: string[] }
+  const rvf = ((a as unknown as { report_view?: { fields?: Record<string, RVField> } })
+    .report_view?.fields) ?? {}
+  const rv = (k: string): RVField | undefined => rvf[k]
+  const rvKeys = ['pe_ttm', 'eps_ttm', 'market_cap', 'gross_margin', 'operating_margin',
+    'net_margin', 'net_margin_q', 'div_yield_forward', 'div_yield_trailing']
+  const rvWarns = rvKeys.flatMap((k) => (rv(k)?.warnings ?? []).map((w) => `${rv(k)!.label}: ${w}`))
+  const warns = (rv('market_cap') ? rvWarns
+    : [t?.pe_ttm?.warning, t?.yield_ttm?.warning].filter(Boolean)) as string[]
+  const priceBasis = (a as unknown as { price_basis?: { price_label?: string } }).price_basis
   return (
     <SectionShell title="Fundamentals" envelope={a.sections.fundamentals} glossary={g.pe_ttm}>
       {f && (
         <div className="divide-y divide-border/60">
           <Row label="P/E (TTM)"
-            value={t?.pe_ttm?.value != null ? fmtNum(t.pe_ttm.value, 1) : '—'}
+            value={rv('pe_ttm')?.display ?? (t?.pe_ttm?.value != null ? fmtNum(t.pe_ttm.value, 1) : '—')}
             tip={g.pe_ttm} />
-          <Row label="EPS (TTM)" value={fmtMoney(f.eps_ttm)} tip={g.eps_ttm} />
-          <Row label="Market cap" value={fmtMarketCap(f.market_cap_m)} tip={g.market_cap} />
+          <Row label="EPS (TTM)" value={rv('eps_ttm')?.display ?? fmtMoney(f.eps_ttm)} tip={g.eps_ttm} />
+          <Row label="Market cap" value={rv('market_cap')?.display ?? fmtMarketCap(f.market_cap_m)} tip={g.market_cap} />
           <Row label="Revenue growth" value={fmtPct(f.revenue_growth_ttm_pct, 1, true)}
             tip={g.revenue_growth} valueClass={plColor(f.revenue_growth_ttm_pct)} />
-          <Row label="Gross margin" value={fmtPct(f.gross_margin_pct, 1)} tip={g.gross_margin} />
-          <Row label="Operating margin" value={fmtPct(f.operating_margin_pct, 1)} tip={g.operating_margin} />
-          <Row label="Net margin" value={fmtPct(f.net_margin_pct, 1)} tip={g.net_margin} />
-          <Row label="Dividend yield (TTM)"
-            value={t?.yield_ttm?.value != null ? fmtPct(t.yield_ttm.value, 2) : '—'}
-            tip={g.dividend_yield} />
+          <Row label={rv('gross_margin')?.label ?? 'Gross margin'} value={rv('gross_margin')?.display ?? fmtPct(f.gross_margin_pct, 1)} tip={g.gross_margin} />
+          <Row label={rv('operating_margin')?.label ?? 'Operating margin'} value={rv('operating_margin')?.display ?? fmtPct(f.operating_margin_pct, 1)} tip={g.operating_margin} />
+          <Row label={rv('net_margin')?.label ?? 'Net margin'} value={rv('net_margin')?.display ?? fmtPct(f.net_margin_pct, 1)} tip={g.net_margin} />
+          {rv('net_margin_q') && rv('net_margin_q')!.display !== '—' && (
+            <Row label={rv('net_margin_q')!.label} value={rv('net_margin_q')!.display} tip={g.net_margin} />
+          )}
+          {rv('div_yield_forward') ? (
+            <>
+              <Row label="Dividend yield (forward)" value={rv('div_yield_forward')!.display} tip={g.dividend_yield} />
+              <Row label="Dividend yield (trailing 12 mo)" value={rv('div_yield_trailing')?.display ?? '—'} tip={g.dividend_yield} />
+            </>
+          ) : (
+            <Row label="Dividend yield (TTM)"
+              value={t?.yield_ttm?.value != null ? fmtPct(t.yield_ttm.value, 2) : '—'}
+              tip={g.dividend_yield} />
+          )}
         </div>
       )}
-      {t && (
+      {priceBasis?.price_label && rv('market_cap') && (
+        <p className="mt-2 text-[10px] leading-relaxed text-faint">
+          At the report price: {priceBasis.price_label}
+        </p>
+      )}
+      {t && !rv('market_cap') && (
         <p className="mt-2 text-[10px] leading-relaxed text-faint">
           P/E: {t.pe_ttm.source}{t.pe_ttm.as_of ? ` · as of ${t.pe_ttm.as_of}` : ''}
           <br />
@@ -267,7 +294,7 @@ export function OptionsPanel({ a, g }: { a: Analysis; g: G }) {
     <SectionShell title="Options positioning" envelope={a.sections.options} glossary={g.options_positioning}>
       {o?.available && (
         <div className="divide-y divide-border/60">
-          <Row label="Put/Call (today)" tip={g.options_positioning}
+          <Row label={a.price_basis?.price_kind === 'live' ? 'Put/Call (today)' : 'Put/Call (last session)'} tip={g.options_positioning}
             value={pc == null ? '— (thin volume)' : fmtNum(pc, 2)}
             valueClass={pc == null ? 'text-faint' : pc < 0.7 ? 'text-up' : pc > 1.1 ? 'text-down' : undefined} />
           <Row label="Call / Put volume" value={`${fmtCompact(o.call_volume)} / ${fmtCompact(o.put_volume)}`} />

@@ -140,4 +140,7 @@ def test_prompt_v3_new_file_mandate_and_news_check(client):
     p = client.get("/api/analysis/AAPL/prompt").json()["prompt"]
     assert "ALWAYS create a NEW file per discussion" in p
     assert "news_view:" in p and "news_note:" in p
-    assert "check of TODAY'S news" in p
+    # 2026-11-21: a same-day-only check missed an SEC probe — the prompt now
+    # demands the full window plus a regulatory/legal pass
+    assert "NEWS CHECK — window" in p and "Same-day headlines are NOT enough" in p
+    assert "SEC" in p and "8-K" in p and "class actions" in p

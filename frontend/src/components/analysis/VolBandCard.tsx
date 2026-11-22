@@ -88,7 +88,7 @@ export function VolBandCard({ a, glossary }: {
   const opts = a.options
 
   return (
-    <SectionShell title="Price · 30 days + tomorrow's range"
+    <SectionShell title="Price · 30 days + next session's range"
       envelope={a.sections.history} glossary={glossary.expected_range}
       collapsible={false} /* imperative chart — stays open; everything else collapses */>
       <div ref={el} className="w-full" />

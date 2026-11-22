@@ -271,7 +271,43 @@ export interface BandCoverage {
   note?: string
 }
 
+// 2026-11-21 report audit: ONE price basis per snapshot + checked fields
+export interface PriceBasis {
+  state: 'open' | 'pre' | 'post' | 'closed'
+  price: number | null
+  price_kind: 'live' | 'official_close' | null
+  session_date: string | null
+  prior_close: number | null
+  day_move_pct: number | null
+  move_word: string | null
+  is_today: boolean
+  price_label: string | null
+  as_of_label: string | null
+  after_hours: { price: number; change_pct: number; label: string; kind: string } | null
+  warnings: string[]
+}
+
+export interface ReportField {
+  key: string
+  label: string
+  value: unknown
+  display: string
+  status: 'ok' | 'withheld' | 'no_data'
+  basis?: string
+  source?: string
+  warnings: string[]
+  tag?: string | null
+}
+
+export interface ReportView {
+  fields: Record<string, ReportField>
+  checks: { check: string; ok: boolean; detail: string }[]
+  data_as_of?: { price: string; as_of: string; statements: string; news: string }
+}
+
 export interface Analysis {
+  price_basis?: PriceBasis
+  report_view?: ReportView
   symbol: string
   generated_ts: string
   quote: Quote | null

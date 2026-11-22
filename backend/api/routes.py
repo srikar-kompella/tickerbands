@@ -62,15 +62,30 @@ def get_report(symbol: str):
     from analysis.screener import decisions_review
     from api.report import build_report_html
 
+    from cache.store import put as cache_put
+
     try:
-        analysis = composer.analyze(symbol)
+        # fresh_core: the quote, history and account are fetched past their
+        # caches — a report never quotes a cached price as current
+        analysis = composer.analyze(symbol, fresh_core=True)
     except ProviderError as e:
         if e.reason == "not_found":
             raise HTTPException(404, e.detail or f"No data for '{symbol.upper()}'")
         raise HTTPException(502, f"{e.reason}: {e.detail}")
     discussions = list_discussions(symbol, limit=25)
-    decisions = [d for d in decisions_review(_pv()["quote"])
-                 if d["ticker"] == symbol.upper()]
+    price = (analysis.get("price_basis") or {}).get("price")
+    decisions = []
+    for d in decisions_review(_pv()["quote"]):
+        if d["ticker"] != symbol.upper():
+            continue
+        if price and d.get("decision_price"):   # one price basis on the page
+            d = {**d, "current_price": price,
+                 "pct_since": round((price / d["decision_price"] - 1) * 100, 2)}
+        decisions.append(d)
+    # the next report's news window starts here at the latest
+    cache_put(f"report_last:{symbol.upper()}",
+              {"date": dt.date.today().isoformat(),
+               "ts": dt.datetime.now().isoformat(timespec="seconds")})
     return HTMLResponse(build_report_html(analysis, discussions, decisions))
 
 
@@ -149,6 +164,24 @@ def build_claude_prompt(a: dict) -> str:
     now = dt.datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
     q, band, move, score = a.get("quote") or {}, a.get("band"), a.get("move"), a.get("setup_score")
 
+    rv = a.get("report_view") or {}
+    F = rv.get("fields") or {}
+    asof = rv.get("data_as_of") or {}
+    basis = a.get("price_basis") or {}
+    nwin = a.get("news_window") or {}
+    flags = a.get("research_flags") or {}
+
+    def fl(key: str) -> str:
+        f = F.get(key)
+        if not f:
+            return ""
+        txt = f"- {f['label']}: {f['display']}"
+        if f.get("basis"):
+            txt += f" [{f['basis']}]"
+        if f.get("warnings"):
+            txt += " ⚠ " + "; ".join(f["warnings"])
+        return txt
+
     lines = [
         f"# Research discussion: {sym}",
         "",
@@ -157,38 +190,62 @@ def build_claude_prompt(a: dict) -> str:
         "these signals cannot (1-day direction ≈ coin flip over ~9,600 backtested "
         "predictions). Ranges and risk framing are fine; directional calls are not.",
         "",
+        "## Data as of — read this first",
+        f"- Price basis: {asof.get('price')} ({asof.get('as_of')}). Market state at "
+        f"generation: {basis.get('state')}. Every price-dependent number below uses "
+        "this one price.",
+        *([f"- {F['after_hours']['display']} — an extended-hours quote, NOT the price; "
+           "do not compute anything from it."] if (F.get("after_hours") or {}).get("value") else []),
+        f"- Statements: {asof.get('statements')}",
+        f"- News: {asof.get('news')}",
+        *[f"- ⚠ {w}" for w in (basis.get("warnings") or [])],
+        *[f"- ⚠ CHECK FAILED (field withheld): {c['detail']}"
+          for c in (rv.get("checks") or []) if not c["ok"]],
+        "",
         "## Current analysis snapshot (context for YOU — do not repeat it back)",
         *_stale_warnings(a),
-        f"- Price: ${q.get('last')} ({q.get('net_change_pct')}% today), prev close ${q.get('close_prev')}",
+        *[x for x in (fl("price"), fl("day_move"), fl("day_move_sigma"),
+                      fl("band_next")) if x],
     ]
-    if band:
-        lines.append(f"- 80% expected range for next session: ${band['low']} – ${band['high']} "
-                     f"(±{band['half_width_pct']}%; construction covered 80.5% of 9,620 backtest days)")
-    if move:
-        lines.append(f"- Today's move: {move['move_pct']}% = {move['z']}σ "
-                     f"({'outside' if move['outside_band'] else 'inside'} the 80% band)")
     if score:
-        comp = ", ".join(f"{c['component']}={c['value']}" for c in score["components"] if c["available"])
+        comp = ", ".join(
+            f"{c['component']}={c['value']}" if c["available"]
+            else f"{c['component']}=({c.get('status') or 'no data'})"
+            for c in score["components"])
         lines.append(f"- Setup Score: {score['score']}/100 ({score['lean']}) from: {comp}")
-    for key, label in [("fundamentals", "Fundamentals"), ("news_sentiment", "News sentiment"),
-                       ("options", "Options"), ("social", "Social"),
-                       ("recommendations", "Analyst recs"), ("earnings", "Earnings"),
-                       ("position", "My position")]:
-        data = a.get(key)
-        if data and (data.get("available", True) or data.get("owned")):
-            slim = {k: v for k, v in data.items()
-                    if k not in {"available", "sample", "surprises", "months"} and v is not None}
-            lines.append(f"- {label}: {json.dumps(slim, default=str)}")
+    lines += ["", "### Fundamentals at the report price (use THESE numbers)"]
+    lines += [x for x in (fl(k) for k in (
+        "market_cap", "pe_ttm", "eps_ttm", "p_fcf", "fcf_ttm", "ev", "net_cash",
+        "revenue_growth", "revenue_growth_q", "gross_margin", "operating_margin",
+        "net_margin", "net_margin_q", "div_yield_forward", "div_yield_trailing")) if x]
+    lines += ["", "### Context"]
+    lines += [x for x in (fl(k) for k in (
+        "beta", "correlation", "week52", "rv20", "put_call", "atm_iv",
+        "implied_move", "news_sentiment", "social", "analyst_mix", "analyst_actions",
+        "move_cause", "regulatory",
+        "earnings_next", "position_value", "position_pl", "position_day_pl",
+        "position_weight")) if x]
+    heads = (F.get("headlines") or {}).get("items") or []
+    lines.append(f"- Relevant headlines in the feed ({(F.get('headlines') or {}).get('display', '0')}):"
+                 + ("" if heads else " none — the feed is NOT a news check; search yourself"))
+    for h in heads[:6]:
+        when = dt.datetime.fromtimestamp(h["ts"]).strftime("%b %d") if h.get("ts") else "?"
+        lines.append(f"  - {when}: {h['headline']} ({h.get('source')})")
+    for w in (flags.get("news") or []):
+        lines.append(f"- ⚠ previous news check: {w}")
+    for w in (flags.get("stance") or []):
+        lines.append(f"- ⚠ previous stance: {w}")
 
     # ── continuity: what past sessions already concluded about this ticker ────
     prior = list_discussions(sym, limit=5)
     if prior:
-        lines += ["", "## Prior discussions on this ticker (build on these — "
-                      "don't re-derive settled points; call out explicitly if "
-                      "new data changes an earlier conclusion)"]
+        lines += ["", "## Prior discussions on this ticker (DATED — each is true only "
+                      "as of its date. Re-check anything you carry forward, or "
+                      "date it explicitly, e.g. 'as of Nov 13'; never restate an "
+                      "old note as current)"]
         for d in prior:
             tags = f" [{', '.join(d['tags'])}]" if d.get("tags") else ""
-            lines.append(f"- {d['created_ts']}: {d['summary'] or '(no summary)'}{tags}")
+            lines.append(f"- as of {d['created_ts'][:10]}: {d['summary'] or '(no summary)'}{tags}")
 
     lines += [
         "",
@@ -197,10 +254,38 @@ def build_claude_prompt(a: dict) -> str:
         "piece of jargon gets a plain-English gloss in the same sentence.",
         "- Detailed reasoning, not conclusions-by-decree: every claim ties to a "
         "number from the snapshot above, and you say WHY it matters.",
-        "- If you have web search available, do a quick check of TODAY'S news "
-        f"for {sym} and fold anything material into the analysis; then set the "
-        "optional `news_view`/`news_note` frontmatter below — the app surfaces "
-        "them in its News section.",
+        f"- NEWS CHECK — window {nwin.get('from')} → {nwin.get('to')} (since the "
+        "last report for this ticker or the last 5 trading days, whichever is "
+        "longer). Same-day headlines are NOT enough. Search the whole window, "
+        "then run a regulatory & legal pass: SEC (inquiries, probes, comment "
+        "letters), DOJ, state attorneys general, export controls, securities "
+        f"class actions, and 8-K filings since {nwin.get('from')}. Fold anything "
+        "material into the analysis; then set `news_view`/`news_note` (put the "
+        "window you checked in the note, e.g. 'Nov 14–21: …').",
+        *([f"- THE LAST SESSION MOVED {F['day_move']['display']} = "
+           f"{(a.get('move') or {}).get('z'):+.1f}σ (outside the 80% band). You MUST "
+           "find and state the reported cause, with source and date — or write "
+           "explicitly 'no cause found after searching <sources>'. You may NOT "
+           "write 'no material news' after a move this size."]
+          if (a.get("move") or {}).get("z") is not None
+          and abs(a["move"]["z"]) >= 2 else []),
+        "- NUMBERS: use the snapshot above for every price-dependent figure "
+        "(market cap, P/E, P/FCF, EV, yields, position value). If you cite an "
+        "outside figure, name its source and date. Use only the beta shown "
+        "(60 daily returns vs SPY) — do not quote betas from other sites. Say "
+        "whether a margin/ratio is TTM or latest-quarter, and whether a "
+        "dividend yield is forward or trailing. State earnings dates as "
+        "confirmed or estimated exactly as tagged above — and check the date on "
+        "the company's investor-relations page; if it differs, say so with the link.",
+        *([f"- LATEST QUARTER: results were released {(a.get('statements_meta') or {}).get('release', {}).get('date')} "
+           f"({(a.get('statements_meta') or {}).get('release', {}).get('url')}) but the 10-Q data "
+           "is not in the snapshot yet — read the release for the latest quarter's cash "
+           "flow and balance sheet before citing TTM figures."]
+          if (a.get("statements_meta") or {}).get("release")
+          and not (a.get("statements_meta") or {}).get("covers_latest", True) else []),
+        f"- TIME: the market was {basis.get('state')} when this snapshot was "
+        f"built; the day move refers to the {basis.get('move_word')} session. Do "
+        "not call a past session 'today'.",
         "- If the user states a decision during the conversation (buy / sell / "
         "trim / hold / pass), record it in the optional `decision:` frontmatter "
         "— the app captures the price at that moment automatically and tracks "
@@ -238,7 +323,7 @@ def build_claude_prompt(a: dict) -> str:
         "summary: <your TL;DR compressed to one line — this is the timeline display>",
         "tags: [<one-or-two-kebab-case-tags>]",
         "news_view: <bullish|neutral|bearish — only if you checked the news>",
-        "news_note: <one line on what the latest news says — optional>",
+        "news_note: <window checked + what it found, e.g. 'Nov 14–21: SEC probe reported (Reuters 11/20)…'>",
         "decision: <buy|sell|trim|hold|pass — ONLY if the user stated one>",
         "stance: <buy|sell|hold|trim|watch — YOUR reasoned multi-month call, or omit>",
         "stance_horizon: <e.g. 3-6mo>",
@@ -283,7 +368,12 @@ def watchlist_quotes():
         raise HTTPException(502, f"{e.reason}: {e.detail}")
     for sym, q in quotes.items():
         put(f"quote:{sym}", q)   # warm the cache — one call feeds everything
-    return {sym: {"price": q["last"], "day_pct": q["net_change_pct"],
+    # regular-session price and change — net_change_pct is last-vs-close and
+    # turns into the AFTER-HOURS move on evenings/weekends (SPY "+1.11%" on a
+    # Friday that fell sharply, 11/21). AH stays a separate field.
+    return {sym: {"price": q.get("regular_last") or q["last"],
+                  "day_pct": (q["regular_change_pct"] if q.get("regular_change_pct") is not None
+                              else q["net_change_pct"]),
                   "ah_price": q.get("ah_price"),
                   "ah_change_pct": q.get("ah_change_pct"),
                   "is_extended": bool(q.get("is_extended"))}
@@ -1107,3 +1197,31 @@ def health():
         conn.close()
     return {"ok": True, "providers": providers, "discussions": n,
             "mock_mode": composer.use_mock()}
+
+
+@router.get("/audit/sec-tags/{symbol}")
+def audit_sec_tags(symbol: str, q: str = Query("", max_length=60)):
+    """Audit helper: the company's us-gaap XBRL tags (optionally filtered by a
+    substring) with each tag's latest period end and value — to check which
+    tag a company actually files a line under (tags change over time)."""
+    import requests as _rq
+
+    from providers import edgar
+    try:
+        cik = edgar._cik_for(symbol)
+        r = _rq.get(f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json",
+                    headers=edgar._ua(), timeout=30)
+        us = (r.json().get("facts") or {}).get("us-gaap") or {}
+    except Exception as e:
+        raise HTTPException(502, f"SEC: {e}")
+    out = []
+    for tag, body in us.items():
+        if q and q.lower() not in tag.lower():
+            continue
+        rows = [x for u in (body.get("units") or {}).values() for x in u]
+        if not rows:
+            continue
+        last = max(rows, key=lambda x: (x["end"], x.get("filed", "")))
+        out.append({"tag": tag, "end": last["end"], "val": last["val"],
+                    "form": last.get("form"), "filed": last.get("filed")})
+    return sorted(out, key=lambda x: x["end"], reverse=True)[:80]

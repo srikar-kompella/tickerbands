@@ -86,9 +86,13 @@ def build_value_lens(market_cap: float | None,
 
     # enterprise value + net-cash flag
     debt, cash = _f(bal.get("total_debt")), _f(bal.get("cash"))
+    # same construction as the report (report_view): marketable equity
+    # securities count as cash-like — the panel said EV $3.00T while the
+    # report said $2.96T for NVDA on 11/21
+    eq_sec = _f(bal.get("equity_securities")) or 0.0
     ev = None
     if market_cap is not None and debt is not None and cash is not None:
-        ev = market_cap + debt - cash
+        ev = market_cap + debt - cash - eq_sec
         if ev < market_cap:
             warnings.append(
                 "net cash position (EV < market cap) — balance-sheet staying "
@@ -180,7 +184,8 @@ def build_value_lens(market_cap: float | None,
         "pe_avg": m(pe_avg, f"market cap ÷ avg net income of last {n_ni} FYs"),
         "ni_vs_fcf_flag": ni_fcf_flag,
         "payout_of_fcf_pct": m(payout_fcf, "TTM dividends paid ÷ TTM FCF"),
-        "ev": m(ev and ev / 1e6, "market cap + total debt − cash ($M)"),
+        "ev": m(ev and ev / 1e6, "market cap + total debt − cash & short-term "
+                                 "investments − marketable equity securities ($M)"),
         "net_cash": bool(ev is not None and market_cap is not None and ev < market_cap),
         "rev_cagr_3y": m(cagr3, "reported FY revenues, 3-yr span"),
         "rev_cagr_5y": m(cagr5, f"reported FY revenues, {span5}-yr span"),

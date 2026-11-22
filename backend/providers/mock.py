@@ -92,6 +92,10 @@ def fetch_quote(symbol: str) -> dict[str, Any]:
         "net_change_pct": round(chg * 100, 2),
         "quote_time_ms": int(dt.datetime.now().timestamp() * 1000),
         "asset_type": "ETF" if symbol.upper() in {"SPY", "QQQ", "IWM", "XLE", "TLT", "PHYS", "PSLV"} else "EQUITY",
+        # mock history ends yesterday and this quote is "live": the mock world
+        # is always mid-session, whatever the wall clock says (keeps offline
+        # dev and the test suite deterministic on weekends)
+        "simulated_session": "open",
     }
 
 
@@ -129,7 +133,7 @@ def fetch_news_sentiment(symbol: str) -> dict[str, Any]:
     }
 
 
-def fetch_headlines(symbol: str, limit: int = 5) -> list[dict[str, Any]]:
+def fetch_headlines(symbol: str, limit: int = 12) -> list[dict[str, Any]]:
     now = int(dt.datetime.now().timestamp())
     verbs = ["beats estimates", "announces buyback", "faces probe",
              "upgraded at MockBank", "launches new product"]
@@ -188,13 +192,30 @@ def fetch_statements(symbol: str) -> dict[str, Any]:
             "fcf": fcf * (1 - 0.07 * i),
             "acquisitions": -base * 0.01 * _seed(symbol, f"acq{i}")}
            for i in range(5)]
+    q_end = dt.date.today() - dt.timedelta(days=40)
+    quarters = [{"end": (q_end - dt.timedelta(days=91 * i)).isoformat(),
+                 "revenue": base / 4, "gross_profit": base / 4 * 0.5,
+                 "operating_income": ni / 4 * 1.3, "pretax_income": ni / 4 * 1.27,
+                 "net_income": ni / 4, "eps_diluted": None, "fcf": fcf / 4}
+                for i in range(4)]
     return {"available": True,
             "ttm": {"ocf": fcf * 1.2, "capex": -fcf * 0.2, "fcf": fcf,
                     "dividends_paid": fcf * (_seed(symbol, "pay") * 0.9),
-                    "net_income": ni, "ebit": ni * 1.3, "eff_tax_rate": 0.21},
+                    "net_income": ni, "ebit": ni * 1.3, "eff_tax_rate": 0.21,
+                    "revenue": base, "gross_profit": base * 0.5,
+                    "operating_income": ni * 1.3, "pretax_income": ni * 1.27,
+                    "eps_diluted": None},
             "annual": ann,
             "balance": {"total_debt": base * 0.3, "cash": base * 0.15,
+                        "cash_st": base * 0.15, "equity_securities": None,
                         "equity": base * 0.5},
+            "quarters": quarters, "latest_quarter_end": quarters[0]["end"],
+            "source": "mock", "as_of": dt.date.today().isoformat()}
+
+
+def fetch_earnings_confirmation(symbol: str) -> dict[str, Any]:
+    e = fetch_earnings(symbol)
+    return {"date": e["next_date"], "estimate": _seed(symbol, "econf") < 0.5,
             "source": "mock", "as_of": dt.date.today().isoformat()}
 
 
@@ -349,6 +370,19 @@ def fetch_chain_for_lens(symbol: str, dte_max: int = 35) -> dict[str, Any]:
             else:
                 puts.append({**row, "side": "put", "delta": round(-min(0.99, (1 - p_above) * 1.18), 3)})
     return {"available": True, "spot": spot, "calls": calls, "puts": puts}
+
+
+def fetch_recent_filings(symbol: str, since: str) -> dict[str, Any]:
+    d = (dt.date.today() - dt.timedelta(days=3)).isoformat()
+    return {"available": True, "since": since[:10], "cik": "0000000000",
+            "filings": ([{"form": "8-K", "date": d, "items": "8.01",
+                          "url": "https://example.com/8k"}] if d >= since[:10] else [])}
+
+
+def fetch_rating_changes(symbol: str, days: int = 90) -> dict[str, Any]:
+    d = (dt.date.today() - dt.timedelta(days=10)).isoformat()
+    return {"available": True, "source": "mock", "changes": [
+        {"date": d, "firm": "MockBank", "action": "down", "from": "Buy", "to": "Hold"}]}
 
 
 def fetch_past_earnings_dates(symbol: str, years: int = 2) -> list[dict[str, Any]]:

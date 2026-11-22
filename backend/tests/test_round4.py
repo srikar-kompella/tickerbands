@@ -241,7 +241,7 @@ def test_stance_flow_end_to_end(client, tmp_db, tmp_discussions):
     row = client.get("/api/watchlist/screener").json()[0]
     assert row["stance"] == "buy" and row["stance_ts"].startswith("2026-07-14")
     # report carries it
-    assert "Claude stance" in client.get("/api/analysis/AAPL/report").text
+    assert "Research stance" in client.get("/api/analysis/AAPL/report").text
     # invalid stance dropped, absent stance → null payload
     from discussions_svc.parser import parse_discussion_file
     p = wmd(tmp_discussions, "XOM", "s2.md", ["ticker: XOM", "stance: yolo-long"])

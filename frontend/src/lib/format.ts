@@ -33,7 +33,11 @@ export const fmtAge = (seconds: number | null | undefined): string => {
 
 export const fmtDate = (iso: string | null | undefined): string => {
   if (!iso) return '—'
-  const d = new Date(iso)
+  // A bare date ("2027-02-23") is a calendar date, not an instant. new Date()
+  // parses it as UTC midnight, which renders as the PREVIOUS day in US time
+  // zones (the earnings card showed Feb 22 for a Feb 23 report — 11/21 audit).
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso)
+  const d = m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : new Date(iso)
   return isNaN(d.getTime()) ? iso : d.toLocaleDateString('en-US', {
     month: 'short', day: 'numeric', year: 'numeric',
   })

@@ -85,7 +85,7 @@ CAPABILITY_DEFAULTS = {
     # TTM fundamentals panel and dividend-adjusted moves/bands (BUG A/B fixes)
     "dividend_history": "yfinance",
     "eps_check": "yfinance",
-    "financial_statements": "yfinance",
+    "financial_statements": "edgar",   # SEC XBRL (filed numbers); Yahoo merged as fallback
     "news_sentiment": "finnhub",
     "news_headlines": "finnhub",
     "analyst_recs": "finnhub",

@@ -62,11 +62,14 @@ echo
 
 # --reload scoped to *.py: backend code changes apply without a restart
 # (DB/cache writes in this dir must NOT trigger reloads — hence the include).
+# --timeout-graceful-shutdown: every open app tab holds a live-update (SSE)
+# stream open forever; without a timeout, a code-change reload waits on those
+# streams indefinitely and the backend stops answering (seen 2026-11-21).
 # Quiet by default: no per-request access lines (the UI polls constantly).
 # TICKERBANDS_VERBOSE=1 ./run_app.sh brings them back for debugging.
 ACCESS_LOG="--no-access-log"; [ -n "$TICKERBANDS_VERBOSE" ] && ACCESS_LOG=""
 ( cd "$ROOT/backend" && exec "$VENV/bin/uvicorn" app:app --port 8001 \
-    --reload --reload-include '*.py' $ACCESS_LOG ) &
+    --reload --reload-include '*.py' --timeout-graceful-shutdown 2 $ACCESS_LOG ) &
 BACK=$!
 
 ( cd "$ROOT/frontend" && exec npm run dev ) &

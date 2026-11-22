@@ -66,32 +66,55 @@ def health_check() -> bool:
 
 # ─── quotes ────────────────────────────────────────────────────────────────────
 
-def _extended_view(q: dict, regular: dict, extended: dict) -> dict[str, Any]:
-    """Extract regular-session vs extended-hours (pre/post) values from a
-    Schwab quote blob. Pure + fixture-testable because Schwab's exact field
-    population varies by session.
+def _ny_session_close_ms(reg_time_ms: int) -> int:
+    """Epoch ms of the regular close (16:00 ET; 13:00 on early-close days) on
+    the NY calendar date of the last regular-session trade."""
+    import datetime as _dt
+    from analysis import market_clock as mc
+    t = mc.to_ny(_dt.datetime.fromtimestamp(reg_time_ms / 1000, _dt.timezone.utc))
+    close = mc.to_ny(_dt.datetime.combine(t.date(), mc.close_time(t.date())))
+    return int(close.timestamp() * 1000)
 
-    Sources, most-specific first: the `extended` object's lastPrice/mark; else
-    the composite quote.lastPrice when it has traded AWAY from the official
-    regularMarketLastPrice after the regular print (classic post-market tell).
+
+def _extended_view(q: dict, regular: dict, extended: dict) -> dict[str, Any]:
+    """Regular-session vs extended-hours (pre/post) values from a Schwab
+    quote blob. Pure + fixture-testable.
+
+    2026-11-21 bug: Schwab's `extended` object can hold a STALE print — on
+    Saturday it still carried Friday's 3:59 AM pre-market trade (NVDA
+    $144.12) while the real after-hours trade was $130.03 at 7:59 PM in the
+    composite quote. So every candidate must carry its own timestamp, and only
+    a print made AFTER the last regular session's close counts as the
+    extended-hours price; the most recent such print wins.
     """
     last = q.get("lastPrice") or q.get("mark") or q.get("closePrice") or 0.0
     regular_last = regular.get("regularMarketLastPrice") or None
     regular_pct = regular.get("regularMarketPercentChange")
     reg_time = int(regular.get("regularMarketTradeTime") or 0)
-    q_time = int(q.get("quoteTime") or q.get("tradeTime") or 0)
+    q_time = int(q.get("tradeTime") or q.get("quoteTime") or 0)
+    ext_time = int(extended.get("tradeTime") or extended.get("quoteTime") or 0)
+    ext_px = extended.get("lastPrice") or extended.get("mark") or None
 
-    ah_price = extended.get("lastPrice") or extended.get("mark") or None
-    if ah_price is None and regular_last and q_time > reg_time > 0 \
-            and abs(float(last) - float(regular_last)) / float(regular_last) > 0.0005:
-        ah_price = float(last)
+    cutoff = _ny_session_close_ms(reg_time) if reg_time else 0
+    cands = []
+    if ext_px and ext_time and (not cutoff or ext_time > cutoff):
+        cands.append((ext_time, float(ext_px), "extended"))
+    if (last and regular_last and q_time and (not cutoff or q_time > cutoff)
+            and abs(float(last) - float(regular_last)) / float(regular_last) > 0.0005):
+        cands.append((q_time, float(last), "composite"))
+    ah_time, ah_price, ah_src = max(cands) if cands else (None, None, None)
 
     out: dict[str, Any] = {
         "regular_last": float(regular_last) if regular_last else None,
         "regular_change_pct": (float(regular_pct) if regular_pct is not None else None),
-        "ah_price": float(ah_price) if ah_price else None,
+        "ah_price": ah_price,
         "ah_change_pct": None,
+        "ah_time_ms": ah_time,
+        "ah_source": ah_src,
         "is_extended": False,
+        # raw timestamps kept for diagnosis
+        "ext_trade_time_ms": ext_time or None,
+        "reg_trade_time_ms": reg_time or None,
     }
     if out["ah_price"] and out["regular_last"]:
         out["ah_change_pct"] = round(

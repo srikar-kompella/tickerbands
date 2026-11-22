@@ -115,15 +115,40 @@ def fetch_news_sentiment(symbol: str) -> dict[str, Any]:
 
 # ─── headlines (Q1: a bare "62% bullish" is uninspectable — show the articles) ─
 
-def fetch_headlines(symbol: str, limit: int = 5) -> list[dict[str, Any]]:
+HEADLINE_WINDOW_DAYS = 10   # ≥ 5 trading days even across a holiday week
+
+
+def fetch_headlines(symbol: str, limit: int = 2000) -> list[dict[str, Any]]:
+    """Company news for the last HEADLINE_WINDOW_DAYS days. Finnhub's
+    company-news mixes in market-wide stories (the NVDA 11/21 report listed
+    Intel, Jim Cramer, an annuity piece and Anthropic) — so we fetch the
+    WHOLE window here (a 60-item cap collapsed NVDA's window to one day) and
+    the composer keeps only items that actually mention the company
+    (analysis/news_relevance.py)."""
     today = dt.date.today()
-    raw = _get("company-news", {
-        "symbol": symbol,
-        "from": (today - dt.timedelta(days=7)).isoformat(),
-        "to": today.isoformat(),
-    })
-    if not isinstance(raw, list):
-        return []
+    # Finnhub returns at most ~250 items per call, newest first — for a busy
+    # name one call covers ~2 days (live NVDA 11/21: 249 items, 11/20–11/21).
+    # Query 2-day chunks across the window and de-duplicate.
+    raw, seen = [], set()
+    start = today - dt.timedelta(days=HEADLINE_WINDOW_DAYS)
+    d = today
+    while d >= start:
+        frm = max(start, d - dt.timedelta(days=1))
+        try:
+            chunk = _get("company-news", {"symbol": symbol, "from": frm.isoformat(),
+                                          "to": d.isoformat()})
+        except ProviderError:
+            if not raw:
+                raise
+            break
+        for it in chunk if isinstance(chunk, list) else []:
+            k = it.get("id") or it.get("url") or it.get("headline")
+            if k in seen:
+                continue
+            seen.add(k)
+            raw.append(it)
+        d = frm - dt.timedelta(days=1)
+    raw.sort(key=lambda it: int(it.get("datetime") or 0), reverse=True)
     out = []
     for item in raw[:limit]:
         out.append({

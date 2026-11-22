@@ -69,14 +69,17 @@ def test_news_bullish_positive_bearish_negative():
 
 
 def test_news_article_count_damps_thin_coverage():
-    thin = c_news_sentiment(0.9, 0.1, 3)
+    # 2026-11-21 report audit: below 10 articles a split is withheld, not
+    # scored; between 10 and 20 it is damped linearly.
+    assert c_news_sentiment(0.9, 0.1, 3) is None
+    mid = c_news_sentiment(0.9, 0.1, 10)
     thick = c_news_sentiment(0.9, 0.1, 40)
-    assert 0 < thin < thick
-    assert thin == pytest.approx(thick * 3 / 20)
+    assert 0 < mid < thick
+    assert mid == pytest.approx(thick * 10 / 20)
 
 
-def test_news_zero_articles_zero_signal():
-    assert c_news_sentiment(1.0, 0.0, 0) == 0.0
+def test_news_zero_articles_no_signal():
+    assert c_news_sentiment(1.0, 0.0, 0) is None
 
 
 def test_news_full_weight_caps_at_twenty_articles():
@@ -138,9 +141,19 @@ def test_analyst_shift_dominates_level():
     assert improving > deteriorating
 
 
-def test_analyst_single_month_uses_level_anchor_only():
-    v = c_analyst_trend([_month(10, 10, 2, 0, 0)])
-    assert 0 < v <= 0.5  # 0.5·net_now, no delta term
+def test_analyst_single_month_is_no_data():
+    # a "trend" needs two snapshots; one month used to add 0.5·level
+    # (the +0.47 phantom seen in the 2026-11 reports)
+    assert c_analyst_trend([_month(10, 10, 2, 0, 0)]) is None
+
+
+def test_analyst_stale_latest_month_is_no_data():
+    import datetime as dt
+    months = [{**_month(10, 10, 2, 0, 0), "period": "2026-08-01"},
+              {**_month(9, 10, 3, 0, 0), "period": "2026-07-01"}]
+    assert c_analyst_trend(months, dt.date(2026, 11, 21)) is None
+    fresh = [{**m, "period": p} for m, p in zip(months, ("2026-11-01", "2026-10-01"))]
+    assert c_analyst_trend(fresh, dt.date(2026, 11, 21)) is not None
 
 
 def test_analyst_none_on_empty_or_zero_totals():
@@ -161,14 +174,16 @@ def test_social_polarity_sign_carries():
 
 
 def test_social_log_volume_scaling():
-    quiet = c_social_buzz(1.0, 3)
-    loud = c_social_buzz(1.0, 30)
-    assert 0 < quiet < loud <= 1.0
-    assert loud == pytest.approx(1.0, abs=0.02)  # ~30 msgs ≈ full weight
+    # sample = tagged messages; "1.00 from 2 messages" is withheld
+    assert c_social_buzz(1.0, 30, tagged=2) is None
+    mid = c_social_buzz(1.0, 30, tagged=12)
+    loud = c_social_buzz(1.0, 30, tagged=30)
+    assert 0 < mid < loud <= 1.0
+    assert loud == pytest.approx(1.0, abs=0.02)  # ~30 tagged ≈ full weight
 
 
-def test_social_zero_messages_zero_signal():
-    assert c_social_buzz(1.0, 0) == 0.0
+def test_social_zero_messages_no_signal():
+    assert c_social_buzz(1.0, 0) is None
 
 
 def test_social_none_when_missing():

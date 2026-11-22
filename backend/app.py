@@ -113,6 +113,11 @@ async def lifespan(app: FastAPI):
     if not env("NO_AUTOREFRESH"):
         refresh_task = asyncio.create_task(_auto_refresh_loop())
     scanned = catch_up_scan()
+    from discussions_svc.parser import dedupe_linked_paths
+    dd = dedupe_linked_paths()
+    if dd["removed"]:
+        print(f"[tickerbands] merged {dd['merged']} discussions stored under two paths "
+              f"(removed {dd['removed']} duplicate rows)")
     print(f"[tickerbands] watcher up on discussions/ (catch-up scanned {scanned} files)")
     yield
     if refresh_task:

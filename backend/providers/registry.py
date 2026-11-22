@@ -13,7 +13,7 @@ import os
 from typing import Any, Callable
 
 import config
-from providers import edgar, finnhub, finra, mock, schwab, stocktwits, yfinance
+from providers import edgar, finnhub, finra, mock, schwab, sec_xbrl, stocktwits, yfinance
 
 MODULES = {
     "schwab": schwab, "finnhub": finnhub, "stocktwits": stocktwits,
@@ -43,8 +43,16 @@ IMPLEMENTATIONS: dict[str, dict[str, Callable]] = {
                          "mock": (mock, "fetch_dividends")},
     "eps_check": {"yfinance": (yfinance, "fetch_eps_ttm"),
                   "mock": (mock, "fetch_eps_ttm")},
-    "financial_statements": {"yfinance": (yfinance, "fetch_statements"),
+    # SEC XBRL = the filed numbers (primary); Yahoo = fallback that is often
+    # a few days newer right after an earnings release (merged per statement)
+    "financial_statements": {"edgar": (sec_xbrl, "fetch_statements"),
+                             "yfinance": (yfinance, "fetch_statements"),
                              "mock": (mock, "fetch_statements")},
+    "statements_fallback": {"yfinance": (yfinance, "fetch_statements")},
+    "sec_filings": {"edgar": (sec_xbrl, "fetch_recent_filings"),
+                    "mock": (mock, "fetch_recent_filings")},
+    "rating_changes": {"yfinance": (yfinance, "fetch_rating_changes"),
+                       "mock": (mock, "fetch_rating_changes")},
     "news_sentiment": {"finnhub": (finnhub, "fetch_news_sentiment"),
                        "mock": (mock, "fetch_news_sentiment")},
     "news_headlines": {"finnhub": (finnhub, "fetch_headlines"),
@@ -54,6 +62,8 @@ IMPLEMENTATIONS: dict[str, dict[str, Callable]] = {
     "earnings": {"finnhub": (finnhub, "fetch_earnings"), "mock": (mock, "fetch_earnings")},
     "earnings_dates": {"finnhub": (finnhub, "fetch_past_earnings_dates"),
                        "mock": (mock, "fetch_past_earnings_dates")},
+    "earnings_confirm": {"yfinance": (yfinance, "fetch_earnings_confirmation"),
+                         "mock": (mock, "fetch_earnings_confirmation")},
     "shares_out": {"finnhub": (finnhub, "fetch_shares_outstanding"),
                    "mock": (mock, "fetch_shares_outstanding")},
     "social": {"stocktwits": (stocktwits, "fetch_social"), "mock": (mock, "fetch_social")},
@@ -66,7 +76,10 @@ IMPLEMENTATIONS: dict[str, dict[str, Callable]] = {
 
 # sub-capabilities inherit the parent's configured provider
 _ALIAS = {"quotes_batch": "quotes", "option_chain_lens": "option_chain",
-          "earnings_dates": "earnings", "shares_out": "fundamentals"}
+          "earnings_dates": "earnings", "shares_out": "fundamentals",
+          # keyless Yahoo flag rides on the same provider as the EPS check
+          "earnings_confirm": "eps_check", "statements_fallback": "eps_check",
+          "rating_changes": "eps_check", "sec_filings": "insiders"}
 
 
 def use_mock() -> bool:

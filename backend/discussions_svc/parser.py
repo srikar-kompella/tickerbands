@@ -230,3 +230,53 @@ def list_discussions(ticker: str | None = None, limit: int = 100) -> list[dict]:
         return out
     finally:
         conn.close()
+
+
+def dedupe_linked_paths() -> dict[str, int]:
+    """One discussion file reachable through two paths is ONE discussion.
+
+    After the TickerLens → TickerBands rename, ~/.tickerlens is a symlink to
+    ~/.tickerbands, and the catch-up scan re-ingested every file under the new
+    path while the old-path rows stayed — 45 discussions were stored twice
+    (doubled discussion lists and stance scorecard, found 11/21). The re-read
+    copy also captured its decision price at re-read time, not decision time.
+
+    Rule: group rows by the file's real path; keep the row whose path is under
+    the current instance dir (else the newest), and carry over the EARLIEST
+    decision_price (the price when the user actually decided). Idempotent.
+    """
+    import os
+
+    import config
+    conn = connect()
+    merged = removed = 0
+    try:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT id, file_path, decision_price FROM claude_discussions ORDER BY id")]
+        groups: dict[str, list[dict]] = {}
+        for r in rows:
+            try:
+                real = os.path.realpath(r["file_path"])
+            except OSError:
+                real = r["file_path"]
+            groups.setdefault(real, []).append(r)
+        for real, grp in groups.items():
+            if len(grp) < 2:
+                continue
+            prefix = config.TICKERBANDS_HOME.rstrip("/") + "/"
+            keep = next((g for g in reversed(grp) if g["file_path"].startswith(prefix)),
+                        grp[-1])
+            first_price = next((g["decision_price"] for g in grp
+                                if g["decision_price"] is not None), None)
+            if first_price is not None:
+                conn.execute("UPDATE claude_discussions SET decision_price = ? WHERE id = ?",
+                             (first_price, keep["id"]))
+            for g in grp:
+                if g["id"] != keep["id"]:
+                    conn.execute("DELETE FROM claude_discussions WHERE id = ?", (g["id"],))
+                    removed += 1
+            merged += 1
+        conn.commit()
+    finally:
+        conn.close()
+    return {"merged": merged, "removed": removed}
