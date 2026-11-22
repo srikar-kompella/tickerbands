@@ -94,7 +94,7 @@ export function TickerSearch({ onAnalyze }: { onAnalyze: (symbol: string) => voi
                   <button onClick={() => pick(r.symbol)} className="flex min-w-0 flex-1 items-baseline gap-2 text-left">
                     <span className="font-bold">{r.symbol}</span>
                     <span className="truncate text-sm text-muted">{r.description}</span>
-                    <span className="ml-auto shrink-0 text-[10px] uppercase text-faint">{r.type}</span>
+                    <span className="ml-auto shrink-0 text-[11px] uppercase text-faint">{r.type}</span>
                   </button>
                   {/* the requested right-side add-to-watchlist button */}
                   <button

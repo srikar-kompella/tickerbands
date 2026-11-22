@@ -7,14 +7,15 @@ import { AlertTriangle } from 'lucide-react'
 import { api } from '@/lib/api'
 import { fmtMoney, fmtNum, fmtPct } from '@/lib/format'
 import { cn } from '@/lib/utils'
-import { Badge, SectionShell, Skeleton } from '@/components/ui'
+import { Badge, Disclosure, FinePrint, SectionShell, Skeleton } from '@/components/ui'
 import type { Analysis, GlossaryEntry, LensRow } from '@/types'
 
 export function PremiumLensCard({ a, glossary }: {
   a: Analysis
   glossary: Record<string, GlossaryEntry>
 }) {
-  const [side, setSide] = useState<'calls' | 'puts'>('calls')
+  // until the user picks, open on the side that has candidates
+  const [picked, setSide] = useState<'calls' | 'puts' | null>(null)
   const { data: lens, isLoading } = useQuery({
     queryKey: ['lens', a.symbol],
     queryFn: () => api.lens(a.symbol),
@@ -28,14 +29,32 @@ export function PremiumLensCard({ a, glossary }: {
 
   if (lens && !lens.available) return null // no options / thin history → hide
 
+  const side: 'calls' | 'puts' = picked
+    ?? (lens?.available && !lens.calls.length && lens.puts.length ? 'puts' : 'calls')
   const rows: LensRow[] = lens ? lens[side] : []
+  // nothing passes the liquidity filters on either side → the card stays a
+  // two-line summary instead of an empty nine-column table
+  const noCandidates = !!lens?.available && !lens.calls.length && !lens.puts.length
+
+  const howToRead = (
+    <FinePrint className="mt-0 max-w-[110ch]">
+      Positive edge = options paying more than this stock's own 2-yr history
+      prices the risk (validated: ±6.8pp @5d, ±6.1pp @10d, ±9.5pp @21d;
+      horizons beyond ~35 calendar days REJECTED by validation and not shown).
+      This measures risk PRICING, not direction — assignment still happens,
+      and rows marked <b>tail</b>/<b>E</b> are where history flatters or
+      doesn't apply. Selling premium caps upside (calls) or commits cash
+      into weakness (puts). Not advice.
+    </FinePrint>
+  )
 
   return (
-    <SectionShell title="Premium seller's lens" glossary={glossary.premium_lens}>
-      {isLoading && <Skeleton className="h-40 w-full" />}
+    <SectionShell title="Premium seller's lens" glossary={glossary.premium_lens}
+      right={noCandidates ? <span className="text-[11px] text-faint">no liquid candidates</span> : undefined}>
+      {isLoading && <Skeleton className="h-24 w-full" />}
       {lens?.available && (
         <>
-          <div className="mb-2 flex flex-wrap items-center gap-3">
+          <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-2">
             <div className="inline-flex rounded-lg border border-border bg-bg p-0.5">
               {(['calls', 'puts'] as const).map((s) => (
                 <button key={s} onClick={() => setSide(s)}
@@ -61,10 +80,21 @@ export function PremiumLensCard({ a, glossary }: {
             )}
           </div>
 
+          {noCandidates ? (
+            <>
+              <p className="py-1 text-[13px] text-faint">
+                No liquid candidates pass the filters (OI ≥ 50, spread ≤ 12%) for covered calls or cash-secured puts.
+              </p>
+              <Disclosure label="How to read this lens" className="mt-1">{howToRead}</Disclosure>
+            </>
+          ) : (
+          <>
+          {/* the table scrolls inside the card when the card is narrow — the
+              page itself never scrolls sideways */}
           <div className="overflow-x-auto">
-            <table className="w-full text-xs">
+            <table className="w-full min-w-[36rem] text-xs">
               <thead>
-                <tr className="text-left text-[10px] uppercase tracking-wide text-faint">
+                <tr className="text-left text-[11px] uppercase tracking-wide text-faint">
                   <th className="pb-1.5 font-medium">Strike</th>
                   <th className="pb-1.5 text-right font-medium">DTE</th>
                   <th className="pb-1.5 text-right font-medium">Bid</th>
@@ -95,12 +125,12 @@ export function PremiumLensCard({ a, glossary }: {
                     <td className="py-1.5 text-right text-faint">{r.oi.toLocaleString()}</td>
                     <td className="py-1.5 text-right">
                       {r.earnings_inside && (
-                        <Badge tone="warn" className="text-[9px]" title="Earnings lands inside this DTE — history-based probabilities do NOT apply through a print">
+                        <Badge tone="warn" className="text-[11px]" title="Earnings lands inside this DTE — history-based probabilities do NOT apply through a print">
                           <AlertTriangle className="h-2.5 w-2.5" />E
                         </Badge>
                       )}
                       {r.tail_zone && (
-                        <Badge className="ml-1 text-[9px]" title="Tail zone: probabilities under ~15% historically UNDERESTIMATE breaches by up to ~5-9pp — the tail is worse than shown">
+                        <Badge className="ml-1 text-[11px]" title="Tail zone: probabilities under ~15% historically UNDERESTIMATE breaches by up to ~5-9pp — the tail is worse than shown">
                           tail
                         </Badge>
                       )}
@@ -116,15 +146,9 @@ export function PremiumLensCard({ a, glossary }: {
             </table>
           </div>
 
-          <p className="mt-2 border-t border-border pt-2 text-[10px] leading-relaxed text-faint">
-            Positive edge = options paying more than this stock's own 2-yr history
-            prices the risk (validated: ±6.8pp @5d, ±6.1pp @10d, ±9.5pp @21d;
-            horizons beyond ~35 calendar days REJECTED by validation and not shown).
-            This measures risk PRICING, not direction — assignment still happens,
-            and rows marked <b>tail</b>/<b>E</b> are where history flatters or
-            doesn't apply. Selling premium caps upside (calls) or commits cash
-            into weakness (puts). Not advice.
-          </p>
+          <div className="mt-2.5">{howToRead}</div>
+          </>
+          )}
         </>
       )}
     </SectionShell>

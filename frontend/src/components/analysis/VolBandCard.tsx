@@ -25,7 +25,7 @@ export function VolBandCard({ a, glossary }: {
   useEffect(() => {
     if (!el.current || !a.chart.length) return
     const chart = createChart(el.current, {
-      height: 220,
+      height: 240,
       layout: {
         background: { color: 'transparent' },
         textColor: css('--color-muted') || '#8b8b96',
@@ -71,8 +71,13 @@ export function VolBandCard({ a, glossary }: {
     }
     chart.timeScale().fitContent()
 
+    // Re-fit on every width change. Setting the width alone kept the old bar
+    // spacing, so after the window or sidebar resized the line either ran off
+    // the right edge or sat in a strip with blank space beside it.
     const onResize = () => {
-      if (el.current) chart.applyOptions({ width: el.current.clientWidth })
+      if (!el.current) return
+      chart.applyOptions({ width: el.current.clientWidth })
+      chart.timeScale().fitContent()
     }
     onResize()
     const ro = new ResizeObserver(onResize)
@@ -94,7 +99,9 @@ export function VolBandCard({ a, glossary }: {
     <SectionShell title="Price · 30 days + next session's range"
       envelope={a.sections.history} glossary={glossary.expected_range}
       collapsible={false} /* imperative chart — stays open; everything else collapses */>
-      <div ref={el} className="w-full" />
+      {/* min-w-0 + overflow-hidden: the canvas keeps its last pixel width for
+          a frame when the card shrinks — it must not push the page wider */}
+      <div ref={el} className="w-full min-w-0 overflow-hidden" />
       {earningsWindow && (
         <p className="mt-2 rounded-lg bg-warn/10 px-3 py-2 text-xs leading-snug text-warn">
           Earnings in {a.earnings!.days_until}d — the 80% range is calibrated for
@@ -102,17 +109,15 @@ export function VolBandCard({ a, glossary }: {
           implied move is the better gauge this week.
         </p>
       )}
-      <div className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-2 border-t border-border pt-3 text-xs text-muted">
+      <div className="mt-2.5 flex flex-wrap items-center gap-x-5 gap-y-1.5 text-xs leading-relaxed text-muted">
         {a.band && (
           <span className="tnum">
             Range: <span className="text-text">{fmtMoney(a.band.low)} – {fmtMoney(a.band.high)}</span>
-            {' '}(±{a.band.half_width_pct.toFixed(2)}%, 1.28σ of 20d realized vol)
-          </span>
-        )}
-        {a.band && (
-          <span className="rounded border border-border px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-faint"
-            title="Band engine — switchable in Settings, each option labeled with its validated coverage">
-            engine: {a.band.engine}
+            {' '}(±{a.band.half_width_pct.toFixed(2)}%, 1.28σ of 20d realized vol
+            <span className="text-faint"
+              title="Band engine — switchable in Settings, each option labeled with its validated coverage">
+              {' '}· engine: {a.band.engine}
+            </span>)
           </span>
         )}
         {cov && (

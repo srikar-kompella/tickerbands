@@ -33,6 +33,9 @@ FLOW = {
     "revenue": ["RevenueFromContractWithCustomerExcludingAssessedTax", "Revenues",
                 "SalesRevenueNet", "RevenueFromContractWithCustomerIncludingAssessedTax"],
     "gross_profit": ["GrossProfit"],
+    # GOOGL files no GrossProfit line (found via /api/audit/sec-tags/GOOGL,
+    # 2026-11-22) — gross profit is then revenue − cost of revenue
+    "cost_of_revenue": ["CostOfRevenue", "CostOfGoodsAndServicesSold", "CostOfGoodsSold"],
     "operating_income": ["OperatingIncomeLoss"],
     "pretax_income": [
         "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
@@ -51,7 +54,10 @@ FLOW = {
     "acquisitions": ["PaymentsToAcquireBusinessesNetOfCashAcquired"],
 }
 INSTANT = {
-    "cash": ["CashAndCashEquivalentsAtCarryingValue"],
+    # banks stop filing the first tag and report cash under the bank lines
+    # (ISTR: CashAndCashEquivalentsAtCarryingValue last filed for 2016)
+    "cash": ["CashAndCashEquivalentsAtCarryingValue",
+             "CashCashEquivalentsAndFederalFundsSold", "CashAndDueFromBanks"],
     # NVDA files current marketable debt securities as DebtSecuritiesCurrent
     # (found via /api/audit/sec-tags/NVDA on 2026-11-21)
     "st_investments": ["DebtSecuritiesCurrent", "AvailableForSaleSecuritiesDebtSecuritiesCurrent",
@@ -66,8 +72,21 @@ INSTANT = {
                    "LongTermDebtAndCapitalLeaseObligationsIncludingCurrentMaturities"],
     "equity": ["StockholdersEquity",
                "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"],
+    # tangible book (banks): equity − preferred − goodwill − other intangibles
+    "goodwill": ["Goodwill"],
+    "intangibles": ["IntangibleAssetsNetExcludingGoodwill", "FiniteLivedIntangibleAssetsNet"],
+    "goodwill_intangibles": ["IntangibleAssetsNetIncludingGoodwill"],
+    "preferred_equity": ["PreferredStockValue", "PreferredStockValueOutstanding"],
 }
-STATEMENT_OF = {"revenue": "income", "gross_profit": "income",
+# share counts (unit "shares"): weighted-average counts are filed without a
+# share-class dimension, so they exist for multi-class companies too
+SHARES_DILUTED = ["WeightedAverageNumberOfDilutedSharesOutstanding"]
+SHARES_BASIC = ["WeightedAverageNumberOfSharesOutstandingBasic"]
+# a filer with these lines is a deposit-taking bank (fallback when the SIC
+# code is not at hand)
+BANK_TAGS = ("InterestIncomeExpenseNet", "InterestBearingDepositLiabilities", "Deposits")
+BANK_SIC = {"6021", "6022", "6029", "6035", "6036"}
+STATEMENT_OF = {"revenue": "income", "gross_profit": "income", "cost_of_revenue": "income",
                 "operating_income": "income", "pretax_income": "income",
                 "net_income": "income", "tax": "income", "eps_diluted": "income",
                 "ocf": "cashflow", "capex": "cashflow", "dividends_paid": "cashflow",
@@ -211,6 +230,20 @@ def normalize(facts: dict) -> dict[str, Any]:
     ttm["ebit"] = ttm.get("operating_income")
     ttm["eff_tax_rate"] = (ttm["tax"] / ttm["pretax_income"]
                            if ttm.get("tax") is not None and ttm.get("pretax_income") else None)
+    # no GrossProfit line in the filing → revenue − cost of revenue, same
+    # period, labeled as derived
+    ttm["gross_profit_derived"] = False
+    if (ttm.get("gross_profit") is None and ttm.get("revenue") is not None
+            and ttm.get("cost_of_revenue") is not None):
+        ttm["gross_profit"] = ttm["revenue"] - ttm["cost_of_revenue"]
+        ttm["gross_profit_derived"] = True
+
+    def gross_q(e: dt.date, rev_q: float | None) -> float | None:
+        gp = quarter_at(flows["gross_profit"], e) if flows.get("gross_profit") else None
+        if gp is None and rev_q is not None and flows.get("cost_of_revenue"):
+            cost = quarter_at(flows["cost_of_revenue"], e)
+            gp = rev_q - cost if cost is not None else None
+        return gp
 
     quarters = []
     if inc_end:
@@ -219,10 +252,11 @@ def normalize(facts: dict) -> dict[str, Any]:
         for e in ends:
             ocf_q = quarter_at(flows["ocf"], e) if flows.get("ocf") else None
             cap_q = quarter_at(flows["capex"], e) if flows.get("capex") else None
+            rev_q = quarter_at(flows["revenue"], e) if flows.get("revenue") else None
             quarters.append({
                 "end": e.isoformat(),
-                "revenue": quarter_at(flows["revenue"], e) if flows.get("revenue") else None,
-                "gross_profit": quarter_at(flows["gross_profit"], e) if flows.get("gross_profit") else None,
+                "revenue": rev_q,
+                "gross_profit": gross_q(e, rev_q),
                 "operating_income": quarter_at(flows["operating_income"], e) if flows.get("operating_income") else None,
                 "pretax_income": quarter_at(flows["pretax_income"], e) if flows.get("pretax_income") else None,
                 "net_income": quarter_at(flows["net_income"], e) if flows.get("net_income") else None,
@@ -276,14 +310,45 @@ def normalize(facts: dict) -> dict[str, Any]:
     cash_st = (cash or 0.0) + (st_inv or 0.0) if cash is not None else None
     filing = latest_filing(flows.get("revenue") or flows.get("net_income") or [], inc_end)
     cf_filing = latest_filing(flows.get("ocf") or [], cf_end)
+
+    # goodwill + other intangibles: the combined line when filed, else the parts
+    gw_int = at("goodwill_intangibles")
+    if gw_int is None and (at("goodwill") is not None or at("intangibles") is not None):
+        gw_int = (at("goodwill") or 0.0) + (at("intangibles") or 0.0)
+
+    # weighted-average share counts for the latest income-statement quarter
+    # (the 3-month fact; a 10-K's Q4 has none, then the fiscal-year average)
+    shares: dict[str, Any] = {}
+    if inc_end:
+        for key, cands in (("diluted", SHARES_DILUTED), ("basic", SHARES_BASIC)):
+            _, rows = _facts(us, cands, "shares")
+            f = _find(rows, inc_end, 80, 100, tol=3) or _find(rows, inc_end, 350, 380, tol=3)
+            if f:
+                shares[key] = float(f["val"])
+                shares.setdefault("period", f["end"])
+                shares.setdefault("span", "quarter" if _days(f) <= 100 else "fiscal year")
+    if shares:
+        shares["source"] = "SEC filing (weighted average)"
+
+    # deposit-taking bank? (interest margin + deposits lines filed recently)
+    def recent(tag: str) -> bool:
+        rows = [r for u in ((us.get(tag) or {}).get("units") or {}).values() for r in u]
+        latest = max((r["end"] for r in rows), default="")
+        ref = (inc_end or bal_date)
+        return bool(latest and ref and (ref - _d(latest)).days <= 400)
+    bank_like = recent(BANK_TAGS[0]) and (recent(BANK_TAGS[1]) or recent(BANK_TAGS[2]))
+
     return {
         "available": bool(inc_end or cf_end),
         "ttm": ttm, "quarters": quarters, "annual": annual,
         "balance": {"total_debt": debt, "cash": cash_st, "cash_st": cash_st,
                     "cash_only": cash, "st_investments": st_inv,
                     "equity_securities": eq_sec, "equity": at("equity"),
+                    "goodwill_intangibles": gw_int,
+                    "preferred_equity": at("preferred_equity"),
                     "as_of_date": bal_end,
                     "debt_note": "excludes lease liabilities"},
+        "shares": shares, "bank_like": bank_like,
         "periods": {"income": inc_end.isoformat() if inc_end else None,
                     "cashflow": cf_end.isoformat() if cf_end else None,
                     "balance": bal_end},
@@ -317,9 +382,67 @@ def fetch_statements(symbol: str) -> dict[str, Any]:
     return out
 
 
-def fetch_recent_filings(symbol: str, since: str, forms: tuple = ("8-K", "10-Q", "10-K", "8-K/A")) -> dict[str, Any]:
+# Forms the filing list carries → (description, red flag, group). 8-K
+# descriptions come from its items (news_relevance.describe_8k); 10-Q / 10-K
+# keep the bare form name. `group`: company (the issuer's own reports — the
+# ones a move's cause can be in), insider (Form 4 / 144), ownership (13D/13G
+# holders), fund (N-PORT, 497, N-CSR — a trust files these for every series)
+FORM_INFO: dict[str, tuple[str | None, bool, str]] = {
+    "8-K": (None, False, "company"), "8-K/A": (None, False, "company"),
+    "10-Q": ("10-Q", False, "company"), "10-K": ("10-K", False, "company"),
+    "10-Q/A": ("amended quarterly report (10-Q/A)", False, "company"),
+    "10-K/A": ("amended annual report (10-K/A)", False, "company"),
+    "NT 10-Q": ("late-filing notice — the 10-Q was not filed on time (NT 10-Q)", True, "company"),
+    "NT 10-K": ("late-filing notice — the 10-K was not filed on time (NT 10-K)", True, "company"),
+    "S-1": ("registration statement (S-1)", False, "company"),
+    "S-1/A": ("registration statement, amended (S-1/A)", False, "company"),
+    "424B4": ("final prospectus (424B4)", False, "company"),
+    "4": ("insider trade (Form 4)", False, "insider"),
+    "4/A": ("insider trade, amended (Form 4/A)", False, "insider"),
+    "144": ("planned insider sale (Form 144)", False, "insider"),
+    "SC 13D": ("5%+ holder that may seek influence (Schedule 13D)", False, "ownership"),
+    "SC 13D/A": ("5%+ holder that may seek influence, amended (Schedule 13D/A)", False, "ownership"),
+    "SC 13G": ("passive 5%+ holder (Schedule 13G)", False, "ownership"),
+    "SC 13G/A": ("passive 5%+ holder, amended (Schedule 13G/A)", False, "ownership"),
+    # EDGAR's form names since the 2024-25 beneficial-ownership changes
+    "SCHEDULE 13D": ("5%+ holder that may seek influence (Schedule 13D)", False, "ownership"),
+    "SCHEDULE 13D/A": ("5%+ holder that may seek influence, amended (Schedule 13D/A)", False, "ownership"),
+    "SCHEDULE 13G": ("passive 5%+ holder (Schedule 13G)", False, "ownership"),
+    "SCHEDULE 13G/A": ("passive 5%+ holder, amended (Schedule 13G/A)", False, "ownership"),
+    "N-PORT-P": ("fund monthly portfolio holdings (N-PORT)", False, "fund"),
+    "497": ("fund prospectus supplement (497)", False, "fund"),
+    "N-CSR": ("fund annual shareholder report (N-CSR)", False, "fund"),
+    "N-CSRS": ("fund semi-annual shareholder report (N-CSRS)", False, "fund"),
+}
+FILING_FORMS = tuple(FORM_INFO)
+FILINGS_CAP = 25          # payload size: the 25 most recent (company reports kept first)
+
+
+def describe_form(form: str) -> tuple[str, bool]:
+    """(description, red flag) for a non-8-K form; unknown → (form, False)."""
+    desc, red, _ = FORM_INFO.get(form, (None, False, "company"))
+    return (desc or form), red
+
+
+def form_group(form: str) -> str:
+    return FORM_INFO.get(form, (None, False, "company"))[2]
+
+
+def cap_filings(rows: list[dict], cap: int = FILINGS_CAP) -> list[dict]:
+    """At most `cap` filings, newest first. The issuer's own reports
+    (group company: 8-K, 10-Q, 10-K, NT, S-1…) are kept ahead of Form 4 /
+    144 / 13G / fund filings, so a burst of insider filings cannot push the
+    earnings 8-K off the list. Pure."""
+    core = [r for r in rows if form_group(r.get("form", "")) == "company"][:cap]
+    rest = [r for r in rows if form_group(r.get("form", "")) != "company"]
+    kept = core + rest[:max(0, cap - len(core))]
+    return sorted(kept, key=lambda r: str(r.get("date") or ""), reverse=True)
+
+
+def fetch_recent_filings(symbol: str, since: str, forms: tuple = FILING_FORMS) -> dict[str, Any]:
     """Filings since `since` (ISO date) from the submissions API — the
-    regulatory/legal pass's primary source (8-K items say what was filed)."""
+    regulatory/legal pass's primary source (8-K items say what was filed).
+    Capped at FILINGS_CAP (cap_filings); `omitted` counts what was left out."""
     from providers import edgar
     cik = edgar._cik_for(symbol)
     sub = edgar._get_json(f"https://data.sec.gov/submissions/CIK{cik}.json")
@@ -333,6 +456,63 @@ def fetch_recent_filings(symbol: str, since: str, forms: tuple = ("8-K", "10-Q",
             break                         # newest first
         if form in forms:
             out.append({"form": form, "date": date, "items": items or "",
+                        "accession": acc, "group": form_group(form),
                         "url": f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/"
                                f"{acc.replace('-', '')}/{doc}"})
-    return {"available": True, "filings": out, "since": since[:10], "cik": cik}
+    kept = cap_filings(out)
+    sic = str(sub.get("sic") or "").strip() or None
+    return {"available": True, "filings": kept, "since": since[:10], "cik": cik,
+            "omitted": len(out) - len(kept),
+            # which forms the list was filtered to: a cached copy without
+            # this key predates the wider list and is refetched once
+            "forms": list(forms),
+            # SIC code of the filer (6021/6022/6029/6035/6036 = banks)
+            "sic": sic, "sic_description": sub.get("sicDescription") or None,
+            "is_bank": (sic in BANK_SIC) if sic else None}
+
+
+def exhibit_from_index(index_html: str, base: str = "https://www.sec.gov") -> str | None:
+    """The EX-99.1 document's URL from an EDGAR filing-index page (the
+    "-index.htm" table: Seq | Description | Document | Type | Size). An 8-K's
+    primary document is only the cover page; the earnings release is the
+    exhibit. EX-99.1 first, else the first EX-99.* row. Pure."""
+    import re
+    best = None
+    for row in re.findall(r"<tr[^>]*>(.*?)</tr>", index_html or "", flags=re.S | re.I):
+        href = re.search(r'href="([^"]+)"', row, flags=re.I)
+        cells = [re.sub(r"<[^>]+>", "", c).strip()
+                 for c in re.findall(r"<td[^>]*>(.*?)</td>", row, flags=re.S | re.I)]
+        kind = next((c.upper() for c in cells if c.upper().startswith("EX-99")), None)
+        if not href or not kind:
+            continue
+        path = href.group(1)
+        if "/ix?doc=" in path:                       # inline-XBRL viewer link
+            path = path.split("/ix?doc=", 1)[1]
+        url = path if path.startswith("http") else base + path
+        if kind in ("EX-99.1", "EX-99.01"):
+            return url
+        best = best or url
+    return best
+
+
+def fetch_release_exhibit(filing_url: str) -> dict[str, Any]:
+    """Given an 8-K's primary-document URL, find its EX-99.1 (the earnings
+    release itself) through the filing index. → {"exhibit_url": url | None}."""
+    import re
+
+    import requests
+
+    from providers import edgar
+    m = re.search(r"/Archives/edgar/data/(\d+)/(\d{18})/", filing_url or "")
+    if not m:
+        return {"exhibit_url": None}
+    cik, acc = m.group(1), m.group(2)
+    dashed = f"{acc[:10]}-{acc[10:12]}-{acc[12:]}"
+    index = f"https://www.sec.gov/Archives/edgar/data/{cik}/{acc}/{dashed}-index.htm"
+    try:
+        r = requests.get(index, headers=edgar._ua(), timeout=10)
+    except Exception as e:
+        raise ProviderError("unavailable", f"EDGAR filing index: {e}")
+    if r.status_code != 200:
+        raise ProviderError("unavailable", f"EDGAR filing index HTTP {r.status_code}")
+    return {"exhibit_url": exhibit_from_index(r.text), "index_url": index}

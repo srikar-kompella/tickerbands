@@ -53,6 +53,12 @@ IMPLEMENTATIONS: dict[str, dict[str, Callable]] = {
                     "mock": (mock, "fetch_recent_filings")},
     "rating_changes": {"yfinance": (yfinance, "fetch_rating_changes"),
                        "mock": (mock, "fetch_rating_changes")},
+    # quote type / industry / share counts / fund facts — what kind of
+    # security this is (report_view.classify_security)
+    "security_profile": {"yfinance": (yfinance, "fetch_security_profile"),
+                         "mock": (mock, "fetch_security_profile")},
+    # the EX-99.1 exhibit of an earnings 8-K, via the filing index
+    "sec_exhibit": {"edgar": (sec_xbrl, "fetch_release_exhibit")},
     "news_sentiment": {"finnhub": (finnhub, "fetch_news_sentiment"),
                        "mock": (mock, "fetch_news_sentiment")},
     "news_headlines": {"finnhub": (finnhub, "fetch_headlines"),
@@ -79,7 +85,8 @@ _ALIAS = {"quotes_batch": "quotes", "option_chain_lens": "option_chain",
           "earnings_dates": "earnings", "shares_out": "fundamentals",
           # keyless Yahoo flag rides on the same provider as the EPS check
           "earnings_confirm": "eps_check", "statements_fallback": "eps_check",
-          "rating_changes": "eps_check", "sec_filings": "insiders"}
+          "rating_changes": "eps_check", "sec_filings": "insiders",
+          "security_profile": "eps_check", "sec_exhibit": "insiders"}
 
 
 def use_mock() -> bool:

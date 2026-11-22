@@ -247,10 +247,17 @@ def fetch_statements(symbol: str) -> dict[str, Any]:
         "dividends_paid": abs(_sum4(q_div)) if _sum4(q_div) is not None else None,
         "revenue": _sum4(q_rev), "gross_profit": _sum4(q_gp),
         "net_income": _sum4(q_ni), "operating_income": _sum4(q_ebit),
-        "ebit": _sum4(q_ebit), "pretax_income": pre4,
+        "ebit": _sum4(q_ebit), "pretax_income": pre4, "tax": tax4,
         "eff_tax_rate": (tax4 / pre4 if pre4 not in (None, 0) and tax4 is not None else None),
         "eps_diluted": _sum4(q_eps),
     }
+    # weighted-average share counts of the latest complete quarter
+    q_dil = rows_from(qis, i_inc, "Diluted Average Shares")
+    q_bas = rows_from(qis, i_inc, "Basic Average Shares")
+    shares = {k: v for k, v in (("diluted", _at(q_dil, 0)), ("basic", _at(q_bas, 0))) if v}
+    if shares:
+        shares.update({"period": inc_end, "span": "quarter",
+                       "source": "Yahoo statements (weighted average)"})
 
     quarters = []
     inc_dates = [_col_date(qis, j) for j in range(i_inc or 0, len(qis.columns))] if i_inc is not None else []
@@ -282,6 +289,7 @@ def fetch_statements(symbol: str) -> dict[str, Any]:
         ocf_i, cap_i = _at(a_ocf, i), _at(a_capex, i)
         pre_i, tax_i = _at(a_pre, i), _at(a_tax, i)
         annual.append({
+            "end": _col_date(ais, i),
             "revenue": _at(a_rev, i), "net_income": _at(a_ni, i), "ebit": _at(a_ebit, i),
             "eff_tax_rate": (tax_i / pre_i if pre_i not in (None, 0) and tax_i is not None else None),
             "fcf": (ocf_i + cap_i) if ocf_i is not None and cap_i is not None else None,
@@ -301,10 +309,16 @@ def fetch_statements(symbol: str) -> dict[str, Any]:
         # Yahoo does not separate marketable EQUITY securities reliably (VST's
         # nuclear decommissioning trust landed in its investments rows), so
         # they are not reported from this source at all.
+        gw_int = b("Goodwill And Other Intangible Assets")
+        if gw_int is None and (b("Goodwill") is not None or b("Other Intangible Assets") is not None):
+            gw_int = (b("Goodwill") or 0.0) + (b("Other Intangible Assets") or 0.0)
         balance = {"total_debt": b("Total Debt"), "cash": b(*CASH_ST),
                    "cash_st": b(*CASH_ST), "equity_securities": None,
                    "equity": b("Stockholders Equity", "Common Stock Equity",
                                "Total Equity Gross Minority Interest"),
+                   # tangible book (banks): equity − preferred − goodwill & intangibles
+                   "goodwill_intangibles": gw_int,
+                   "preferred_equity": b("Preferred Stock Equity", "Preferred Stock"),
                    "as_of_date": bal_end,
                    "debt_note": "Yahoo 'Total Debt' (may include lease liabilities)"}
     except Exception:
@@ -313,7 +327,7 @@ def fetch_statements(symbol: str) -> dict[str, Any]:
     periods = {"income": inc_end, "cashflow": cf_end, "balance": bal_end}
     ends = [p for p in periods.values() if p]
     return {"available": True, "ttm": ttm, "annual": annual, "balance": balance,
-            "quarters": quarters, "periods": periods,
+            "quarters": quarters, "periods": periods, "shares": shares,
             "latest_quarter_end": min(ends) if ends else None,
             "source": "Yahoo statements", "as_of": _dt.date.today().isoformat()}
 
@@ -349,6 +363,69 @@ def fetch_earnings_confirmation(symbol: str) -> dict[str, Any]:
             "as_of": _dt.date.today().isoformat()}
 
 
+FUND_QUOTE_TYPES = {"ETF", "MUTUALFUND"}
+
+
+def security_profile_from_info(info: dict, as_of: str | None = None) -> dict[str, Any]:
+    """Yahoo quoteSummary `info` → what kind of security this is (quote type,
+    industry), its share counts, and — for a fund — the fund facts the report
+    shows. Only what Yahoo actually returns is kept; a missing or implausible
+    figure is None (never guessed). Pure.
+
+    Units as Yahoo sends them (checked on SCHD/QQQI, 2026-11-22):
+    `netExpenseRatio` is in percent (0.06 = 0.06%); the older
+    `annualReportExpenseRatio` is a fraction (0.0006)."""
+    info = info or {}
+
+    def num(key: str) -> float | None:
+        v = info.get(key)
+        return float(v) if isinstance(v, (int, float)) and v == v else None
+
+    er = num("netExpenseRatio")
+    if er is None and num("annualReportExpenseRatio") is not None:
+        er = num("annualReportExpenseRatio") * 100
+    if er is not None and not (0 <= er < 15):
+        er = None
+    aum, nav = num("totalAssets"), num("navPrice")
+    qt = str(info.get("quoteType") or "").upper() or None
+    return {
+        "available": True,
+        "quote_type": qt,
+        "is_fund": (qt in FUND_QUOTE_TYPES) if qt else None,
+        "expense_ratio_pct": er,
+        "total_assets": aum if aum and aum > 0 else None,
+        "nav": nav if nav and nav > 0 else None,
+        "category": info.get("category") or None,
+        "fund_family": info.get("fundFamily") or None,
+        "legal_type": info.get("legalType") or None,
+        "industry": info.get("industry") or None,
+        "sector": info.get("sector") or None,
+        # `sharesOutstanding` is the listed class; `impliedSharesOutstanding`
+        # counts every class (they differ for multi-class companies)
+        "shares_outstanding": num("sharesOutstanding") or None,
+        "implied_shares_outstanding": num("impliedSharesOutstanding") or None,
+        "source": "Yahoo profile",
+        "as_of": as_of,
+    }
+
+
+def fetch_security_profile(symbol: str) -> dict[str, Any]:
+    """Quote type, industry, share counts and fund facts from Yahoo."""
+    yf = _yf()
+    import datetime as _dt
+    try:
+        info = yf.Ticker(symbol).info or {}
+    except Exception as e:
+        raise ProviderError("unavailable", f"yfinance profile: {e}")
+    if not info.get("quoteType"):
+        # returned, not raised: errors are never cached, so a symbol Yahoo has
+        # no profile for was refetched on every analyze(); this caches 24 h
+        return {"available": False, "reason": "no_data",
+                "detail": f"no Yahoo profile for {symbol}",
+                "source": "Yahoo profile", "as_of": _dt.date.today().isoformat()}
+    return security_profile_from_info(info, _dt.date.today().isoformat())
+
+
 def fetch_rating_changes(symbol: str, days: int = 90) -> dict[str, Any]:
     """Dated analyst rating actions (firm, from → to) from Yahoo. Finnhub's
     free feed is a monthly COUNT snapshot that can sit unchanged while
@@ -361,7 +438,9 @@ def fetch_rating_changes(symbol: str, days: int = 90) -> dict[str, Any]:
     except Exception as e:
         raise ProviderError("unavailable", f"yfinance rating changes: {e}")
     if df is None or getattr(df, "empty", True):
-        return {"available": True, "source": "Yahoo", "changes": []}
+        # no rows at all, ever: Yahoo has no rating history for the symbol
+        # (ANT days after its listing) — not the same as "no changes lately"
+        return {"available": True, "source": "Yahoo", "changes": [], "no_feed": True}
     cutoff = _dt.date.today() - _dt.timedelta(days=days)
     out = []
     for idx, row in df.iterrows():
@@ -376,4 +455,6 @@ def fetch_rating_changes(symbol: str, days: int = 90) -> dict[str, Any]:
                     "from": str(row.get("FromGrade") or ""),
                     "to": str(row.get("ToGrade") or "")})
     out.sort(key=lambda r: r["date"], reverse=True)
-    return {"available": True, "source": "Yahoo", "changes": out[:40]}
+    # no_feed is always present (False here): a cached copy without the key
+    # predates it and is refetched (composer._rating_changes)
+    return {"available": True, "source": "Yahoo", "changes": out[:40], "no_feed": False}

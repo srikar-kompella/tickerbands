@@ -152,11 +152,14 @@ def test_nvda_news_check_after_3_sigma_move_is_flagged(nvda):
 def test_nvda_prompt_demands_window_cause_and_regulatory_pass(nvda):
     from api.routes import build_claude_prompt
     p = build_claude_prompt(nvda)
-    assert "Window: 2026-11-16 → 2026-11-21" in p
+    # the window starts at the last note that still stands (Nov 13, STALE)
+    assert "Window: 2026-11-13 → 2026-11-21" in p
     assert "Same-day headlines are not enough" in p
     assert '"no material news" is not an available conclusion' in p
     assert "two independent sources" in p and "cause not found after searching" in p
-    for term in ("SEC", "DOJ", "state attorneys general", "export controls",
+    # "export controls" is a search only when the snapshot's news rows mention
+    # export rules; the company's main regulator is always one
+    for term in ("SEC", "DOJ", "state attorneys general", "the company's main regulator",
                  "class actions", "8-K"):
         assert term in p
     assert "- 2026-11-13T09:00:00 ·" in p          # prior notes are dated…

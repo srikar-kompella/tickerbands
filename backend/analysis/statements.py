@@ -16,7 +16,8 @@ from __future__ import annotations
 
 from typing import Any
 
-INCOME_KEYS = ("revenue", "gross_profit", "operating_income", "pretax_income",
+INCOME_KEYS = ("revenue", "gross_profit", "gross_profit_derived", "cost_of_revenue",
+               "operating_income", "pretax_income",
                "net_income", "eps_diluted", "ebit", "eff_tax_rate", "tax")
 CASHFLOW_KEYS = ("ocf", "capex", "fcf", "dividends_paid", "acquisitions")
 STATEMENTS = ("income", "cashflow", "balance")
@@ -99,14 +100,24 @@ def merge(sources: list[dict | None]) -> dict[str, Any] | None:
     periods = {w: (_period(chosen[w], w) or None) if w in chosen else None
                for w in STATEMENTS}
     labels = {w: _label(chosen[w], w) for w in chosen}
-    annual = next((s.get("annual") for s in cands
-                   if (s.get("source") or "").startswith("SEC") and s.get("annual")),
-                  None) or next((s.get("annual") for s in cands if s.get("annual")), [])
+    # Fiscal-year series: the SEC's, but only when its own income statement
+    # is complete — the revenue tag that fails to give a TTM (banks file
+    # revenue under other lines) gives an unreliable FY series too. Otherwise
+    # the series of the source the income statement came from.
+    annual_src = next((s for s in cands if (s.get("source") or "").startswith("SEC")
+                       and s.get("annual") and _complete(s, "income")), None) \
+        or (inc if inc and inc.get("annual") else None) \
+        or next((s for s in cands if s.get("annual")), None)
+    annual = (annual_src or {}).get("annual") or []
     ends = [p for p in periods.values() if p]
     return {
         "available": True,
         "ttm": ttm, "quarters": quarters, "annual": annual,
+        "annual_source": _label(annual_src, "income") if annual_src else None,
         "balance": dict((bal or {}).get("balance") or {}),
+        # weighted-average share counts travel with the income statement
+        "shares": dict((inc or {}).get("shares") or {}),
+        "bank_like": any(bool(s.get("bank_like")) for s in cands),
         "periods": periods,
         "period_sources": labels,
         "latest_quarter_end": min(ends) if ends else None,

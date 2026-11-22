@@ -33,6 +33,7 @@ from cache.store import _get_row, get_or_fetch
 from db import connect
 from providers import registry
 from providers import mock
+from providers import sec_xbrl
 from providers.base import ProviderError
 
 
@@ -246,6 +247,10 @@ def _one_statement_source(key: str, fn, symbol: str, force: bool,
     fetched = _fetched_date(w.get("fetched_ts"))
     needs = w["source"] != "live" and (
         "periods" not in (w["data"] or {})
+        # cached before share counts / derived gross profit / bank lines
+        # were carried (2026-11-22 format)
+        or (w["source"] == "cache" and (w["data"] or {}).get("available")
+            and "shares" not in w["data"])
         or (cov["covers_latest"] is False
             and ((last_earnings and fetched and fetched <= last_earnings[:10])
                  or (w.get("age_seconds") or 0) > 6 * 3600)))
@@ -347,8 +352,16 @@ def _recent_filings(symbol: str, since: str, force: bool) -> dict | None:
     if fn is None:
         return None
     try:
-        return get_or_fetch(f"sec_filings:{symbol}:{since[:10]}", 6 * 3600,
-                            lambda: fn(symbol, since), force=force)["data"]
+        key = f"sec_filings:{symbol}:{since[:10]}"
+        w = get_or_fetch(key, 6 * 3600, lambda: fn(symbol, since), force=force)
+        d = w["data"]
+        # a copy cached before the SIC code was carried cannot classify a
+        # bank; one cached before `forms` lacks Form 4 / 144 / 13D / NT / fund
+        # filings (2026-11-22 wider list)
+        if (w["source"] == "cache" and (d or {}).get("available")
+                and ("sic" not in d or "forms" not in d)):
+            d = get_or_fetch(key, 6 * 3600, lambda: fn(symbol, since), force=True)["data"]
+        return d
     except (ProviderError, TypeError):
         return None
 
@@ -358,8 +371,15 @@ def _rating_changes(symbol: str, force: bool) -> dict | None:
     if fn is None:
         return None
     try:
-        return get_or_fetch(f"rating_changes:{symbol}", config.TTL["analyst"],
-                            lambda: fn(symbol), force=force)["data"]
+        key = f"rating_changes:{symbol}"
+        w = get_or_fetch(key, config.TTL["analyst"], lambda: fn(symbol), force=force)
+        d = w["data"]
+        # a copy cached before `no_feed` existed cannot tell an empty feed
+        # from a quiet month (ANT: 0/0/0 days after listing)
+        if (w["source"] == "cache" and (d or {}).get("source") == "Yahoo"
+                and not (d or {}).get("changes") and "no_feed" not in d):
+            d = get_or_fetch(key, config.TTL["analyst"], lambda: fn(symbol), force=True)["data"]
+        return d
     except (ProviderError, TypeError):
         return None
 
@@ -573,7 +593,7 @@ def _context_hash(payload: dict) -> str:
                          # derived presentation layer + clock-dependent bits
                          "report_view", "news_window", "research_flags",
                          "big_move_sessions", "statements_meta",
-                         "recent_sessions"}}
+                         "recent_sessions", "security", "is_new_listing"}}
     if isinstance(slim.get("price_basis"), dict):
         slim["price_basis"] = {k: v for k, v in slim["price_basis"].items()
                                if k != "generated_ny"}
@@ -736,13 +756,6 @@ def analyze(symbol: str, force: bool = False, now: dt.datetime | None = None,
         if spy_bars:
             beta = vol_bands.beta_and_correlation(closes, [b["close"] for b in spy_bars])
 
-    # the last 10 completed sessions with SPY's move beside each, so a
-    # research session need not look up closes or the market's day
-    recent = []
-    if len(bars) >= 22:
-        recent = vol_bands.recent_sessions(
-            bars, vol_bands.adjust_closes_for_dividends(bars, div_events),
-            spy_bars, (beta or {}).get("beta"))
 
     week52 = None
     if quote and quote.get("week52_high") and quote.get("week52_low") and price:
@@ -792,8 +805,23 @@ def analyze(symbol: str, force: bool = False, now: dt.datetime | None = None,
     # ── statement + vendor freshness around the last earnings release ────────
     is_equity = (quote or {}).get("asset_type", "EQUITY") == "EQUITY"
     last_earn = _last_earnings_date(symbol, now_ny, basis["state"]) if is_equity else None
-    nwin = news_relevance.news_window(_last_report_date(symbol), basis.get("session_date"),
-                                      now_ny.date())
+    # the news window starts at the last research note that still stands (at
+    # most 30 days back) — not at the last exported report, which is no news
+    # check — or 5 sessions back, whichever is earlier
+    nwin = news_relevance.news_window(
+        research_quality.last_research_date(
+            _discussion_rows(symbol), move, basis,
+            research_quality.big_move_sessions(bars, div_events)),
+        basis.get("session_date"), now_ny.date())
+    # every completed session in the news window (at least the last 10, at
+    # most 25) with SPY's move beside each, so a research session need not
+    # look up closes or the market's day for any session the prompt lists
+    recent = []
+    if len(bars) >= 22:
+        recent = vol_bands.recent_sessions(
+            bars, vol_bands.adjust_closes_for_dividends(bars, div_events),
+            spy_bars, (beta or {}).get("beta"),
+            n=vol_bands.sessions_to_cover(bars, nwin.get("from")))
     # SEC filings since the earlier of the news window and the last earnings
     # release: the regulatory pass, the cause of a big move, and the earnings
     # 8-K that carries results before the 10-Q exists
@@ -802,13 +830,23 @@ def analyze(symbol: str, force: bool = False, now: dt.datetime | None = None,
     filings_payload = _recent_filings(symbol, since, force) if is_equity else None
     filings = []
     for f in (filings_payload or {}).get("filings") or []:
-        desc, red = news_relevance.describe_8k(f.get("items", "")) if f["form"].startswith("8-K") else (f["form"], False)
-        filings.append({**f, "desc": desc, "red_flag": red})
+        desc, red = (news_relevance.describe_8k(f.get("items", "")) if f["form"].startswith("8-K")
+                     else sec_xbrl.describe_form(f["form"]))
+        filings.append({**f, "desc": desc, "red_flag": red,
+                        "group": f.get("group") or sec_xbrl.form_group(f["form"])})
     release = next((f for f in filings if f["form"].startswith("8-K") and "2.02" in f.get("items", "")
                     and last_earn and f["date"] >= (dt.date.fromisoformat(last_earn)
                                                     - dt.timedelta(days=1)).isoformat()), None)
+    if release:
+        # the 8-K's primary document is the cover page; the results are in
+        # its EX-99.1 exhibit — link that when the filing index has it
+        ex = _release_exhibit(release.get("url"))
+        if ex:
+            release = {**release, "exhibit_url": ex}
     stmts, smeta = _statements_checked(symbol, force, last_earn, release)
     smeta["release"] = release
+    # what kind of security this is: decides which report rows exist
+    security = _security(symbol, quote, history, bars, stmts, filings_payload, force)
     eps_chk = _eps_check(symbol, force, last_earn)
     fenv = sections["fundamentals"]
     f_fetched = _fetched_date(fenv.get("fetched_ts"))
@@ -859,7 +897,10 @@ def analyze(symbol: str, force: bool = False, now: dt.datetime | None = None,
                          if k not in ("news_view", "news_note")}
     claude_news = _public_news(news_row)
     reg_hits = news_relevance.regulatory_scan(headlines_view["all_relevant"], nwin["from"])
-    cause = news_relevance.move_cause(headlines_view["all_relevant"], filings,
+    # only the issuer's own reports (8-K, 10-Q, NT…) can be a move's cause —
+    # not a Form 4 / 144, a 13G or a fund trust's 497
+    cause = news_relevance.move_cause(headlines_view["all_relevant"],
+                                      [f for f in filings if f["group"] in ("company", "ownership")],
                                       (move or {}).get("session_date"), (move or {}).get("z"))
     rating_changes = _rating_changes(symbol, force) if is_equity else None
 
@@ -880,7 +921,7 @@ def analyze(symbol: str, force: bool = False, now: dt.datetime | None = None,
         "claude_news": claude_news, "claude_stance": claude_stance,
         "research_flags": flags, "news_window": nwin, "now": now_ny,
         "filings": filings, "regulatory_hits": reg_hits, "move_cause": cause,
-        "rating_changes": rating_changes,
+        "rating_changes": rating_changes, "security": security,
     })
     report_view.apply_checks(rv_view)
     rv_view["data_as_of"] = report_view.data_as_of(
@@ -890,6 +931,12 @@ def analyze(symbol: str, force: bool = False, now: dt.datetime | None = None,
     payload: dict[str, Any] = {
         "symbol": symbol,
         "generated_ts": dt.datetime.now().isoformat(timespec="seconds"),
+        # "stock" | "fund" | "bank" | "new_listing" (docs/REPORT_FIELDS.md):
+        # fund, then bank, then new_listing (< 21 completed sessions), else stock
+        "security_kind": security["kind"],
+        # < 21 completed sessions, whatever the kind (a new ETF is kind fund)
+        "is_new_listing": bool(security.get("is_new_listing")),
+        "security": {k: v for k, v in security.items() if k != "profile"},
         "quote": quote,
         "price_basis": basis,
         "signals": signals,
@@ -929,9 +976,12 @@ def analyze(symbol: str, force: bool = False, now: dt.datetime | None = None,
         "insiders": sections["insiders"].get("data"),
         "short_interest": si_data,
         "fundamentals": vendor,
+        # the same trailing-12-month payments the report counts (a regular
+        # payer's 13th ex-date inside 365 days is last year's payment)
         "fundamentals_ttm": fundamentals_ttm.build_ttm_view(
-            price, vendor, div_payload, eps_chk),
-        "value_lens": _value_lens_with_freshness(mcap_dollars, stmts, smeta),
+            price, vendor, _trailing_dividends(div_payload, now_ny.date()), eps_chk,
+            now_ny.date()),
+        "value_lens": _value_lens_for(security, rv_view, mcap_dollars, stmts, smeta),
         "statements_meta": smeta,
         "ex_div": {"today": bool(basis.get("ex_div_amount")) or basis.get("ex_div_pending", False),
                    "amount": basis.get("ex_div_amount"),
@@ -969,6 +1019,88 @@ def _filed_quarters(stmts: dict | None, n: int = 4) -> list[dict[str, Any]]:
         out.append({"end": str(end)[:10], "fcf": fcf, "source": src})
     out.sort(key=lambda x: x["end"], reverse=True)
     return out[:n]
+
+
+def _security_profile(symbol: str, force: bool) -> dict | None:
+    """Quote type / industry / share counts / fund facts (24h cache)."""
+    fn = registry.resolve("security_profile")
+    if fn is None:
+        return None
+    try:
+        return get_or_fetch(f"security_profile:{symbol.upper()}", config.TTL["eps_check"],
+                            lambda: fn(symbol), force=force)["data"]
+    except (ProviderError, TypeError):
+        return None
+
+
+def _release_exhibit(url: str | None) -> str | None:
+    """The EX-99.1 URL of an earnings 8-K (cached 30 days — a filed exhibit
+    does not move). None when the index has none or EDGAR is unreachable."""
+    fn = None if use_mock() else registry.resolve("sec_exhibit")
+    if fn is None or not url:
+        return None
+    try:
+        return (get_or_fetch(f"sec_exhibit:{url}", 30 * 86400,
+                             lambda: fn(url))["data"] or {}).get("exhibit_url")
+    except (ProviderError, TypeError):
+        return None
+
+
+def _security(symbol: str, quote: dict | None, history: list[dict], bars: list[dict],
+              stmts: dict | None, filings_payload: dict | None,
+              force: bool) -> dict[str, Any]:
+    """`security_kind` and the facts behind it (report_view.classify_security):
+    fund / bank / new listing, how many sessions the symbol has traded, and
+    the provider profile the fund rows and share-count checks read."""
+    profile = _security_profile(symbol, force)
+    sec = report_view.classify_security(
+        quote, len(bars) if history else None,
+        bool(stmts and stmts.get("available")), profile,
+        (filings_payload or {}).get("sic"), bool((stmts or {}).get("bank_like")))
+    # a history shorter than what was asked for is the symbol's whole life:
+    # its first bar is the first trading day
+    whole_life = bool(history) and len(history) < 0.75 * config.HISTORY_DAYS
+    sec.update({
+        "sessions_listed": len(bars) if whole_life else None,
+        "first_trade_date": history[0]["date"] if whole_life else None,
+        "sic": (filings_payload or {}).get("sic"),
+        "sic_description": (filings_payload or {}).get("sic_description"),
+        "asset_sub_type": (quote or {}).get("asset_sub_type"),
+        "industry": (profile or {}).get("industry"),
+        "profile": profile,
+    })
+    return sec
+
+
+def _trailing_dividends(div_payload: dict | None, today: dt.date) -> dict | None:
+    """The dividend payload restricted to the payments the trailing-12-month
+    yield counts (report_view.trailing_distributions)."""
+    if not div_payload or not div_payload.get("available"):
+        return div_payload
+    events = div_payload.get("events") or []
+    fd = report_view.forward_distribution(events)
+    regular = fd["per_year"] is not None and not (fd["why"] or "").startswith("payment schedule")
+    kept, _ = report_view.trailing_distributions(
+        events, today, fd["per_year"] if regular else None)
+    return {**div_payload, "events": kept}
+
+
+def _value_lens_for(security: dict, rv_view: dict, mcap: float | None,
+                    stmts: dict | None, smeta: dict) -> dict | None:
+    """The value lens, consistent with the report rows: none for a fund, no
+    cash-flow / EV rows for a bank, no EV when the report withheld it."""
+    if security.get("is_fund"):
+        return None
+    vl = _value_lens_with_freshness(mcap, stmts, smeta)
+    if vl and security.get("is_bank"):
+        vl = value_lens.for_bank(vl)
+    ev_f = (rv_view.get("fields") or {}).get("ev") or {}
+    pre = next((w for w in ev_f.get("warnings") or [] if "predates the listing" in w), None)
+    if vl and pre and isinstance(vl.get("ev"), dict):
+        vl = {**vl, "ev": {**vl["ev"], "value": None}, "net_cash": False,
+              "warnings": [f"enterprise value withheld — {pre}"]
+              + [w for w in vl.get("warnings") or [] if not w.startswith("net cash position")]}
+    return vl
 
 
 def _value_lens_with_freshness(mcap: float | None, stmts: dict | None,

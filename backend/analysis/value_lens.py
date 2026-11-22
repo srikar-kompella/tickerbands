@@ -37,6 +37,17 @@ def _avg(vals: list[float | None]) -> tuple[float | None, int]:
     return (sum(xs) / len(xs), len(xs)) if xs else (None, 0)
 
 
+def _money(v: float | None) -> str:
+    if v is None:
+        return "—"
+    a, sign = abs(v), ("−" if v < 0 else "")
+    if a >= 1e12:
+        return f"{sign}${a / 1e12:.2f}T"
+    if a >= 1e9:
+        return f"{sign}${a / 1e9:.1f}B"
+    return f"{sign}${a / 1e6:.1f}M"
+
+
 def _cagr(newest: float | None, oldest: float | None, years: int) -> float | None:
     if not newest or not oldest or oldest <= 0 or newest <= 0 or years <= 0:
         return None
@@ -104,6 +115,41 @@ def build_value_lens(market_cap: float | None,
     span5 = min(len(revs) - 1, 5)
     cagr5 = _cagr(revs[0], revs[span5], span5) if len(revs) >= 3 and span5 >= 2 else None
 
+    def fy(i: int) -> str:
+        """'FY ended 2025-12-31 ($90.2M)' — which years the CAGR spans."""
+        end = str(annual[i].get("end") or "")[:10] if i < len(annual) else ""
+        return (f"FY ended {end}" if end else f"FY −{i}") + f" ({_money(revs[i])})"
+
+    cagr3_basis = (f"reported FY revenues, 3-yr span: {fy(3)} → {fy(0)}"
+                   if cagr3 is not None else "reported FY revenues, 3-yr span")
+    cagr5_basis = (f"reported FY revenues, {span5}-yr span: {fy(span5)} → {fy(0)}"
+                   if cagr5 is not None else f"reported FY revenues, {span5}-yr span")
+
+    # The CAGR ends at the last FISCAL YEAR; TTM figures run through the
+    # latest quarter. ISTR 11/22: 3-yr CAGR −5.9% (FY2022 → FY2025) beside
+    # TTM revenue growth of +27% — both true (the latest quarters include an
+    # acquisition), but shown with no dates they read as a contradiction.
+    rev_ttm = _f(ttm.get("revenue"))
+    if rev_ttm and revs and revs[0] and revs[0] > 0 and (cagr3 is not None or cagr5 is not None):
+        gap = rev_ttm / revs[0] - 1
+        fy_end = str(annual[0].get("end") or "")[:10]
+        if not (0.5 <= rev_ttm / revs[0] <= 2.0):
+            # the two series cannot be the same revenue line — withhold
+            warnings.append(
+                f"revenue CAGR withheld — TTM revenue {_money(rev_ttm)} is "
+                f"{gap * 100:+.0f}% vs the latest fiscal year"
+                + (f" (ended {fy_end})" if fy_end else "")
+                + f" {_money(revs[0])}; the fiscal-year series and the TTM figure "
+                "look like different revenue definitions or sources")
+            cagr3 = cagr5 = None
+        elif abs(gap) >= 0.15:
+            warnings.append(
+                "revenue CAGR is measured on fiscal years through "
+                + (fy_end or "the last 10-K")
+                + f"; TTM revenue {_money(rev_ttm)} is {gap * 100:+.0f}% vs that year "
+                f"({_money(revs[0])}) — the latest quarters (for example an "
+                "acquisition) are not in the CAGR")
+
     # approximate ROIC: NOPAT ÷ invested capital
     equity = _f(bal.get("equity"))
     roic_ttm = None
@@ -132,7 +178,7 @@ def build_value_lens(market_cap: float | None,
             n_acq += 1
     acq_note = None
     if n_acq and market_cap and acq > 0.05 * market_cap and (cagr3 or 0) < 5:
-        acq_note = (f"~${acq/1e9:.1f}B spent on acquisitions over {n_acq} FYs "
+        acq_note = (f"~${acq/1e9:.1f}B cash paid for acquisitions over {n_acq} FYs "
                     "with low organic revenue growth — growth may be bought, "
                     "not built")
         warnings.append(acq_note)
@@ -187,13 +233,43 @@ def build_value_lens(market_cap: float | None,
         "ev": m(ev and ev / 1e6, "market cap + total debt − cash & short-term "
                                  "investments − marketable equity securities ($M)"),
         "net_cash": bool(ev is not None and market_cap is not None and ev < market_cap),
-        "rev_cagr_3y": m(cagr3, "reported FY revenues, 3-yr span"),
-        "rev_cagr_5y": m(cagr5, f"reported FY revenues, {span5}-yr span"),
+        "rev_cagr_3y": m(cagr3, cagr3_basis),
+        "rev_cagr_5y": m(cagr5, cagr5_basis),
         "roic_ttm": m(roic_ttm, "EBIT×(1−eff tax) ÷ (debt+equity−cash)", approx=True),
         "roic_avg": m(roic_avg, f"same construction, avg of {n_roic} FYs "
                                 "(current balance sheet)", approx=True),
-        "acquisitions_total": m(acq / 1e6 if n_acq else None,
-                                f"sum of business purchases, {n_acq} FYs ($M)"),
+        # the cash-flow line only: a deal paid in stock (ISTR's bank mergers)
+        # never appears in it, so this is not "total acquisitions"
+        "acquisitions_total": {**m(acq / 1e6 if n_acq else None,
+                                   f"cash paid for acquisitions, net of cash acquired, "
+                                   f"{n_acq} FYs — excludes deals paid in stock ($M)"),
+                               "label": "Cash paid for acquisitions"},
         "readings": readings,
         "warnings": warnings,
     }
+
+
+NOT_FOR_BANKS = ("fcf_ttm", "p_fcf", "p_fcf_avg", "ev", "roic_ttm", "roic_avg",
+                 "payout_of_fcf_pct")
+BANK_NOTE = ("bank: free cash flow, P/FCF, enterprise value and ROIC are not shown — "
+             "deposits and borrowings fund the loan book, they are not corporate debt")
+
+
+def for_bank(vl: dict | None) -> dict | None:
+    """The lens for a bank: the cash-flow and enterprise-value rows mean
+    something else for a deposit-taker, so they are blanked with one note."""
+    if not vl:
+        return vl
+    out = dict(vl)
+    for k in NOT_FOR_BANKS:
+        if isinstance(out.get(k), dict):
+            out[k] = {**out[k], "value": None}
+    out["net_cash"] = False
+    out["ni_vs_fcf_flag"] = False
+    drop = ("net income materially exceeds free cash flow", "net cash position",
+            "dividends consume")
+    out["warnings"] = [BANK_NOTE] + [w for w in out.get("warnings") or []
+                                     if not w.startswith(drop)]
+    out["readings"] = [r for r in out.get("readings") or []
+                       if not r.startswith(("TTM free cash flow", "P/FCF", "ROIC"))]
+    return out

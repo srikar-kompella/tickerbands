@@ -65,7 +65,7 @@ function ScorecardView() {
       </div>
       <table className="w-full text-sm">
         <thead>
-          <tr className="text-left text-[10px] uppercase tracking-wide text-faint">
+          <tr className="text-left text-[11px] uppercase tracking-wide text-faint">
             <th className="pb-2 font-medium">When</th>
             <th className="pb-2 font-medium">Ticker</th>
             <th className="pb-2 font-medium">Stance</th>
@@ -83,7 +83,7 @@ function ScorecardView() {
                 {r.days_elapsed != null && <span className="text-faint"> · {r.days_elapsed}d</span>}</td>
               <td className="py-2 font-bold">{r.ticker}</td>
               <td className="py-2"><Badge tone={tone(r.stance)}>{r.stance}</Badge>
-                {r.horizon && <span className="ml-1 text-[10px] text-faint">{r.horizon}</span>}</td>
+                {r.horizon && <span className="ml-1 text-[11px] text-faint">{r.horizon}</span>}</td>
               <td className="tnum py-2 text-right">{fmtMoney(r.price_then)}</td>
               <td className="tnum py-2 text-right">{fmtMoney(r.price_now)}</td>
               <td className={cn('tnum py-2 text-right', plColor(r.return_pct))}>{fmtPct(r.return_pct, 1, true)}</td>
@@ -96,7 +96,7 @@ function ScorecardView() {
           ))}
         </tbody>
       </table>
-      <p className="mt-2 text-[10px] text-faint">{data.caveat}</p>
+      <p className="mt-2 text-[11px] text-faint">{data.caveat}</p>
     </Card>
   )
 }
@@ -117,7 +117,7 @@ function DecisionsView() {
       <CardTitle>Your calls, and what the price did since</CardTitle>
       <table className="w-full text-sm">
         <thead>
-          <tr className="text-left text-[10px] uppercase tracking-wide text-faint">
+          <tr className="text-left text-[11px] uppercase tracking-wide text-faint">
             <th className="pb-2 font-medium">When</th>
             <th className="pb-2 font-medium">Ticker</th>
             <th className="pb-2 font-medium">Call</th>
@@ -141,7 +141,7 @@ function DecisionsView() {
           ))}
         </tbody>
       </table>
-      <p className="mt-2 text-[10px] text-faint">
+      <p className="mt-2 text-[11px] text-faint">
         "Since" is raw price change after your call — context, not a scorecard;
         a good process can have bad outcomes and vice versa.
       </p>

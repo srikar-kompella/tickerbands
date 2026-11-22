@@ -175,6 +175,8 @@ export interface VLMetric {
   value: number | null
   basis: string
   approx: boolean
+  // the backend's own row label, where it sets one (acquisitions_total)
+  label?: string
 }
 
 export interface TTMMetric {
@@ -351,6 +353,10 @@ export interface ReportField {
   value: unknown
   display: string
   status: 'ok' | 'withheld' | 'no_data'
+  // which panel the field belongs to: "price" | "fundamentals" | "fund" |
+  // "bank" | "options" | "context" | "position" | "news" | "research".
+  // Absent on older payloads — the panels fall back to a key → group table.
+  group?: string
   basis?: string
   source?: string
   warnings: string[]
@@ -369,9 +375,35 @@ export interface ReportView {
   fields: Record<string, ReportField>
   checks: { check: string; ok: boolean; detail: string }[]
   data_as_of?: { price: string; as_of: string; statements: string; news: string }
+  security_kind?: SecurityKind
+}
+
+// What the instrument is — decides which panels apply (a fund has no
+// earnings, insiders or margins). Absent on older payloads.
+export type SecurityKind = 'stock' | 'fund' | 'bank' | 'new_listing'
+
+// The facts behind `security_kind` (backend report_view.classify_security).
+// `kind` is new_listing before fund/bank, so a fund listed last week is
+// kind "new_listing" with is_fund true. Every key optional — read defensively.
+export interface SecurityInfo {
+  kind?: SecurityKind
+  is_fund?: boolean
+  is_bank?: boolean
+  new_listing?: boolean
+  why?: string[]
+  // completed sessions since the first trade (null when the history is longer than asked for)
+  sessions_listed?: number | null
+  first_trade_date?: string | null
+  sic?: string | null
+  sic_description?: string | null
+  asset_sub_type?: string | null
+  industry?: string | null
 }
 
 export interface Analysis {
+  security_kind?: SecurityKind
+  is_new_listing?: boolean
+  security?: SecurityInfo | null
   price_basis?: PriceBasis
   report_view?: ReportView
   symbol: string

@@ -10,7 +10,7 @@
 // user-chosen (newest activity by default).
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { FileDown, Check, Compass, Eye, RefreshCw, TerminalSquare, X as XIcon } from 'lucide-react'
+import { FileDown, Check, ChevronRight, Compass, Eye, RefreshCw, TerminalSquare, X as XIcon } from 'lucide-react'
 import { toast } from 'sonner'
 import { fmtDate, fmtMarketCap } from '@/lib/format'
 import { cn } from '@/lib/utils'
@@ -47,32 +47,35 @@ function CandidateRow({ r, expanded, onToggle, onAnalyze, onPromote, onPatch }: 
   onPatch: (s: string, status: string) => void
 }) {
   return (
-    <Card hover className={cn(r.status === 'dismissed' && 'opacity-50')}>
+    <Card hover className={cn('px-4 py-3', r.status === 'dismissed' && 'opacity-50')}>
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <button onClick={() => onAnalyze(r.symbol)}
               className="text-base font-bold hover:text-accent">{r.symbol}</button>
             {r.sources.map((s) => (
-              <Badge key={s} tone={SOURCE_TONE[s] ?? 'neutral'} className="text-[10px]">{s}</Badge>
+              <Badge key={s} tone={SOURCE_TONE[s] ?? 'neutral'} className="text-[11px]">{s}</Badge>
             ))}
             {r.status === 'promoted' && (
-              <Badge tone="up" className="text-[10px]" title="Already on your watchlist">watching</Badge>
+              <Badge tone="up" className="text-[11px]" title="Already on your watchlist">watching</Badge>
             )}
             {!!r.returned && (
-              <Badge tone="warn" className="text-[10px]" title="Dismissed before, but NEW evidence arrived">returned</Badge>
+              <Badge tone="warn" className="text-[11px]" title="Dismissed before, but NEW evidence arrived">returned</Badge>
             )}
             <span className="text-[11px] text-faint tnum">
               {fmtMarketCap(r.market_cap_m)} · seen {fmtDate(r.first_seen)}
               {r.last_seen !== r.first_seen && ` → ${fmtDate(r.last_seen)}`}
             </span>
           </div>
-          <button className="mt-1 block text-left text-sm text-muted hover:text-text"
-            onClick={onToggle}>
-            {r.reasons.at(-1)?.reason}
-            {r.reasons.length > 1 && (
-              <span className="ml-1 text-[10px] text-faint">
-                ({r.reasons.length - 1} more — click)
+          {/* two lines until opened: a lead's full write-up runs to a
+              paragraph, and a hundred of them made a 13,000px page */}
+          <button className="mt-1 block max-w-[105ch] text-left text-[13px] leading-relaxed text-muted hover:text-text"
+            onClick={onToggle} aria-expanded={expanded}
+            title={expanded ? 'Click to collapse' : 'Click to read in full'}>
+            <span className={cn(!expanded && 'line-clamp-2')}>{r.reasons.at(-1)?.reason}</span>
+            {r.reasons.length > 1 && !expanded && (
+              <span className="text-[11px] text-faint">
+                {r.reasons.length - 1} more — click
               </span>
             )}
           </button>
@@ -80,7 +83,7 @@ function CandidateRow({ r, expanded, onToggle, onAnalyze, onPromote, onPatch }: 
             <ul className="mt-1.5 space-y-1 border-t border-border pt-1.5">
               {r.reasons.slice(0, -1).reverse().map((re, i) => (
                 <li key={i} className="text-xs text-faint">
-                  <Badge className="mr-1.5 text-[9px]">{re.source}</Badge>
+                  <Badge className="mr-1.5 text-[11px]">{re.source}</Badge>
                   {re.reason} <span className="tnum">({fmtDate(re.date)})</span>
                 </li>
               ))}
@@ -109,18 +112,23 @@ function CandidateRow({ r, expanded, onToggle, onAnalyze, onPromote, onPatch }: 
   )
 }
 
-function Section({ title, hint, rows, render }: {
+function Section({ title, hint, rows, render, defaultOpen = true }: {
   title: string; hint: string; rows: Candidate[]
   render: (r: Candidate) => React.ReactNode
+  /** the aging shelf starts closed — its count stays in the heading */
+  defaultOpen?: boolean
 }) {
+  const [open, setOpen] = useState(defaultOpen)
   if (!rows.length) return null
   return (
     <div className="mb-5">
-      <div className="mb-2 flex items-baseline gap-2">
+      <button onClick={() => setOpen((o) => !o)} aria-expanded={open}
+        className="mb-2 flex w-full items-baseline gap-2 text-left">
+        <ChevronRight className={cn('h-3.5 w-3.5 shrink-0 self-center text-faint transition-transform', open && 'rotate-90')} />
         <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">{title}</h3>
         <span className="text-[11px] text-faint">{rows.length} · {hint}</span>
-      </div>
-      <div className="space-y-2">{rows.map(render)}</div>
+      </button>
+      {open && <div className="space-y-2">{rows.map(render)}</div>}
     </div>
   )
 }
@@ -250,10 +258,13 @@ export default function Discover({ onAnalyze }: { onAnalyze: (s: string) => void
         hint="≥2 independent evidence types — the interesting kind" />
       <Section title="New this week" rows={fresh} render={renderRow}
         hint={`single-source leads active in the last ${FRESH_DAYS} days`} />
-      <Section title="Older leads" rows={older} render={renderRow}
+      {/* closed by default unless it is the only shelf with anything on it */}
+      <Section key={`older-${convergence.length + fresh.length > 0}`}
+        title="Older leads" rows={older} render={renderRow}
+        defaultOpen={convergence.length + fresh.length === 0}
         hint="no new evidence lately — promote or dismiss to keep this shelf short" />
 
-      <p className="mt-4 text-[11px] text-faint">
+      <p className="mt-4 max-w-[110ch] text-[11px] leading-relaxed text-faint">
         Leads, not recommendations: each row is one or more pieces of documented
         evidence (insider clusters, post-earnings drift, short-interest moves,
         or a reasoned web sweep) on a NON-mainstream name. Open Analysis to

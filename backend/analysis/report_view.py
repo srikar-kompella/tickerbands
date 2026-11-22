@@ -21,16 +21,23 @@ from __future__ import annotations
 
 import datetime as dt
 import math
+import re
 from typing import Any
 
 from analysis import market_clock as mc
 from analysis import options_iv, research_quality
-from analysis.fundamentals_ttm import DIVERGENCE_LIMIT, ttm_sum
+from analysis.fundamentals_ttm import DIVERGENCE_LIMIT
 from analysis.news_relevance import MIN_HEADLINES_FOR_SENTIMENT, MIN_TAGGED_SOCIAL, signed
 
 BAND_Z = 1.28
 ANALYST_MAX_AGE_DAYS = 62     # Finnhub monthly snapshot older than ~2 months = stale
 NON_OP_FLAG_SHARE = 0.05      # non-operating items ≥ 5% of pretax income → flag
+TAX_BENEFIT_SHARE = 0.10      # an income-tax BENEFIT ≥ 10% of pretax profit → flag
+NI_OVER_OP_RATIO = 1.25       # net income > 1.25 × operating income → flag
+STATUTORY_TAX = 0.21          # the rate the "at a normal tax rate" figure uses
+SHARE_COUNT_TOLERANCE = 0.05  # two share-count sources further apart than this disagree
+DILUTED_TOLERANCE = 0.10      # diluted vs outstanding shares further apart than this
+BETA_MIN_CORRELATION = 0.3    # |correlation to SPY| below this → beta is noise
 LATEST_QUARTER_GAP_DAYS = 95  # last earnings date − latest quarter end > this → missing quarter
 
 # share classes that are the same company (report on one, hold the other)
@@ -173,6 +180,212 @@ def dividend_frequency(events: list[dict]) -> int | None:
     return None
 
 
+def _sorted_events(events: list[dict]) -> list[dict]:
+    return sorted((e for e in events or [] if e.get("date") and _f(e.get("amount"))),
+                  key=lambda e: str(e["date"])[:10])
+
+
+def schedule_gaps(events: list[dict], n: int = 5) -> list[int]:
+    """Days between the last `n` ex-dates, oldest gap first."""
+    ds = sorted({str(e.get("date"))[:10] for e in events or [] if e.get("date")})[-n:]
+    return [(dt.date.fromisoformat(b) - dt.date.fromisoformat(a)).days
+            for a, b in zip(ds, ds[1:])]
+
+
+def trailing_distributions(events: list[dict], asof: dt.date,
+                           per_year: int | None = None) -> tuple[list[dict], int]:
+    """Distributions that make up the trailing-12-month figure → (events,
+    number left out as calendar drift).
+
+    The window is ex-dates in (asof − 365 days, asof]. A regular payer's
+    ex-date moves around inside its month, so 365 days can hold one payment
+    too many: QQQI on 2026-11-22 had 13 monthly ex-dates between 2025-11-26
+    and 2026-11-18, and the yield read 18.0% for a fund paying ~16.6%. When
+    the payments in the window are evenly spaced (no special sitting between
+    two regular ones) and outnumber the schedule's payments per year, only
+    the latest `per_year` count."""
+    lo = (asof - dt.timedelta(days=365)).isoformat()
+    hi = asof.isoformat()
+    win = [e for e in _sorted_events(events) if lo < str(e["date"])[:10] <= hi]
+    if per_year and len(win) > per_year:
+        ds = [dt.date.fromisoformat(str(e["date"])[:10]) for e in win]
+        gaps = [(b - a).days for a, b in zip(ds, ds[1:])]
+        if gaps and min(gaps) >= 0.6 * 365 / per_year:
+            return win[-per_year:], len(win) - per_year
+    return win, 0
+
+
+FWD_MAX_DEVIATION = 0.50      # latest payment vs the median of the prior ones
+FWD_GAP_RATIO = 1.75          # longest ÷ shortest gap between recent ex-dates
+
+
+def forward_distribution(events: list[dict]) -> dict[str, Any]:
+    """Can the latest distribution be annualized? → {per_year, latest,
+    latest_date, median_prior, n_prior, ok, why, note}.
+
+    `latest × payments per year` is only a yield when the payer pays a
+    similar amount on a steady schedule. UFO on 2026-11-22: a $0.004 payout
+    × 2/yr rendered a 0.02% "forward yield" for a fund that paid $0.15 over
+    the year. Not computed (ok=False, `why` says which test failed) when the
+    schedule has no regular spacing, when the gaps between recent ex-dates
+    differ by more than FWD_GAP_RATIO, or when the latest payment is more
+    than FWD_MAX_DEVIATION away from the median of the payments before it."""
+    ev = _sorted_events(events)
+    out: dict[str, Any] = {"per_year": None, "latest": None, "latest_date": None,
+                           "median_prior": None, "n_prior": 0, "ok": False,
+                           "why": None, "note": None}
+    if not ev:
+        return out
+    last = ev[-1]
+    out.update({"latest": float(last["amount"]), "latest_date": str(last["date"])[:10]})
+    per_year = dividend_frequency(ev)
+    out["per_year"] = per_year
+    gaps = schedule_gaps(ev)
+    if per_year is None:
+        out["why"] = ("payment schedule irregular"
+                      + (f" (gaps of {min(gaps)}–{max(gaps)} days between the last "
+                         f"{len(gaps) + 1} ex-dates)" if gaps else " (fewer than 3 ex-dates)"))
+        return out
+    if gaps and min(gaps) > 0 and max(gaps) / min(gaps) > FWD_GAP_RATIO:
+        out["why"] = (f"payment schedule irregular (gaps of {min(gaps)}–{max(gaps)} days "
+                      f"between the last {len(gaps) + 1} ex-dates)")
+        return out
+    prior = sorted(float(e["amount"]) for e in ev[:-1][-max(per_year, 4):])
+    if len(prior) >= 2:
+        mid = len(prior) // 2
+        med = prior[mid] if len(prior) % 2 else (prior[mid - 1] + prior[mid]) / 2
+        out.update({"median_prior": med, "n_prior": len(prior)})
+        dev = out["latest"] / med - 1 if med else 0.0
+        # a new level that has already been paid twice is a raise or a cut,
+        # not a one-off (NVDA: $0.01 → $0.25, then $0.25 again)
+        prev = float(ev[-2]["amount"])
+        sustained = abs(out["latest"] / prev - 1) <= 0.10 if prev else False
+        if abs(dev) > FWD_MAX_DEVIATION and not sustained:
+            out["why"] = (f"variable distributions — the latest (${out['latest']:.4g}, ex "
+                          f"{out['latest_date']}) is {abs(dev) * 100:.0f}% "
+                          f"{'below' if dev < 0 else 'above'} the median of the prior "
+                          f"{len(prior)} (${med:.4g}) and has not repeated")
+            return out
+        if abs(dev) > FWD_MAX_DEVIATION / 2 and not sustained:
+            out["note"] = (f"the latest distribution (${out['latest']:.4g}) is "
+                           f"{abs(dev) * 100:.0f}% {'below' if dev < 0 else 'above'} the "
+                           f"median of the prior {len(prior)} (${med:.4g}) — the forward "
+                           "yield assumes it repeats")
+    out["ok"] = True
+    return out
+
+
+_SCHEDULE_WORD = {12: "monthly", 4: "quarterly", 2: "semi-annual", 1: "annual"}
+
+# ─── field groups (the UI renders a report generically, group by group) ────────
+
+GROUPS = ("price", "fundamentals", "fund", "bank", "options", "context",
+          "position", "news", "research")
+_GROUP_OF = {
+    **{k: "price" for k in ("price", "after_hours", "day_move", "day_move_sigma", "band_next")},
+    **{k: "fundamentals" for k in (
+        "market_cap", "eps_ttm", "pe_ttm", "fcf_ttm", "p_fcf", "ev", "net_cash",
+        "gross_margin", "operating_margin", "net_margin", "net_margin_q",
+        "revenue_growth", "revenue_growth_q", "div_yield_forward", "div_yield_trailing")},
+    **{k: "fund" for k in ("fund_schedule", "fund_distributions", "fund_expense_ratio",
+                           "fund_aum", "fund_nav", "fund_category")},
+    **{k: "bank" for k in ("bank_note", "p_tbv", "roe")},
+    **{k: "options" for k in ("put_call", "atm_iv", "implied_move", "implied_vs_band")},
+    **{k: "context" for k in ("beta", "correlation", "week52", "rv20", "social",
+                              "analyst_mix", "analyst_actions", "earnings_next")},
+    **{k: "position" for k in ("position_value", "position_pl", "position_day_pl",
+                               "position_weight")},
+    **{k: "news" for k in ("news_sentiment", "headlines", "regulatory", "move_cause")},
+    **{k: "research" for k in ("claude_news", "claude_stance")},
+}
+
+# ─── what kind of security is this ─────────────────────────────────────────────
+
+SECURITY_KINDS = ("stock", "fund", "bank", "new_listing")
+NEW_LISTING_SESSIONS = 21     # fewer completed sessions than this → new_listing
+YOUNG_LISTING_SESSIONS = 60   # share counts are still settling below this
+FUND_SUB_TYPES = {"ETF", "CEF", "ETN", "MF", "OEF", "UIT"}
+FUND_ASSET_TYPES = {"ETF", "MUTUAL_FUND", "MUTUALFUND", "FUND"}
+FUND_QUOTE_TYPES = {"ETF", "MUTUALFUND"}
+BANK_SIC = {"6021", "6022", "6029", "6035", "6036"}
+# name fallback for a fund (only with no sub-type, quote type or statements);
+# "Trust" and "Shares" are not fund words — Northern Trust Corp, Vornado
+# Realty Trust, "… Ordinary Shares", "American Depositary Shares" are stocks
+FUND_NAME_RE = re.compile(r"\b(ETF|ETN|Fund|iShares)\b", re.I)
+COMPANY_NAME_RE = re.compile(
+    r"\b(Corp|Corporation|Inc|Incorporated|Bancorp|Holdings?|Ordinary|Depositary|REIT|Realty)\b",
+    re.I)
+
+# company-fundamentals rows a fund does not have; rows that mislead for a bank
+COMPANY_ONLY = frozenset({
+    "market_cap", "eps_ttm", "pe_ttm", "fcf_ttm", "p_fcf", "ev", "net_cash",
+    "gross_margin", "operating_margin", "net_margin", "net_margin_q",
+    "revenue_growth", "revenue_growth_q"})
+BANK_SUPPRESSED = frozenset({"ev", "net_cash", "p_fcf", "fcf_ttm", "gross_margin"})
+BANK_NOTE = ("EV, net cash, free cash flow, P/FCF and gross margin are not shown for a "
+             "bank — deposits and borrowings fund the loan book, they are not corporate debt")
+
+
+def classify_security(quote: dict | None, n_sessions: int | None,
+                      has_statements: bool, profile: dict | None = None,
+                      sic: str | None = None, bank_like: bool = False) -> dict[str, Any]:
+    """→ {"kind": stock|fund|bank|new_listing, "is_fund", "is_bank",
+    "new_listing", "is_new_listing", "why": [...]}. `kind` is what the
+    payload carries as `security_kind`. Precedence (B2/C2 code against it):
+    fund, then bank, then new_listing, else stock. `is_new_listing` (=
+    `new_listing`) is set whatever the kind — a fund or bank that listed
+    days ago is kind fund/bank with is_new_listing true.
+
+    fund: the broker's asset type or sub-type (Schwab files ETFs as EQUITY
+      with sub-type ETF), else Yahoo's quoteType, else — only when there is
+      no sub-type, no quote type and no financial statements — ETF / ETN /
+      Fund / iShares in the name, unless the name also says Corp, Inc,
+      Bancorp, Holdings, Ordinary, Depositary, REIT or Realty ("Northern
+      Trust Corp", "Vornado Realty Trust", "… Ordinary Shares" are stocks).
+      Unknown → not a fund.
+    bank: SEC SIC code 6021/6022/6029/6035/6036; only when the SIC is
+      unknown, Yahoo's industry text ("Banks - …") or bank lines (net
+      interest income + deposits) in the XBRL filing.
+    new_listing: fewer than NEW_LISTING_SESSIONS completed sessions of
+      history (`n_sessions` None = history unknown → not claimed)."""
+    q, p = quote or {}, profile or {}
+    name = str(q.get("name") or "")
+    main =str(q.get("asset_type") or "").upper()
+    sub = str(q.get("asset_sub_type") or "").upper()
+    qt = str(p.get("quote_type") or "").upper()
+    fund_why = None
+    if main in FUND_ASSET_TYPES:
+        fund_why = f"broker asset type {main}"
+    elif sub in FUND_SUB_TYPES:
+        fund_why = f"broker asset sub-type {sub}"
+    elif qt in FUND_QUOTE_TYPES:
+        fund_why = f"Yahoo quote type {qt}"
+    elif (not sub and not qt and not has_statements
+          and FUND_NAME_RE.search(name) and not COMPANY_NAME_RE.search(name)):
+        fund_why = "fund word in the name and no financial statements"
+    is_fund = fund_why is not None
+    bank_why = None
+    sic_s = str(sic).strip() if sic is not None else ""
+    if not is_fund:
+        industry = str(p.get("industry") or "")
+        if sic_s in BANK_SIC:
+            bank_why = f"SEC SIC code {sic_s}"
+        elif sic_s:
+            pass                          # a known non-bank SIC is the answer
+        elif industry.lower().startswith("banks"):
+            bank_why = f"Yahoo industry '{industry}'"
+        elif bank_like:
+            bank_why = "net interest income and deposits in the SEC filing"
+    is_bank = bank_why is not None
+    why = [w for w in (fund_why, bank_why) if w]
+    new = n_sessions is not None and n_sessions < NEW_LISTING_SESSIONS
+    if new:
+        why.append(f"{n_sessions} completed session(s) of price history")
+    kind = "fund" if is_fund else "bank" if is_bank else "new_listing" if new else "stock"
+    return {"kind": kind, "is_fund": is_fund, "is_bank": is_bank, "new_listing": new,
+            "is_new_listing": new, "why": why}
+
+
 # ─── the builder ───────────────────────────────────────────────────────────────
 
 def build(inp: dict[str, Any]) -> dict[str, Any]:
@@ -188,9 +401,26 @@ def build(inp: dict[str, Any]) -> dict[str, Any]:
     price = b.get("price")
     fields: dict[str, dict] = {}
     raw: dict[str, Any] = {"price": price}   # the inputs the checks re-derive from
+    # what kind of security this is decides which rows exist (a fund has no
+    # company fundamentals; EV / FCF mislead for a bank)
+    sec = inp.get("security") or {}
+    kind = sec.get("kind") if sec.get("kind") in SECURITY_KINDS else "stock"
+    is_fund, is_bank = bool(sec.get("is_fund")), bool(sec.get("is_bank"))
+    # new-listing behavior keys off this flag, never off `kind` (a fund or a
+    # bank that listed days ago is kind fund / bank)
+    is_new = bool(sec.get("is_new_listing", sec.get("new_listing")))
+    profile = sec.get("profile") or {}
 
     def add(f: dict) -> None:
-        fields[f["key"]] = f
+        k = f["key"]
+        if is_fund and k in COMPANY_ONLY:
+            return
+        if is_bank and (k in BANK_SUPPRESSED
+                        or (k == "operating_margin" and f.get("value") is None)):
+            return
+        f.setdefault("group", "fund" if is_fund and k.startswith("div_yield")
+                     else _GROUP_OF.get(k, "context"))
+        fields[k] = f
 
     # ── price, extended hours, day move ──────────────────────────────────────
     src_price = ("broker live regular-session quote" if b.get("price_kind") == "live"
@@ -289,10 +519,52 @@ def build(inp: dict[str, Any]) -> dict[str, Any]:
         mc_warn.append(f"vendor market cap {big_money(v_mcap * 1e6)} implies a price "
                        f"of {money(v_mcap * 1e6 / shares)} — not the report price; "
                        "recomputed")
+    # which share count, and do the other sources agree with it
+    shares_src = inp.get("shares_source") or "vendor profile"
+
+    def sh(v: float) -> str:                         # a share count, in millions
+        return f"{v / 1e6:,.0f}M" if v >= 1e8 else f"{v / 1e6:,.1f}M"
+
+    sh_stmt = st.get("shares") or {}
+    y_all = _f(profile.get("implied_shares_outstanding"))
+    y_listed = _f(profile.get("shares_outstanding"))
+    dil = _f(sh_stmt.get("diluted"))
+    if shares:
+        if y_all and abs(y_all / shares - 1) > SHARE_COUNT_TOLERANCE:
+            mc_warn.append(
+                f"share-count sources disagree: {sh(shares)} ({shares_src}) is used; Yahoo "
+                f"reports {sh(y_all)} across share classes — market cap on that count "
+                f"would be {big_money(price * y_all) if price else '—'}")
+        if dil and abs(dil / shares - 1) > DILUTED_TOLERANCE:
+            over = dil > shares
+            mc_warn.append(
+                f"diluted share count {sh(dil)} (weighted average, {sh_stmt.get('span', 'quarter')} "
+                f"ended {sh_stmt.get('period') or '?'}) is {abs(dil / shares - 1) * 100:.0f}% "
+                f"{'above' if over else 'below'} the {sh(shares)} shares outstanding used — "
+                + ("convertible securities (for example convertible preferred) or options, "
+                   "or share classes not in the count used; "
+                   f"on the diluted count market cap would be about "
+                   f"{big_money(price * dil) if price else '—'}" if over else
+                   "shares were issued after that period, or the sources count different "
+                   "share classes"))
+        n_listed = sec.get("sessions_listed")
+        if (n_listed is not None and n_listed < YOUNG_LISTING_SESSIONS) or is_new:
+            others = [f"{sh(v)} {what}" for v, what in ((y_listed, "for the listed class"),
+                                                        (y_all, "across share classes")) if v]
+            mc_warn.append(
+                (f"listed {n_listed} session{'s' if n_listed != 1 else ''} ago"
+                 if n_listed is not None else "newly listed")
+                + (f" (first trading day {sec['first_trade_date']})" if sec.get("first_trade_date") else "")
+                + f" — the share count used ({sh(shares)}, {shares_src}) may not yet reflect "
+                "the offering or every share class"
+                + (f"; Yahoo lists {' and '.join(others)}" if others else "")
+                + "; check the prospectus")
     add(_field("market_cap", "Market cap", mcap, big_money(mcap),
-               f"shares outstanding {shares_m:,.0f}M ({inp.get('shares_source') or 'vendor profile'})"
+               f"shares outstanding {shares_m:,.0f}M ({shares_src})"
                if shares_m else "shares outstanding unavailable",
-               b.get("price_label"), "report price", "price × shares outstanding",
+               b.get("price_label"),
+               f"report price × {sh(shares)} shares outstanding ({shares_src})"
+               if shares else "report price", "price × shares outstanding",
                warnings=mc_warn))
 
     # EPS: statement quarters first, then Yahoo trailingEps, then vendor
@@ -329,11 +601,6 @@ def build(inp: dict[str, Any]) -> dict[str, Any]:
                             f"{s} reports {round(v, 2)} (may predate the latest quarter)")
     eps_status = "withheld" if any(">50%" in w for w in eps_warn) else "ok"
     raw["eps"] = eps if eps_status == "ok" else None
-    add(_field("eps_ttm", "EPS (TTM)", eps, money(eps), eps_src,
-               periods.get("income") if eps_src.startswith("sum") else (inp.get("eps_check") or {}).get("as_of"),
-               "trailing twelve months", "sum of the last 4 quarters' diluted EPS",
-               warnings=eps_warn + (s_warn("income") if eps_src.startswith("sum") else []),
-               status=eps_status))
 
     # non-operating items inflating net income
     pre, op = _f(ttm.get("pretax_income")), _f(ttm.get("operating_income"))
@@ -344,8 +611,47 @@ def build(inp: dict[str, Any]) -> dict[str, Any]:
                        f"items ({non_op / pre * 100:.0f}% — e.g. gains on equity "
                        "securities); net income, net margin and P/E are flattered")
 
+    # a one-time income-tax benefit inflating net income (TWLO 11/22: net
+    # margin 21.8% beside an operating margin of 6.8% — about $1.0B of
+    # deferred-tax valuation allowance released into the tax line)
+    ni_ttm, tax_ttm = _f(ttm.get("net_income")), _f(ttm.get("tax"))
+    tax_derived = False
+    if tax_ttm is None and pre is not None and ni_ttm is not None and ni_ttm > pre:
+        tax_ttm = pre - ni_ttm            # net income above pretax income = a benefit
+        tax_derived = True                # …or discontinued operations: no tax line to tell
+    tax_warn = None
+    if (tax_derived and tax_ttm < 0 and pre is not None and pre > 0
+            and -tax_ttm >= TAX_BENEFIT_SHARE * pre):
+        tax_warn = (f"TTM net income exceeds pretax income by {big_money(-tax_ttm)} (a tax "
+                    "benefit or discontinued operations) — net income "
+                    f"{big_money(ni_ttm)} on pretax income of {big_money(pre)}; the source "
+                    "has no tax line to say which. EPS, P/E and net margin may be "
+                    "flattered by a one-time item")
+    elif (tax_ttm is not None and tax_ttm < 0 and pre is not None and pre > 0
+            and -tax_ttm >= TAX_BENEFIT_SHARE * pre):
+        tax_warn = (f"TTM net income {big_money(ni_ttm)} includes an income-tax benefit of "
+                    f"{big_money(-tax_ttm)} on pretax income of {big_money(pre)} (for example "
+                    "a deferred-tax valuation allowance released) — a one-time item; EPS, "
+                    "P/E and net margin are flattered. Taxed at "
+                    f"{STATUTORY_TAX * 100:.0f}% instead, net income would be about "
+                    f"{big_money(pre * (1 - STATUTORY_TAX))}")
+    elif (not non_op_warn and ni_ttm is not None and op is not None and ni_ttm > 0
+          and ni_ttm > NI_OVER_OP_RATIO * max(op, 0.0)):
+        tax_warn = (f"TTM net income {big_money(ni_ttm)} exceeds operating income "
+                    f"{big_money(op)} — the difference comes from below the operating line "
+                    "(non-operating gains or a tax benefit); EPS, P/E and net margin are "
+                    "flattered")
+    below_line = [w for w in (non_op_warn, tax_warn) if w]
+
+    add(_field("eps_ttm", "EPS (TTM)", eps, money(eps), eps_src,
+               periods.get("income") if eps_src.startswith("sum") else (inp.get("eps_check") or {}).get("as_of"),
+               "trailing twelve months", "sum of the last 4 quarters' diluted EPS",
+               warnings=eps_warn + (s_warn("income") if eps_src.startswith("sum") else [])
+               + ([tax_warn] if tax_warn else []),
+               status=eps_status))
+
     pe = price / eps if price and eps and eps > 0 and eps_status == "ok" else None
-    pe_warn = list(eps_warn) + ([non_op_warn] if non_op_warn else [])
+    pe_warn = list(eps_warn) + below_line
     if eps is not None and eps <= 0:
         pe_warn.append("negative TTM EPS — P/E undefined")
     add(_field("pe_ttm", "P/E (TTM)", pe, ratio(pe, 1, ""), f"price ÷ EPS ({eps_src})",
@@ -376,17 +682,27 @@ def build(inp: dict[str, Any]) -> dict[str, Any]:
                  + (f" + marketable equity securities {big_money(eq_sec)}" if eq_sec else "")
                  + f" − debt {big_money(debt)}") if net_cash is not None else ""
     debt_note = f" ({bal['debt_note']})" if bal.get("debt_note") else ""
+    # a balance sheet dated before the first trading day has none of the
+    # offering's proceeds in it (ANT 11/22: listed Nov 19, balance sheet of
+    # Sep 30) — net cash is shown with that said; EV, which would be too
+    # high by the proceeds, is withheld
+    bal_date = str(bal.get("as_of_date") or periods.get("balance") or "")[:10]
+    first_trade = str(sec.get("first_trade_date") or "")[:10]
+    pre_listing = ([f"balance sheet predates the listing — IPO proceeds not included "
+                    f"(balance sheet {bal_date}; first trading day {first_trade})"]
+                   if bal_date and first_trade and bal_date < first_trade else [])
     add(_field("ev", "Enterprise value", ev, big_money(ev),
                f"market cap + {s_src('balance')}",
                b.get("price_label"), f"report price; {s_basis('balance')}",
                "market cap + total debt − cash & short-term investments − marketable securities"
-               + debt_note, warnings=s_warn("balance") + debt_missing))
+               + debt_note, warnings=s_warn("balance") + debt_missing + pre_listing,
+               status="withheld" if pre_listing and ev is not None else "ok"))
     add(_field("net_cash", "Net cash", net_cash,
                (f"{big_money(net_cash)} ({breakdown})" if net_cash is not None else "—"),
                s_src("balance"), bal.get("as_of_date") or periods.get("balance"),
                s_basis("balance"),
                "cash & short-term investments + marketable securities − total debt" + debt_note,
-               warnings=s_warn("balance")))
+               warnings=s_warn("balance") + pre_listing))
 
     # margins: statement TTM + latest quarter, labeled
     rev = _f(ttm.get("revenue"))
@@ -402,13 +718,18 @@ def build(inp: dict[str, Any]) -> dict[str, Any]:
     nm_q = q_ni / q_rev * 100 if q_rev and q_ni is not None else None
     if rev:
         inc_src, inc_p, inc_b, inc_w = s_src("income"), periods.get("income"), s_basis("income"), s_warn("income")
+        gm_derived = bool(ttm.get("gross_profit_derived"))
         add(_field("gross_margin", "Gross margin (TTM)", gm, pct(gm, 1), inc_src, inc_p,
-                   inc_b, "TTM gross profit ÷ TTM revenue", warnings=inc_w))
+                   inc_b + ("; gross profit = revenue − cost of revenue (the filing has "
+                            "no gross-profit line)" if gm_derived else ""),
+                   "TTM (revenue − cost of revenue) ÷ TTM revenue" if gm_derived
+                   else "TTM gross profit ÷ TTM revenue", warnings=inc_w,
+                   derived=gm_derived))
         add(_field("operating_margin", "Operating margin (TTM)", om, pct(om, 1), inc_src,
                    inc_p, inc_b, "TTM operating income ÷ TTM revenue", warnings=inc_w))
         add(_field("net_margin", "Net margin (TTM)", nm, pct(nm, 1), inc_src, inc_p,
                    inc_b, "TTM net income ÷ TTM revenue",
-                   warnings=inc_w + ([non_op_warn] if non_op_warn else [])))
+                   warnings=inc_w + below_line))
     else:
         for key, label, vk in (("gross_margin", "Gross margin (TTM)", "gross_margin_pct"),
                                ("operating_margin", "Operating margin (TTM)", "operating_margin_pct"),
@@ -443,48 +764,161 @@ def build(inp: dict[str, Any]) -> dict[str, Any]:
                           f"{smeta.get('last_earnings')} earnings release — may not include "
                           "the latest quarter"] if vmeta.get("predates_earnings") else [])))
 
+    # ── banks: the two ratios a bank is read on, from the same statements ────
+    if is_bank:
+        add(_field("bank_note", "Bank", True, BANK_NOTE, "TickerBands", None, "", "",
+                   reason="; ".join(sec.get("why") or [])))
+        equity = _f(bal.get("equity"))
+        pref = _f(bal.get("preferred_equity")) or 0.0
+        gwi = _f(bal.get("goodwill_intangibles"))
+        tce = (equity - pref - gwi) if equity is not None and gwi is not None else None
+        p_tbv = mcap / tce if mcap and tce and tce > 0 else None
+        tbv_parts = (f"equity {big_money(equity)}"
+                     + (f" − preferred {big_money(pref)}" if pref else "")
+                     + f" − goodwill & intangibles {big_money(gwi)} = {big_money(tce)}"
+                     ) if tce is not None else ""
+        if tce is not None or equity is not None:
+            add(_field("p_tbv", "Price / tangible book", p_tbv, ratio(p_tbv, 2),
+                       f"market cap ÷ {s_src('balance')}", b.get("price_label"),
+                       f"report price; {s_basis('balance')}" + (f"; {tbv_parts}" if tbv_parts else ""),
+                       "market cap ÷ (shareholders' equity − preferred equity − goodwill "
+                       "− other intangibles)",
+                       warnings=s_warn("balance")
+                       + (["goodwill / intangibles not found in the balance sheet — "
+                           "tangible book not computed"] if tce is None else [])
+                       + (["tangible common equity ≤ 0 — ratio undefined"]
+                          if tce is not None and tce <= 0 else []),
+                       tangible_common_equity=tce))
+        roe = ni_ttm / equity * 100 if ni_ttm is not None and equity and equity > 0 else None
+        if roe is not None:
+            add(_field("roe", "Return on equity (TTM)", roe, pct(roe, 1),
+                       f"{s_src('income')} ÷ {s_src('balance')}", periods.get("income"),
+                       f"{s_basis('income')}; equity {big_money(equity)} at {bal_date or '?'} "
+                       "(period end, not an average)",
+                       "TTM net income ÷ total shareholders' equity",
+                       warnings=s_warn("income") + [w for w in s_warn("balance")
+                                                    if w not in s_warn("income")]
+                       + ([tax_warn] if tax_warn else [])))
+
     # dividends: forward and trailing, each at the report price
     dv = inp.get("dividends") or {}
     events = dv.get("events") or []
-    freq = dividend_frequency(events) if events else None
-    last_amt = None
-    if events:
-        last_amt = float(sorted(events, key=lambda e: str(e.get("date")))[-1].get("amount") or 0) or None
-    fwd = (last_amt * freq / price * 100) if last_amt and freq and price else None
-    trailing_paid = ttm_sum(events, today) if dv.get("available") else None
-    trl = trailing_paid / price * 100 if trailing_paid is not None and price else None
+    yl = "Distribution yield" if is_fund else "Dividend yield"
     if dv.get("available"):
+        fd = forward_distribution(events)
+        freq, last_amt = fd["per_year"], fd["latest"]
+        fwd = (last_amt * freq / price * 100) if fd["ok"] and last_amt and freq and price else None
+        # evenly spaced ex-dates (the amounts may still vary)
+        regular = freq is not None and not (fd["why"] or "").startswith("payment schedule")
+        paid_events, drift_n = trailing_distributions(events, today, freq if regular else None)
+        trailing_paid = sum(float(e["amount"]) for e in paid_events)
+        trl = trailing_paid / price * 100 if price else None
+        raw.update({"div_trailing_paid": trailing_paid, "div_latest": last_amt,
+                    "div_per_year": freq if fd["ok"] else None})
         if not events:
             fwd = 0.0          # a non-payer's yield is a real zero, not missing
-        add(_field("div_yield_forward", "Dividend yield (forward)", fwd,
+        fwd_warn = []
+        if events and last_amt is None:
+            fwd_warn.append("forward yield not computed — no ex-date in the history has a "
+                            "positive amount")
+        elif events and fwd is None and fd["why"]:
+            fwd_warn.append(f"forward yield not computed — {fd['why']}; the trailing "
+                            "figure is what was actually paid")
+        elif fd["note"]:
+            fwd_warn.append(fd["note"])
+        add(_field("div_yield_forward", f"{yl} (forward)", fwd,
                    pct(fwd) if fwd is not None else ("0.00%" if not events else "—"),
                    f"{dv.get('source', '?')} distribution history", dv.get("as_of"),
-                   f"latest declared ${last_amt} × {freq}/yr at the report price" if fwd else
+                   f"latest declared ${last_amt:.4g} × {freq}/yr at the report price" if fwd else
                    "report price",
                    "latest declared distribution × payments per year ÷ price",
-                   warnings=([] if fwd is not None or not events else
-                             ["payment schedule irregular — forward yield not computed"])))
-        add(_field("div_yield_trailing", "Dividend yield (trailing 12 mo)", trl, pct(trl),
+                   warnings=fwd_warn,
+                   status="withheld" if events and fwd is None else "ok"))
+        n_paid = len(paid_events)
+        add(_field("div_yield_trailing", f"{yl} (trailing 12 mo)", trl, pct(trl),
                    f"{dv.get('source', '?')} distribution history", dv.get("as_of"),
-                   f"${trailing_paid:.2f} paid in the last 12 months at the report price"
-                   if trailing_paid is not None else "report price",
-                   "sum of distributions with ex-date in the last 365 days ÷ price"))
+                   f"${trailing_paid:.2f} paid in the last 12 months"
+                   f" ({n_paid} payment{'s' if n_paid != 1 else ''}) at the report price"
+                   + (f"; {drift_n} earlier ex-date inside the 365-day window is the same "
+                      "payment a year ago and is not counted" if drift_n else ""),
+                   "sum of distributions with ex-date in the last 365 days (at most one "
+                   "year's worth of a regular schedule) ÷ price",
+                   payments=n_paid))
+        ev_sorted = _sorted_events(events) if is_fund and events else []
+        if is_fund and events and not ev_sorted:
+            # every listed ex-date has a zero or missing amount: there is no
+            # latest payment to show (this used to raise → HTTP 500)
+            add(_field("fund_schedule", "Distribution schedule", None, "—",
+                       f"{dv.get('source', '?')} distribution history", dv.get("as_of"),
+                       "spacing of the last 5 ex-dates", "median gap between ex-dates",
+                       warnings=[f"{len(events)} ex-date{'s' if len(events) != 1 else ''} "
+                                 "listed, none with a positive amount — the source's "
+                                 "distribution history is incomplete"],
+                       status="withheld", per_year=None))
+        if ev_sorted:
+            gaps = schedule_gaps(ev_sorted)
+            sched_word = _SCHEDULE_WORD.get(freq) if regular else None
+            sched = (f"{sched_word} ({freq}/yr)" if sched_word else
+                     "irregular" + (f" — {min(gaps)}–{max(gaps)} days between the last "
+                                    f"{len(gaps) + 1} ex-dates" if gaps else ""))
+            add(_field("fund_schedule", "Distribution schedule", freq if sched_word else None,
+                       f"{sched} · latest ${last_amt:.4g}, ex {fd['latest_date']}",
+                       f"{dv.get('source', '?')} distribution history", dv.get("as_of"),
+                       "spacing of the last 5 ex-dates", "median gap between ex-dates",
+                       status="ok", per_year=freq if sched_word else None))
+            last12 = list(reversed(ev_sorted[-12:]))
+            add(_field("fund_distributions", f"Distributions (last {len(last12)})", len(last12),
+                       " · ".join(f"{str(e['date'])[:10]} ${float(e['amount']):.4g}"
+                                  for e in last12),
+                       f"{dv.get('source', '?')} distribution history", dv.get("as_of"),
+                       "per share, by ex-date, newest first", "as reported",
+                       items=[{"date": str(e["date"])[:10], "amount": float(e["amount"])}
+                              for e in last12]))
     else:
         v = vendor.get("dividend_yield_pct")
-        add(_field("div_yield_forward", "Dividend yield (forward)", None, "—",
+        add(_field("div_yield_forward", f"{yl} (forward)", None, "—",
                    "no distribution history", None, "", "",
                    warnings=([f"vendor yield {v}% cannot be verified at the report price — "
                               "not shown"] if v is not None else [])))
-        add(_field("div_yield_trailing", "Dividend yield (trailing 12 mo)", None, "—",
+        add(_field("div_yield_trailing", f"{yl} (trailing 12 mo)", None, "—",
                    "no distribution history", None, "", ""))
+
+    # ── funds: what the fund's own profile says (only what the source gives) ─
+    if is_fund:
+        p_src = profile.get("source") or "fund profile"
+        er, aum, nav = (_f(profile.get("expense_ratio_pct")), _f(profile.get("total_assets")),
+                        _f(profile.get("nav")))
+        if er is not None:
+            add(_field("fund_expense_ratio", "Expense ratio", er, pct(er, 2), p_src,
+                       profile.get("as_of"), "net annual expense ratio", "as reported"))
+        if aum:
+            add(_field("fund_aum", "Net assets", aum, big_money(aum), p_src,
+                       profile.get("as_of"), "fund total net assets", "as reported"))
+        if nav:
+            add(_field("fund_nav", "NAV per share", nav, money(nav), p_src,
+                       profile.get("as_of"),
+                       "the source's latest published NAV (its date is not stated) — "
+                       "not compared with the report price", "as reported"))
+        cat = " · ".join(x for x in (profile.get("category"), profile.get("fund_family")) if x)
+        if cat:
+            add(_field("fund_category", "Category", cat, cat, p_src, profile.get("as_of"),
+                       "category · fund family", "as reported"))
 
     # ── context ─────────────────────────────────────────────────────────────
     beta = inp.get("beta") or {}
+    corr = _f(beta.get("correlation"))
+    # a slope fitted to returns that barely move with SPY says nothing
+    # (MNDY 11/22: beta 0.03 on a correlation of 0.01)
+    beta_warn = ([f"beta not meaningful — correlation {corr:.2f} over the same "
+                  f"{beta.get('window', 60)} sessions (below {BETA_MIN_CORRELATION:.1f}): the "
+                  "stock has not been moving with SPY"]
+                 if beta.get("beta") is not None and corr is not None
+                 and abs(corr) < BETA_MIN_CORRELATION else [])
     add(_field("beta", "Beta vs SPY", beta.get("beta"),
                ratio(beta.get("beta"), 2, ""), "TickerBands, computed from daily bars",
                b.get("prior_date") if b.get("price_kind") == "live" else b.get("session_date"),
                f"{beta.get('window', 60)} daily returns vs SPY",
-               "OLS slope of daily returns vs SPY daily returns"))
+               "OLS slope of daily returns vs SPY daily returns", warnings=beta_warn))
     add(_field("correlation", "Correlation to SPY", beta.get("correlation"),
                ratio(beta.get("correlation"), 2, ""), "TickerBands, computed from daily bars",
                None, f"{beta.get('window', 60)} daily returns", "Pearson correlation"))
@@ -530,8 +964,10 @@ def build(inp: dict[str, Any]) -> dict[str, Any]:
         add(_field("implied_move", f"Implied move ({span})", im,
                    f"±{im:.2f}%" if im is not None else "—", "broker option chain", o_asof,
                    "ATM straddle ÷ underlying"
-                   + (f", expiry {exp_c:%a %b} {exp_c.day}" if exp_c else ""),
-                   "(ATM call + ATM put) ÷ spot"))
+                   + (f", expiry {exp_c:%a %b} {exp_c.day}" if exp_c else "")
+                   + (f", {o['atm_strike']:g} strike" if o.get("atm_strike") else ""),
+                   "(call + put of the nearest expiry, at the strike closest to spot "
+                   "that both have) ÷ spot"))
         # the band is one session wide; a straddle over n sessions is compared
         # with the band widened by √n
         k = math.sqrt(n_sess) if n_sess and n_sess > 1 else 1.0
@@ -568,8 +1004,20 @@ def build(inp: dict[str, Any]) -> dict[str, Any]:
     nw = inp.get("news_window") or {}
     reg_parts = []
     if fil:
+        # the issuer's own reports first; Form 4 / 144 / 13G / fund filings
+        # are summarized by form so they cannot crowd out an 8-K
+        core = [f for f in fil if f.get("group", "company") in ("company", "ownership")
+                or f.get("red_flag")]
+        routine = [f for f in fil if f not in core]
+        by_form: dict[str, int] = {}
+        for f in routine:
+            by_form[f["form"]] = by_form.get(f["form"], 0) + 1
         reg_parts.append("SEC filings: " + "; ".join(
-            f"{f['date']} {f['form']} ({f.get('desc')})" for f in fil[:5]))
+            [f"{f['date']} {f['form']} ({f.get('desc')})" for f in core[:5]]
+            + ([f"{len(core) - 5} more company filing{'s' if len(core) > 6 else ''}"]
+               if len(core) > 5 else [])
+            + ([", ".join(f"Form {k} ×{n}" if k[:1].isdigit() else f"{k} ×{n}"
+                          for k, n in by_form.items())] if by_form else [])))
     if hits:
         reg_parts.append("headlines: " + "; ".join(
             f"{h['date'][5:]} {h['headline']} ({h['source']})" for h in hits[:4]))
@@ -669,17 +1117,35 @@ def build(inp: dict[str, Any]) -> dict[str, Any]:
     recent = [c for c in changes if c["date"] >= (today - dt.timedelta(days=30)).isoformat()]
     def _dir(c):
         a = (c.get("action") or "").lower()
-        return "down" if a.startswith("down") else "up" if a.startswith("up") else a
+        return ("down" if a.startswith("down") else "up" if a.startswith("up")
+                else "init" if a.startswith("init") else a)
     n_down = sum(1 for c in recent if _dir(c) == "down")
     n_up = sum(1 for c in recent if _dir(c) == "up")
+    n_init = sum(1 for c in recent if _dir(c) == "init")   # new coverage, counted apart
+    n_other = len(recent) - n_down - n_up - n_init
+    # a feed with no rows at all for the symbol is missing coverage, not a
+    # count of zero (ANT, days after its listing: 0/0/0 while firms initiated)
+    no_feed = bool(rc and rc.get("no_feed"))
+    aa_warn = ([f"{rc.get('source', 'Yahoo')} has no rating-action history at all for {sym}"
+                + (" (listed days ago)" if is_new else "")
+                + " — initiations and changes are not in this feed yet; not a count of zero"]
+               if no_feed else [])
+
+    def _action(c) -> str:
+        if _dir(c) == "init":
+            return f"; {c['date'][5:]} {c['firm']} initiates at {c['to'] or '?'}"
+        return f"; {c['date'][5:]} {c['firm']} {c['from'] or '?'}→{c['to']}"
     add(_field("analyst_actions", "Analyst rating changes (30 days)",
-               len(recent) if rc else None,
-               (f"{n_down} downgrade(s), {n_up} upgrade(s), {len(recent) - n_down - n_up} other"
-                + ("".join(f"; {c['date'][5:]} {c['firm']} {c['from'] or '?'}→{c['to']}"
-                           for c in recent[:4])) if rc else "—"),
+               len(recent) if rc and not no_feed else None,
+               (f"{n_down} downgrade(s), {n_up} upgrade(s), {n_init} initiation(s), "
+                f"{n_other} other" + "".join(_action(c) for c in recent[:4])
+                if rc and not no_feed else "—"),
                f"{rc.get('source', 'Yahoo')} rating actions", today.isoformat(),
-               "dated firm-level actions", "count by action",
-               status="ok" if rc else "no_data", items=recent[:10]))
+               "dated firm-level actions", "count by action (initiations = new coverage; "
+               "other = ratings reiterated or maintained)",
+               warnings=aa_warn,
+               status="ok" if rc and not no_feed else "no_data", items=recent[:10],
+               counts={"down": n_down, "up": n_up, "init": n_init, "other": n_other}))
     add(_field("analyst_mix", "Analyst mix", m0.get("total") if an_ok else None,
                (f"{m0['strong_buy'] + m0['buy']} buy / {m0['hold']} hold / "
                 f"{m0['sell'] + m0['strong_sell']} sell of {m0['total']}" if an_ok else "—"),
@@ -780,6 +1246,7 @@ def build(inp: dict[str, Any]) -> dict[str, Any]:
                    status="ok", linked=link))
 
     return {"symbol": sym, "fields": fields, "raw": raw,
+            "security_kind": kind, "groups": list(GROUPS),
             "generated_ny": now.isoformat(timespec="minutes")}
 
 

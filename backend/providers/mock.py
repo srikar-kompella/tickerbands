@@ -20,6 +20,13 @@ from typing import Any
 name = "mock"
 
 
+def _ny_today() -> dt.date:
+    """Market days are New York days — a mock bar dated by the machine's own
+    zone shifted the whole history a day on a Tokyo machine."""
+    from analysis import market_clock as _mc
+    return _mc.now_ny().date()
+
+
 def _seed(symbol: str, salt: str = "") -> float:
     """Stable float in [0, 1) per (symbol, salt)."""
     h = hashlib.md5(f"{symbol.upper()}|{salt}".encode()).hexdigest()
@@ -38,7 +45,7 @@ def fetch_history(symbol: str, days: int = 130) -> list[dict[str, Any]]:
     vol = 0.008 + _seed(symbol, "vol") * 0.022  # 0.8%–3% daily
     out = []
     price = base
-    today = dt.date.today()
+    today = _ny_today()
     d = today - dt.timedelta(days=int(days * 1.5) + 7)
     i = 0
     while d < today:  # generate THROUGH yesterday, trim to the last `days`
@@ -60,6 +67,26 @@ def fetch_history(symbol: str, days: int = 130) -> list[dict[str, Any]]:
     # candles[-days:]) — filling from the start left mock series ending weeks
     # early at large `days`, which corrupted PEAD day-counts in mock mode.
     return out[-days:]
+
+
+_MOCK_FUNDS = {"SPY", "QQQ", "IWM", "XLE", "TLT", "PHYS", "PSLV"}
+
+
+def fetch_security_profile(symbol: str) -> dict[str, Any]:
+    """Quote type + (for the mock funds) fund facts, matching the shape of
+    yfinance.security_profile_from_info."""
+    fund = symbol.upper() in _MOCK_FUNDS
+    return {
+        "available": True, "quote_type": "ETF" if fund else "EQUITY", "is_fund": fund,
+        "expense_ratio_pct": round(0.03 + _seed(symbol, "er") * 0.6, 2) if fund else None,
+        "total_assets": round(1e9 * (1 + _seed(symbol, "aum") * 300)) if fund else None,
+        "nav": fetch_history(symbol)[-1]["close"] if fund else None,
+        "category": "Mock Blend" if fund else None,
+        "fund_family": "Mock Funds" if fund else None, "legal_type": None,
+        "industry": None if fund else "Mock Industry", "sector": None,
+        "shares_outstanding": None, "implied_shares_outstanding": None,
+        "source": "mock", "as_of": _ny_today().isoformat(),
+    }
 
 
 def fetch_quote(symbol: str) -> dict[str, Any]:
@@ -91,7 +118,8 @@ def fetch_quote(symbol: str) -> dict[str, Any]:
         "volume": int(2e6 * (0.5 + _seed(symbol, "qvol"))),
         "net_change_pct": round(chg * 100, 2),
         "quote_time_ms": int(dt.datetime.now().timestamp() * 1000),
-        "asset_type": "ETF" if symbol.upper() in {"SPY", "QQQ", "IWM", "XLE", "TLT", "PHYS", "PSLV"} else "EQUITY",
+        "asset_type": "ETF" if symbol.upper() in _MOCK_FUNDS else "EQUITY",
+        "asset_sub_type": "ETF" if symbol.upper() in _MOCK_FUNDS else "COE",
         # mock history ends yesterday and this quote is "live": the mock world
         # is always mid-session, whatever the wall clock says (keeps offline
         # dev and the test suite deterministic on weekends)
@@ -116,7 +144,10 @@ def fetch_options_summary(symbol: str) -> dict[str, Any]:
         "atm_iv_pct": iv,
         "implied_move_pct": round(iv / math.sqrt(252) * 2.2, 2),
         "implied_move_dte": (dte := 7 + int(_seed(symbol, "dte") * 20)),
-        "expiry_date": (dt.date.today() + dt.timedelta(days=dte)).isoformat(),
+        "expiry_date": (_ny_today() + dt.timedelta(days=dte)).isoformat(),
+        # one expiry, one strike for both legs — same contract as the real
+        # provider (schwab.summarize_chain)
+        "atm_strike": float(round(fetch_history(symbol)[-1]["close"])),
         "as_of": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
     }
 
@@ -169,19 +200,19 @@ def fetch_dividends(symbol: str) -> dict[str, Any]:
     events = []
     if seed > 0.2:
         amt = round(0.2 + seed * 1.2, 4)
-        today = dt.date.today()
+        today = _ny_today()
         for q in range(1, 9):
             events.append({"date": (today - dt.timedelta(days=91 * q)).isoformat(),
                            "amount": amt})
         events.reverse()
     return {"available": True, "events": events, "source": "mock",
-            "as_of": dt.date.today().isoformat()}
+            "as_of": _ny_today().isoformat()}
 
 
 def fetch_eps_ttm(symbol: str) -> dict[str, Any]:
     """Matches fetch_fundamentals' eps_ttm so mock mode never self-diverges."""
     return {"eps_ttm": round(1 + _seed(symbol, "eps") * 12, 2),
-            "source": "mock", "as_of": dt.date.today().isoformat()}
+            "source": "mock", "as_of": _ny_today().isoformat()}
 
 
 def fetch_statements(symbol: str) -> dict[str, Any]:
@@ -193,7 +224,7 @@ def fetch_statements(symbol: str) -> dict[str, Any]:
             "fcf": fcf * (1 - 0.07 * i),
             "acquisitions": -base * 0.01 * _seed(symbol, f"acq{i}")}
            for i in range(5)]
-    q_end = dt.date.today() - dt.timedelta(days=40)
+    q_end = _ny_today() - dt.timedelta(days=40)
     quarters = [{"end": (q_end - dt.timedelta(days=91 * i)).isoformat(),
                  "revenue": base / 4, "gross_profit": base / 4 * 0.5,
                  "operating_income": ni / 4 * 1.3, "pretax_income": ni / 4 * 1.27,
@@ -211,13 +242,19 @@ def fetch_statements(symbol: str) -> dict[str, Any]:
                         "cash_st": base * 0.15, "equity_securities": None,
                         "equity": base * 0.5},
             "quarters": quarters, "latest_quarter_end": quarters[0]["end"],
-            "source": "mock", "as_of": dt.date.today().isoformat()}
+            # shares (None = not filed) and periods carried so the composer's
+            # one-time refresh of copies cached in an older format does not
+            # fire on every mock request
+            "shares": None, "bank_like": False,
+            "periods": {"income": quarters[0]["end"], "cashflow": quarters[0]["end"],
+                        "balance": quarters[0]["end"]},
+            "source": "mock", "as_of": _ny_today().isoformat()}
 
 
 def fetch_earnings_confirmation(symbol: str) -> dict[str, Any]:
     e = fetch_earnings(symbol)
     return {"date": e["next_date"], "estimate": _seed(symbol, "econf") < 0.5,
-            "source": "mock", "as_of": dt.date.today().isoformat()}
+            "source": "mock", "as_of": _ny_today().isoformat()}
 
 
 def fetch_recommendations(symbol: str) -> dict[str, Any]:
@@ -228,7 +265,7 @@ def fetch_recommendations(symbol: str) -> dict[str, Any]:
         h = int(5 + _seed(symbol, f"h{offset}") * 15)
         s = int(_seed(symbol, f"s{offset}") * 6)
         ss = int(_seed(symbol, f"ss{offset}") * 3)
-        period = (dt.date.today().replace(day=1) - dt.timedelta(days=offset * 30))
+        period = (_ny_today().replace(day=1) - dt.timedelta(days=offset * 30))
         return {"period": period.strftime("%Y-%m-01"), "strong_buy": sb, "buy": b,
                 "hold": h, "sell": s, "strong_sell": ss,
                 "total": sb + b + h + s + ss}
@@ -237,7 +274,7 @@ def fetch_recommendations(symbol: str) -> dict[str, Any]:
 
 def fetch_earnings(symbol: str) -> dict[str, Any]:
     days = 2 + int(_seed(symbol, "edays") * 80)
-    nxt = dt.date.today() + dt.timedelta(days=days)
+    nxt = _ny_today() + dt.timedelta(days=days)
     return {
         "available": True,
         "next_date": nxt.isoformat(),
@@ -374,14 +411,23 @@ def fetch_chain_for_lens(symbol: str, dte_max: int = 35) -> dict[str, Any]:
 
 
 def fetch_recent_filings(symbol: str, since: str) -> dict[str, Any]:
-    d = (dt.date.today() - dt.timedelta(days=3)).isoformat()
+    d = (_ny_today() - dt.timedelta(days=3)).isoformat()
+    # sic/forms carried so the composer's one-time refresh of old cached
+    # copies does not fire on every mock request
     return {"available": True, "since": since[:10], "cik": "0000000000",
+            "sic": None, "sic_description": None, "is_bank": None,
+            "forms": list(sec_xbrl_forms()),
             "filings": ([{"form": "8-K", "date": d, "items": "8.01",
-                          "url": "https://example.com/8k"}] if d >= since[:10] else [])}
+                          "group": "company", "url": "https://example.com/8k"}] if d >= since[:10] else [])}
+
+
+def sec_xbrl_forms() -> tuple:
+    from providers import sec_xbrl
+    return sec_xbrl.FILING_FORMS
 
 
 def fetch_rating_changes(symbol: str, days: int = 90) -> dict[str, Any]:
-    d = (dt.date.today() - dt.timedelta(days=10)).isoformat()
+    d = (_ny_today() - dt.timedelta(days=10)).isoformat()
     return {"available": True, "source": "mock", "changes": [
         {"date": d, "firm": "MockBank", "action": "down", "from": "Buy", "to": "Hold"}]}
 
@@ -389,7 +435,7 @@ def fetch_rating_changes(symbol: str, days: int = 90) -> dict[str, Any]:
 def fetch_past_earnings_dates(symbol: str, years: int = 2) -> list[dict[str, Any]]:
     """~8 quarterly announcement dates, deterministic, alternating bmo/amc."""
     out = []
-    base = dt.date.today() - dt.timedelta(days=10 + int(_seed(symbol, "eoff") * 50))
+    base = _ny_today() - dt.timedelta(days=10 + int(_seed(symbol, "eoff") * 50))
     for q in range(8):
         d = base - dt.timedelta(days=91 * q)
         out.append({"date": d.isoformat(), "hour": "amc" if q % 2 else "bmo"})
@@ -402,7 +448,7 @@ def fetch_shares_outstanding(symbol: str) -> float | None:
 
 def fetch_insiders(symbol: str) -> dict[str, Any]:
     clustered = _seed(symbol, "clus") > 0.6
-    today = dt.date.today()
+    today = _ny_today()
     txs = [
         {"owner": "Jane Founder", "title": "CEO", "code": "P",
          "date": (today - dt.timedelta(days=4)).isoformat(),
@@ -425,7 +471,7 @@ def fetch_short_interest(symbol: str) -> dict[str, Any]:
     si = 1e6 * (2 + _seed(symbol, "si") * 40)
     prev = si / (1 + (_seed(symbol, "sid") - 0.5) * 0.4)
     return {"available": True,
-            "settlement_date": (dt.date.today() - dt.timedelta(days=9)).isoformat(),
+            "settlement_date": (_ny_today() - dt.timedelta(days=9)).isoformat(),
             "short_interest": round(si), "prev_short_interest": round(prev),
             "change_pct": round((si - prev) / prev * 100, 1),
             "days_to_cover": round(0.5 + _seed(symbol, "dtc") * 8, 1),

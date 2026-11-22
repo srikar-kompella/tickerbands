@@ -271,6 +271,19 @@ def beta_and_correlation(closes: list[float], spy_closes: list[float],
     }
 
 
+RECENT_SESSIONS_MIN, RECENT_SESSIONS_MAX = 10, 25
+
+
+def sessions_to_cover(bars: list[dict], since: str | None) -> int:
+    """How many recent sessions `recent_sessions` must return so every
+    completed session from `since` (an ISO New York date, the news window's
+    start) on has a row: max(10, sessions since), capped at 25. ISTR's
+    Oct 23 and Nov 2 sessions sat in the news window but outside the last
+    10, so the prompt listed them with no SPY or net-of-market figure."""
+    n = sum(1 for b in bars if since and str(b.get("date") or "")[:10] >= since[:10])
+    return max(RECENT_SESSIONS_MIN, min(n, RECENT_SESSIONS_MAX))
+
+
 def recent_sessions(bars: list[dict], adj_closes: list[float],
                     spy_bars: list[dict] | None, beta: float | None,
                     n: int = 10) -> list[dict[str, Any]]:

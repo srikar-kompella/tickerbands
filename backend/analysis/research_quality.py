@@ -154,10 +154,12 @@ def _sessions_txt(ss: list[dict]) -> str:
 
 
 def _judge(notes: list[dict], move: dict | None, basis: dict | None,
-           sessions: list[dict] | None) -> tuple[list[dict[str, Any]], dict[str, dt.datetime]]:
+           sessions: list[dict] | None
+           ) -> tuple[list[dict[str, Any]], dict[str, dt.datetime], list[bool]]:
     """(status per note in the order given, session date → when its cause was
-    first stated by a sound note). Notes are walked oldest first, because
-    whether a note had to explain a session depends on the notes before it."""
+    first stated by a sound note, whether each note is sound — OK or STALE
+    before supersession). Notes are walked oldest first, because whether a
+    note had to explain a session depends on the notes before it."""
     big = big_sessions(move, basis, sessions)
     last = (basis or {}).get("session_date")
 
@@ -174,6 +176,7 @@ def _judge(notes: list[dict], move: dict | None, basis: dict | None,
                    key=lambda i: (times[i] is None, times[i].timestamp() if times[i] else 0.0))
     explained: dict[str, dt.datetime] = {}
     out: list[dict[str, Any]] = [{} for _ in notes]
+    sound_flags = [False] * len(notes)
     for i in order:
         n, t = notes[i], times[i]
         m, unread = _meta(n), _unreadable(n)
@@ -217,14 +220,14 @@ def _judge(notes: list[dict], move: dict | None, basis: dict | None,
         # note a later one lists in `supersedes`: the follow-up was written
         # from a prompt whose step 1 listed nothing, answered `move_cause: na`
         # as told, and would otherwise fail for replacing the note it relied on.
-        sound = status in (OK, STALE)
+        sound = sound_flags[i] = status in (OK, STALE)
         if key in superseded:
             status, reason = SUPERSEDED, f"replaced by the note of {superseded[key][:16]}"
         out[i] = {"created_ts": n.get("created_ts"), "status": status, "reason": reason}
         if sound and t is not None and stated_cause(n) == "found":
             for s in sessions_to_explain(t, big, m.get("news_window"), last):
                 explained.setdefault(s["session_date"], t)
-    return out, explained
+    return out, explained, sound_flags
 
 
 def prior_note_status(notes: list[dict], move: dict | None, basis: dict | None,
@@ -265,6 +268,84 @@ def explained_sessions(notes: list[dict], move: dict | None, basis: dict | None,
     those causes again, and a later note is not failed for leaving them out.
     An INVALID note explains nothing."""
     return _judge(notes, move, basis, sessions)[1]
+
+
+def last_research_time(notes: list[dict], move: dict | None, basis: dict | None,
+                       sessions: list[dict] | None = None) -> dt.datetime | None:
+    """When (New York time) the newest research note that still stands was
+    written: OK or STALE — also one a later note has since superseded, as
+    long as nothing else was wrong with it. An INVALID note is no research to
+    start from (its searches were not finished, or it left a ≥2σ session
+    without a cause). None when there is no such note."""
+    sound = _judge(notes, move, basis, sessions)[2]
+    times = [t for t in (_parse_ts(n.get("created_ts")) for n, ok in zip(notes, sound) if ok)
+             if t is not None]
+    return max(times) if times else None
+
+
+def last_research_date(notes: list[dict], move: dict | None, basis: dict | None,
+                       sessions: list[dict] | None = None) -> str | None:
+    """`last_research_time` as an ISO date — where the next prompt's news
+    window starts (news_relevance.news_window), so the days since the last
+    sound note are researched rather than only the last 5 sessions."""
+    t = last_research_time(notes, move, basis, sessions)
+    return t.date().isoformat() if t else None
+
+
+def older_unexplained_sessions(notes: list[dict], move: dict | None, basis: dict | None,
+                               sessions: list[dict] | None, window_from: str | None
+                               ) -> list[dict]:
+    """≥2σ sessions that closed after the newest sound note was written (they
+    are why it reads STALE), lie BEFORE the news window that starts at
+    `window_from`, and whose cause no sound note states — oldest first.
+
+    They exist only when the window is capped (the note is older than
+    news_relevance.MAX_WINDOW_DAYS): sessions inside the window are asked for
+    in step 1 as required, these as a one-line cause each. A note is not
+    failed for leaving them out — they are outside its window, so
+    `sessions_to_explain` never returns them. Sessions before the newest sound
+    note are not listed: that note's own prompt asked for them."""
+    if not window_from:
+        return []
+    out, explained, sound = _judge(notes, move, basis, sessions)
+    times = [t for t in (_parse_ts(n.get("created_ts")) for n, ok in zip(notes, sound) if ok)
+             if t is not None]
+    if not times:
+        return []
+    big = big_sessions(move, basis, sessions)
+    return [s for s in sessions_closed_after(max(times), big)
+            if s["session_date"] < str(window_from)[:10]
+            and s["session_date"] not in explained]
+
+
+def older_failed_sessions(notes: list[dict], move: dict | None, basis: dict | None,
+                          sessions: list[dict] | None, window_from: str | None
+                          ) -> list[dict]:
+    """≥2σ sessions inside the window of a note that is not sound (INVALID,
+    superseded or not) which lie BEFORE the current news window and whose
+    cause no sound note states — oldest first.
+
+    The prompt told the session to "redo the work" of an INVALID note; when
+    that note's failed check was on a session months back, outside the
+    30-day window, the session could not tell whether to widen the window
+    (ISTR run). The redo now covers the window only, and these sessions are
+    named in step 1 as older sessions still unexplained — optional, like
+    `older_unexplained_sessions`; they fail no note."""
+    if not window_from:
+        return []
+    _, explained, sound = _judge(notes, move, basis, sessions)
+    big = big_sessions(move, basis, sessions)
+    last = (basis or {}).get("session_date")
+    out: dict[str, dict] = {}
+    for n, ok in zip(notes, sound):
+        if ok:
+            continue
+        for s in sessions_to_explain(_parse_ts(n.get("created_ts")), big,
+                                     _meta(n).get("news_window"), last):
+            d = s["session_date"]
+            if d < str(window_from)[:10] and d not in explained:
+                out[d] = s
+    return [out[d] for d in sorted(out)]
 
 
 # ─── which note is shown ───────────────────────────────────────────────────────

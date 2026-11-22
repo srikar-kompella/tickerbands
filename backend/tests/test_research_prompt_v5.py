@@ -248,7 +248,8 @@ def test_v5_feed_rows_lead_with_feed_only_not_a_news_check(p):
     assert len(feed) == 3
     assert all(ln.startswith("- Feed only — not a news check: ") for ln in feed), feed
     assert "reported cause of the Fri Nov 20 move — nothing matched" in feed[0]
-    assert "regulatory & legal — nothing matched since 2026-11-16" in feed[1]
+    # the window starts at the last note that still stands (Nov 13, STALE)
+    assert "regulatory & legal — nothing matched since 2026-11-13" in feed[1]
     assert "headlines — 0 relevant of 4 fetched (2026-11-17 → 2026-11-20)" in feed[2]
     # removed: lines that read like a clean check
     assert "no SEC filings and no regulatory/legal headlines" not in p
@@ -350,8 +351,9 @@ def test_v5_prior_notes_superseded_partial_and_open_conditions(tmp_db, monkeypat
            'incomplete (research_status: partial)' in n
     assert "Check each open condition listed in <prior_notes>" in p
     step4 = p[p.index("4. Analyze"):p.index("5. Lay out the options")]
-    assert ("A note marked INVALID is not a basis for anything: redo its work and list "
-            "its created_ts in `supersedes`.") in step4
+    assert ("A note marked INVALID is not a basis for anything: redo its work for the "
+            "sessions inside this window and list its created_ts in `supersedes`; its failed "
+            "checks on sessions before the window are not redone here") in step4
     assert ("A note marked SUPERSEDED was already replaced by a later one: build nothing "
             "on it and leave it out of `supersedes`.") in step4
     # no open conditions are listed for a note that cannot be built on
@@ -374,18 +376,31 @@ def test_v5_first_discussion_has_an_empty_notes_block(tmp_db, monkeypatch):
 def test_v5_step1_research_window_and_minimum_searches(p):
     step = p[p.index("1. Research first"):p.index("2. Reconcile the data")]
     assert "before any analysis" in step
-    assert "Window: 2026-11-16 → 2026-11-21 (6 days)" in step
+    # the window runs from the last note that still stands (the STALE note of
+    # Nov 13), and the sentence after it says which rule set the start
+    assert "Window: 2026-11-13 → 2026-11-21 (9 days)" in step
+    assert ("since the last research note on this ticker that still stands (OK or STALE "
+            "in <prior_notes>), at most 30 days back, or the last 5 trading sessions, "
+            "whichever is longer. Here it starts at the note of 2026-11-13.") in step
+    assert "since the last report" not in step
     assert "Same-day headlines are not enough" in step
     assert "Go broad, then narrow" in step and "independent searches in parallel" in step
-    for must in ("a. company news for each day of the window, 2026-11-16 through 2026-11-21",
-                 "b. SEC EDGAR filings since 2026-11-16, reading the item numbers of every 8-K",
+    for must in ("a. company news — the company's own news or press-release page for "
+                 "2026-11-13 through 2026-11-21, one search sweep",
+                 "b. SEC EDGAR filings since 2026-11-13, reading the item numbers of every 8-K",
                  "c. the company name with each of: SEC, DOJ, state attorneys general, "
-                 "subpoena, export controls, securities class actions",
+                 "subpoena, securities class actions; and search for enforcement actions "
+                 "by the company's main regulator by name",
                  "d. the latest earnings release",
                  "e. the company's investor-relations page for the next earnings date"):
         assert must in step, must
+    # a fixed "export controls" search is gone: it is added only when the
+    # snapshot's own news rows mention export rules
+    assert "export controls" not in step
+    assert "for each day of the window" not in step
     assert "Prefer primary sources" in step
     assert 'Log every search that found nothing — "searched X, nothing found"' in step
+    assert "together on one line, not a table row each" in step
 
 
 def test_v5_no_search_tool_means_say_so_and_write_failed(p):
@@ -401,9 +416,10 @@ def test_v5_no_search_tool_means_say_so_and_write_failed(p):
             "session was not found") in out
     assert '"failed" means you had no search tool or the research could not be done' in out
     # move_cause follows the sessions step 1 lists, not the last session alone
-    assert ('`move_cause` is "found" when every session listed in step 1 has its cause, '
-            '"not_found" when one does not, and "na" only when step 1 lists no '
-            "session") in out
+    assert ('`move_cause` is "found" when every session step 1 lists as still needing a '
+            'cause has one, "not_found" when one does not, and "na" only when step 1 '
+            "lists no such session (near misses and older sessions do not count "
+            "here)") in out
     assert "when the last session moved less than 2σ" not in p
     assert "`review_by` is a date written YYYY-MM-DD" in out
     step7 = p[p.index("7. Check your work before writing"):p.index("8. Write the file")]
@@ -597,7 +613,10 @@ def test_v5_step3_sets_its_own_triggers_and_checks_them(p):
     assert "yourself (exit, trim and add triggers for a holder), each a number" in step
     assert "never a price direction" in step and "`proposed_triggers`" in step
     assert "If the user already stated triggers in this conversation" in step
-    assert "MET, NOT MET or UNKNOWN, with the evidence" in step
+    assert "MET, NOT MET, PENDING or UNKNOWN, with the evidence" in step
+    assert ("PENDING means the event or filing the trigger depends on has not happened "
+            "yet: give the date it is due.") in step
+    assert "a PENDING trigger stays in `proposed_triggers` with its due date" in step
     assert "`plan_triggers_met`" in step and "`plan_triggers_unknown`" in step
     assert "Any MET trigger goes in the first line of the TL;DR" in step
 
@@ -652,10 +671,11 @@ def test_v5_step6_one_stance_with_ownership_semantics_and_conditions(p):
 def test_v5_step7_self_check_list(p):
     step = p[p.index("7. Check your work before writing"):p.index("8. Write the file")]
     for item in ("the price you used is the report price ($125.53)",
-                 "the whole window 2026-11-16 → 2026-11-21 is covered",
+                 "the whole window 2026-11-13 → 2026-11-21 is covered",
                  'every number has a source or the label "snapshot"',
                  "nothing from an INVALID or SUPERSEDED note is carried forward",
-                 "every text value in the frontmatter is in double quotes",
+                 "every text value in the frontmatter is in double quotes, and "
+                 "`sources_count` and `price_used` are numbers without quotes",
                  "no <…> placeholder is left",
                  "optional keys you did not use are deleted"):
         assert item in step, item
@@ -672,11 +692,15 @@ def test_v5_output_contract_headings_length_path_and_fallback(p):
                              "## Unknowns")
     at = [out.index(f"`{h}`") for h in BODY_HEADINGS]
     assert at == sorted(at)
-    assert "about 900 words excluding tables" in out
+    assert "about 1,000 words excluding tables and stay under 1,300" in out
     assert "claim | source | published | quote | link" in out
     assert "a short verbatim phrase from the source (under 20 words)" in out
     assert "List only links you actually opened in this session" in out
-    assert '"searched X, nothing found"' in out
+    # empty searches share one line under the table instead of a row each
+    assert ('Under the table, put the searches that found nothing on one line — '
+            '"Searched, nothing found: X; Y; Z" — not a row each.') in out
+    assert "Add a row for each search" not in out
+    assert "MET / NOT MET / PENDING / UNKNOWN with the evidence" in out
     assert "/discussions/NVDA/" in out and "under the TickerBands home" in out
     assert "Create a new file for every discussion" in out
     assert ("If you cannot write to that path (no filesystem, as on claude.ai, or the "
@@ -693,12 +717,16 @@ def test_v5_template_is_strict_yaml_with_every_text_value_quoted(p, nvda):
     meta = post.metadata
     assert set(meta) == V4_KEYS | V5_KEYS
     assert meta["prompt_version"] == 5 and meta["ticker"] == "NVDA"
-    assert meta["news_window"] == "2026-11-16..2026-11-21" and meta["owned"] == "yes"
+    assert meta["news_window"] == "2026-11-13..2026-11-21" and meta["owned"] == "yes"
     assert post.content.startswith("## TL;DR")
     fm = tpl.split("---")[1].strip().splitlines()
     for ln in fm:
         key, _, val = ln.partition(": ")
         if key in ("created_ts", "prompt_version", "context_hash"):
+            continue
+        if key in ("sources_count", "price_used"):
+            # numbers: an unquoted slot, like the unquoted numbers in the examples
+            assert val.startswith("<") and val.endswith(">") and "unquoted" in val, ln
             continue
         assert val.startswith('"') and val.endswith('"') or \
             val.startswith('["') and val.endswith('"]'), ln
@@ -1347,65 +1375,94 @@ def test_v5_third_example_is_failed_research_with_a_watch_stance(p, tmp_path):
          "reason": "its research was incomplete (research_status: failed)"}]
 
 
-def test_v5_step1_short_window_still_asks_for_every_day(p, nvda):
-    assert nvda["news_window"] == {"from": "2026-11-16", "to": "2026-11-21"}
-    assert "   a. company news for each day of the window, 2026-11-16 through 2026-11-21;" in p
-    assert "week by week" not in p
-    step7 = p[p.index("7. Check your work before writing"):p.index("8. Write the file")]
-    assert ("   - the whole window 2026-11-16 → 2026-11-21 is covered and each minimum "
-            "search is in the evidence table;") in step7
+SWEEP = "(the name with the month and year, read for anything dated in the period)"
+NO_WEEKEND = ("; a weekend or market holiday needs a search of its own only where a story "
+              "is known for it;")
 
 
-def test_v5_step1_long_window_is_daily_for_five_sessions_and_weekly_before(
+def test_v5_step1_short_window_is_the_news_page_one_sweep_and_listed_dates(
         tmp_db, monkeypatch):
-    """The last report on the ticker was 111 days ago. "Company news for each
-    day of the window" then asked for 112 daily searches — not something a
-    session does, so step 7's "the whole window is covered" was ticked
-    untruthfully. Day by day for the last 5 sessions, week by week before
-    that, and every ≥2σ session still named on its own date."""
+    """No earlier note: the window is the last 5 sessions. Step 1a used to ask
+    for company news "for each day of the window" — seven searches, two of
+    them for a weekend, most of them empty. Now: the company's own news page,
+    one sweep, and each listed session on its own date. A report exported
+    months ago no longer moves the window (it is no news check)."""
     from cache.store import put
     put("report_last:NVDA", {"date": "2026-08-04", "ts": "2026-08-04T09:00:00"})
-    prov, now = _nvda_monday_evening()
-    a = _analyze(monkeypatch, prov, now, "NVDA")
-    assert a["news_window"] == {"from": "2026-08-04", "to": "2026-11-23"}
+    a = _analyze(monkeypatch, rf.nvda_providers(), rf.NVDA_NOW, "NVDA")
+    assert a["news_window"] == {"from": "2026-11-16", "to": "2026-11-21"}
     p = _prompt(a)
     step1 = p[p.index("1. Research first"):p.index("2. Reconcile the data")]
-    assert "Window: 2026-08-04 → 2026-11-23 (112 days)" in step1
-    assert ("   a. company news — day by day for the last 5 trading sessions (2026-11-17 "
-            "through 2026-11-23), week by week before that (2026-08-04 up to 2026-11-17, "
-            "at least one search per calendar week), and on its own date for every "
-            "session this step names as having moved 2σ or more;\n") in step1
-    assert "for each day of the window" not in p
+    assert "Window: 2026-11-16 → 2026-11-21 (6 days)" in step1
+    assert "Here it starts at the note of" not in step1 and "older than that" not in step1
+    assert ("   a. company news — the company's own news or press-release page for "
+            "2026-11-16 through 2026-11-21, and one search sweep for the window as a "
+            f"whole {SWEEP}, and a search on its own date for each session this step "
+            f"lists{NO_WEEKEND}\n") in step1
+    assert "for each day of the window" not in p and "calendar week" not in p
+    step7 = p[p.index("7. Check your work before writing"):p.index("8. Write the file")]
+    assert ("   - the whole window 2026-11-16 → 2026-11-21 is covered — each session "
+            "listed in step 1 on its own date — and each minimum search is under "
+            "`## Evidence & sources`, as a table row or on the nothing-found line;") in step7
+
+
+def test_v5_step1_window_starts_at_the_last_standing_note_and_stops_at_30_days(
+        tmp_db, monkeypatch):
+    """The last note that still stands is 111 days old. The window used to
+    follow the last exported report instead (a 7-day window under a sentence
+    that said "since the last report"), and before that a 112-day window asked
+    for 112 daily searches. Now it starts at the last standing note, at most
+    30 days back: one sweep for the last 5 sessions, one per calendar week
+    before, every ≥2σ session in it still named on its own date."""
+    rf.add_discussion("NVDA", "2026-08-04T09:00:00", "Thesis note from the summer")
+    prov, now = _nvda_monday_evening()
+    a = _analyze(monkeypatch, prov, now, "NVDA")
+    assert a["news_window"] == {"from": "2026-10-24", "to": "2026-11-23",
+                                "last_note": "2026-08-04", "capped": True}
+    p = _prompt(a)
+    step1 = p[p.index("1. Research first"):p.index("2. Reconcile the data")]
+    assert "Window: 2026-10-24 → 2026-11-23 (31 days)" in step1
+    assert ("The last such note (2026-08-04) is older than that, so the window stops at "
+            "30 days.") in step1
+    assert ("   a. company news — the company's own news or press-release page for "
+            f"2026-10-24 through 2026-11-23, one search sweep {SWEEP} for the last 5 "
+            "trading sessions (2026-11-17 through 2026-11-23) and one for each calendar "
+            "week before that (2026-10-24 up to 2026-11-17), and a search on its own date "
+            f"for each session this step lists{NO_WEEKEND}\n") in step1
+    assert "for each day of the window" not in p and "day by day" not in p
     # the other minimum searches still span the whole window
-    assert "   b. SEC EDGAR filings since 2026-08-04, reading the item numbers" in step1
+    assert "   b. SEC EDGAR filings since 2026-10-24, reading the item numbers" in step1
     # every ≥2σ session in the window is still listed individually, by date
     big = [s["session_date"] for s in a["big_move_sessions"]]
-    assert "2026-11-20" in big and all("2026-08-04" <= d <= "2026-11-23" for d in big)
+    assert "2026-11-20" in big and all("2026-10-24" <= d <= "2026-11-23" for d in big)
     listed = re.findall(r"^   - (\d{4}-\d\d-\d\d) \(\w{3}\): ", step1, re.M)
     assert listed == big
     assert "   - 2026-11-20 (Fri): its row under Recent sessions in <snapshot>\n" in step1
     # step 7 checks the same thing step 1 asked for
     step7 = p[p.index("7. Check your work before writing"):p.index("8. Write the file")]
-    assert ("   - the whole window 2026-08-04 → 2026-11-23 is covered — day by day from "
-            "2026-11-17, week by week before it, each 2σ session named in step 1 on its "
-            "own date — and each minimum search is in the evidence table;") in step7
-    # the frontmatter still carries the whole window
-    assert 'news_window: "2026-08-04..2026-11-23"' in _template(p)
+    assert ("   - the whole window 2026-10-24 → 2026-11-23 is covered — one sweep from "
+            "2026-11-17, one per calendar week before it, each session listed in step 1 "
+            "on its own date — and each minimum search is under `## Evidence & sources`, "
+            "as a table row or on the nothing-found line;") in step7
+    # the frontmatter carries the whole window
+    assert 'news_window: "2026-10-24..2026-11-23"' in _template(p)
 
 
-def test_v5_step1_long_window_without_a_big_session_names_none(client):
-    from cache.store import put
-    put("report_last:AAPL", {"date": "2020-01-02", "ts": "2020-01-02T09:00:00"})
+def test_v5_step1_long_window_without_a_listed_session_names_no_dates(client, monkeypatch):
+    from analysis import news_relevance as nr
+    monkeypatch.setattr(nr, "near_miss_sessions", lambda *a, **k: [])   # mock bars vary by day
+    rf.add_discussion("AAPL", "2020-01-02T09:00:00", "A note from long ago")
     a = client.get("/api/analysis/AAPL").json()
-    assert a["news_window"]["from"] == "2020-01-02" and a["big_move_sessions"] == []
+    assert a["news_window"]["last_note"] == "2020-01-02" and a["news_window"]["capped"]
+    assert a["big_move_sessions"] == []
     p = client.get("/api/analysis/AAPL/prompt").json()["prompt"]
     line = next(ln for ln in p.splitlines() if ln.startswith("   a. company news"))
-    assert "day by day for the last 5 trading sessions (" in line
-    assert "week by week before that (2020-01-02 up to " in line
-    assert line.endswith("at least one search per calendar week);")
-    assert "moved 2σ or more" not in line
+    assert "for the last 5 trading sessions (" in line
+    assert f"and one for each calendar week before that ({a['news_window']['from']} up to " in line
+    assert line.endswith(")" + NO_WEEKEND)
+    assert "on its own date" not in line
     step7 = p[p.index("7. Check your work before writing"):p.index("8. Write the file")]
-    assert "week by week before it — and each minimum search" in step7
+    assert "one per calendar week before it — and each minimum search" in step7
 
 
 def test_v5_c1_reads_todays_session_after_the_close(tmp_db, monkeypatch):

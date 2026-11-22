@@ -95,25 +95,23 @@ export default function App() {
 
   return (
     <div className="flex h-screen overflow-hidden">
-      <Sidebar tab={tab} setTab={setTab} tabs={visibleTabs} />
-      <main className="flex flex-1 flex-col overflow-hidden">
-        {setupStatus?.user_name && (
-          <div className="flex shrink-0 justify-end border-b border-border px-6 py-1.5">
-            <span className="rounded-full bg-surface-2 px-2.5 py-0.5 text-[11px] text-muted">
-              {setupStatus.user_name}&rsquo;s Portfolio
-            </span>
-          </div>
-        )}
-        <div className="flex-1 overflow-y-auto px-6 py-5">
-          {/* smooth page transitions between tabs (polish requirement) */}
+      {/* whose account this is lives in the sidebar — it used to cost a full-width strip */}
+      <Sidebar tab={tab} setTab={setTab} tabs={visibleTabs} userName={setupStatus?.user_name} />
+      {/* min-w-0: a flex child defaults to min-width:auto, which lets one wide
+          table or chart push the whole page sideways */}
+      <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <div className="flex-1 overflow-x-hidden overflow-y-auto px-6 py-4">
+          {/* smooth page transitions between tabs (polish requirement).
+              Content is capped at 88rem and centered: past that, rows turn
+              into a label and a number with a screen of nothing between. */}
           <AnimatePresence mode="wait">
             <motion.div
               key={tab}
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -8 }}
-              transition={{ duration: 0.18 }}
-              className="h-full">
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.15 }}
+              className="mx-auto h-full w-full max-w-[88rem]">
               <Suspense fallback={<div className="space-y-4"><SkeletonCard lines={2} /><SkeletonCard lines={6} /></div>}>
                 {tab === 'analysis' && <Analysis symbol={symbol} setSymbol={analyze} />}
                 {tab === 'portfolio' && <Portfolio onAnalyze={analyze} />}
@@ -126,7 +124,7 @@ export default function App() {
             </motion.div>
           </AnimatePresence>
         </div>
-        <footer className="border-t border-border px-6 py-1.5 text-[10px] text-faint">
+        <footer className="shrink-0 truncate border-t border-border px-6 py-1 text-[11px] text-faint">
           {TABS.find((t) => t.key === tab)?.label} · ⌘K to search ·
           research &amp; education only — no direction predictions, by design
         </footer>

@@ -5,9 +5,9 @@
 // Row click → Analysis (that ticker's discussions ride along automatically).
 import { AnimatePresence, motion } from 'framer-motion'
 import {
-  AlertTriangle, Download, Eye, Moon, Pencil, Plus, RefreshCw, Trash2,
+  AlertTriangle, ChevronDown, Download, Eye, Moon, Pencil, Plus, RefreshCw, Trash2,
 } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { fmtDate, fmtNum, fmtPct, plColor } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { Badge, Button, Card, EmptyState, Modal, Skeleton } from '@/components/ui'
@@ -67,6 +67,20 @@ export default function Watchlist({ onAnalyze }: { onAnalyze: (s: string) => voi
   const [editing, setEditing] = useState<string | null>(null)
   const [bulkOpen, setBulkOpen] = useState(false)
   const [bulkText, setBulkText] = useState('')
+  const [importOpen, setImportOpen] = useState(false)
+
+  // Escape closes the import menu and hands focus back to its button
+  useEffect(() => {
+    if (!importOpen) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      e.stopPropagation()
+      setImportOpen(false)
+      document.getElementById('wl-import-btn')?.focus()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [importOpen])
 
   // Merge the three layers: DB row (instant) ← batch quote (fast) ← enrichment.
   const rows: ScreenerRow[] = useMemo(() => {
@@ -107,6 +121,17 @@ export default function Watchlist({ onAnalyze }: { onAnalyze: (s: string) => voi
   }, [rows, sortKey, asc])
 
   const breaks = rows.filter((r) => r.outside_band_yesterday).length
+  // a tag (nearly) every row carries ("schwab-csv" after an import) says
+  // nothing per row — it is named once above the table instead of repeated
+  // 40 times; the row's full tag list stays in the symbol's tooltip
+  const commonTags = useMemo(() => {
+    if (rows.length < 4) return []
+    const count = new Map<string, number>()
+    for (const r of rows) for (const t of new Set(r.tags)) count.set(t, (count.get(t) ?? 0) + 1)
+    return [...count].filter(([, n]) => n >= rows.length * 0.75)
+      .map(([t, n]) => ({ tag: t, n }))
+  }, [rows])
+  const commonSet = new Set(commonTags.map((c) => c.tag))
   const pct = progress.total ? Math.round((progress.done / progress.total) * 100) : 0
 
   const submit = () => {
@@ -138,15 +163,38 @@ export default function Watchlist({ onAnalyze }: { onAnalyze: (s: string) => voi
           title="Printable daily digest: breaks, earnings this week, the whole screener">
           ☀ Morning sheet
         </Button>
-        <Button onClick={() => importSchwab.mutate()} disabled={importSchwab.isPending}
-          title="One-time pull of your Schwab watchlists (if Schwab's API exposes them)">
-          <Download className="h-4 w-4" />
-          {importSchwab.isPending ? 'Asking Schwab…' : 'Import from Schwab'}
-        </Button>
-        <Button onClick={() => importPortfolio.mutate()} disabled={importPortfolio.isPending}
-          title="One-time copy from the old Portfolio app's watchlist">
-          <Download className="h-4 w-4" /> From old app
-        </Button>
+        {/* the two one-time imports share one button — they are used once,
+            and as separate buttons they pushed the toolbar onto a second row */}
+        <div className="relative">
+          <Button id="wl-import-btn" onClick={() => setImportOpen((o) => !o)} title="One-time imports"
+            ariaHasPopup="menu" ariaExpanded={importOpen} ariaControls={importOpen ? 'wl-import-menu' : undefined}>
+            <Download className="h-4 w-4" />
+            {importSchwab.isPending ? 'Asking Schwab…' : 'Import'}
+            <ChevronDown className={cn('h-3.5 w-3.5 text-faint transition-transform', importOpen && 'rotate-180')} />
+          </Button>
+          {importOpen && (
+            <>
+              <div className="fixed inset-0 z-10" onClick={() => setImportOpen(false)} />
+              <div role="menu" id="wl-import-menu" aria-labelledby="wl-import-btn"
+                className="absolute left-0 top-full z-20 mt-1 flex w-64 flex-col rounded-xl border border-border-2 bg-surface-2 p-1 shadow-2xl">
+                <button role="menuitem" disabled={importSchwab.isPending}
+                  onClick={() => { importSchwab.mutate(); setImportOpen(false) }}
+                  title="One-time pull of your Schwab watchlists (if Schwab's API exposes them)"
+                  className="rounded-lg px-2.5 py-1.5 text-left text-sm hover:bg-surface-3 disabled:opacity-50">
+                  Import from Schwab
+                  <span className="block text-[11px] text-faint">your Schwab watchlists, one time</span>
+                </button>
+                <button role="menuitem" disabled={importPortfolio.isPending}
+                  onClick={() => { importPortfolio.mutate(); setImportOpen(false) }}
+                  title="One-time copy from the old Portfolio app's watchlist"
+                  className="rounded-lg px-2.5 py-1.5 text-left text-sm hover:bg-surface-3 disabled:opacity-50">
+                  From old app
+                  <span className="block text-[11px] text-faint">the old Portfolio app's watchlist</span>
+                </button>
+              </div>
+            </>
+          )}
+        </div>
         <span className="ml-auto flex items-center gap-2">
           <button onClick={ahToggle} role="switch" aria-checked={ahOn}
             title={ahOn ? 'Showing after-hours moves where an extended session is live' : 'Regular session values only'}
@@ -197,19 +245,31 @@ export default function Watchlist({ onAnalyze }: { onAnalyze: (s: string) => voi
 
       {!!sorted.length && (
         <Card>
-          <table className="w-full text-sm">
+          {!!commonTags.length && (
+            <div className="mb-2 text-[11px] text-faint">
+              On most rows: {commonTags.map((c) => `${c.tag} (${c.n} of ${rows.length})`).join(', ')}
+              {' '}· hover a symbol for its tags
+            </div>
+          )}
+          {/* Numeric columns get a fixed width so the figures sit together on
+              the right instead of spreading across the card; the table scrolls
+              inside the card when the window is narrow. */}
+          <div className="overflow-x-auto">
+          <table className="w-full min-w-[44rem] text-[13px]">
             <thead>
-              <tr className="text-left text-[10px] uppercase tracking-wide text-faint">
+              <tr className="text-left text-[11px] uppercase tracking-wide text-faint">
                 {HEADERS.map((h) => (
                   <th key={h.key} title={h.title}
-                    className={cn('cursor-pointer pb-2 font-medium hover:text-muted',
-                      h.key !== 'symbol' && 'text-right')}
+                    className={cn('cursor-pointer whitespace-nowrap pb-2 font-medium hover:text-muted',
+                      h.key !== 'symbol' && 'text-right',
+                      // Day carries the after-hours note beside it — wider, so it stays on one line
+                      h.key === 'day_pct' ? 'w-40' : h.key !== 'symbol' && 'w-24')}
                     onClick={() => clickHeader(h.key)}>
                     {h.label}{sortKey === h.key && (asc ? ' ↑' : ' ↓')}
                   </th>
                 ))}
-                <th className="pb-2 text-right font-medium" title="Latest Claude research stance (from discussions)">Claude</th>
-                <th className="pb-2 text-right font-medium">
+                <th className="w-36 pb-2 text-right font-medium" title="Latest Claude research stance (from discussions)">Claude</th>
+                <th className="w-16 pb-2 text-right font-medium">
                   <button className="hover:text-muted" title="Reset to attention order"
                     onClick={() => setSortKey('attention')}>⚡</button>
                 </th>
@@ -220,21 +280,22 @@ export default function Watchlist({ onAnalyze }: { onAnalyze: (s: string) => voi
                 {sorted.map((r) => {
                   const pending = progress.running && !enriched[r.symbol]
                   return (
-                    <motion.tr key={r.symbol} layout
+                    <motion.tr key={r.symbol}
                       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
                       className={cn('border-t border-border/60 transition-colors hover:bg-surface-2',
                         r.outside_band_yesterday && 'bg-warn/5')}>
-                      <td className="py-2.5">
+                      <td className="whitespace-nowrap py-2">
                         <button onClick={() => onAnalyze(r.symbol)}
+                          title={r.tags.length ? `Tags: ${r.tags.join(', ')}` : undefined}
                           className="font-bold hover:text-accent">{r.symbol}</button>
                         {r.outside_band_yesterday && (
-                          <Badge tone="warn" className="ml-2 text-[10px]"
+                          <Badge tone="warn" className="ml-2 text-[11px]"
                             title={`Yesterday moved ${r.yesterday_z}σ — outside the 80% band`}>
                             {r.yesterday_z}σ
                           </Badge>
                         )}
-                        {r.tags.slice(0, 2).map((t) => (
-                          <Badge key={t} className="ml-1.5 text-[10px]">{t}</Badge>
+                        {r.tags.filter((t) => !commonSet.has(t)).slice(0, 2).map((t) => (
+                          <Badge key={t} className="ml-1.5 text-[11px]">{t}</Badge>
                         ))}
                       </td>
                       {(() => {
@@ -244,13 +305,13 @@ export default function Watchlist({ onAnalyze }: { onAnalyze: (s: string) => voi
                         // small secondary note (same rule as the report header)
                         const v = r.day_pct
                         return (
-                          <td className={cn('tnum py-2.5 text-right', plColor(v))}
+                          <td className={cn('tnum whitespace-nowrap py-2 text-right', plColor(v))}
                             title={useAh ? `After hours: ${fmtPct(aq!.ah_change_pct, 2, true)} vs the official close` : undefined}>
                             {v != null ? (
                               <>
                                 {fmtPct(v, 2, true)}
                                 {useAh && (
-                                  <span className={cn('ml-1 text-[10px]', plColor(aq!.ah_change_pct))}>
+                                  <span className={cn('ml-1 text-[11px]', plColor(aq!.ah_change_pct))}>
                                     <Moon className="mb-0.5 mr-0.5 inline h-2.5 w-2.5 text-accent" />
                                     {fmtPct(aq!.ah_change_pct, 1, true)}
                                   </span>
@@ -260,23 +321,23 @@ export default function Watchlist({ onAnalyze }: { onAnalyze: (s: string) => voi
                           </td>
                         )
                       })()}
-                      <td className="tnum py-2.5 text-right text-muted">
+                      <td className="tnum py-2 text-right text-muted">
                         {r.band_half_pct != null ? `±${fmtNum(r.band_half_pct, 2)}`
                           : <Pending active={pending} />}
                       </td>
-                      <td className={cn('tnum py-2.5 text-right',
+                      <td className={cn('tnum py-2 text-right',
                         r.implied_vs_band != null && r.implied_vs_band > 1.3
                           ? 'text-warn font-semibold' : 'text-muted')}>
                         {r.implied_vs_band != null ? `${fmtNum(r.implied_vs_band, 2)}×`
                           : <Pending active={pending} />}
                       </td>
-                      <td className={cn('tnum py-2.5 text-right',
+                      <td className={cn('tnum py-2 text-right',
                         r.days_to_earnings != null && r.days_to_earnings <= 5
                           ? 'text-warn font-semibold' : 'text-muted')}>
                         {r.days_to_earnings != null ? `${r.days_to_earnings}d`
                           : <Pending active={pending} />}
                       </td>
-                      <td className="tnum py-2.5 text-right" title={r.last_score_ts
+                      <td className="tnum py-2 text-right" title={r.last_score_ts
                         ? `As of ${fmtDate(r.last_score_ts)} — analyze to refresh`
                         : 'Analyze once to compute'}>
                         {r.last_score != null
@@ -286,7 +347,7 @@ export default function Watchlist({ onAnalyze }: { onAnalyze: (s: string) => voi
                             </span>
                           : <span className="text-faint">—</span>}
                       </td>
-                      <td className="py-2.5 text-right">
+                      <td className="py-2 text-right">
                         <span className="inline-flex items-center justify-end gap-1">
                           <span title={r.stance_ts
                             ? `Claude's stance from ${fmtDate(r.stance_ts)}`
@@ -296,21 +357,21 @@ export default function Watchlist({ onAnalyze }: { onAnalyze: (s: string) => voi
                             {r.stance ? (
                               <Badge tone={r.stance === 'buy' ? 'up'
                                 : r.stance === 'sell' || r.stance === 'trim' ? 'down' : 'accent'}
-                                className="text-[10px]">
+                                className="text-[11px]">
                                 {r.stance_label ?? r.stance.toUpperCase()}
                               </Badge>
                             ) : <span className="text-faint">—</span>}
                           </span>
                           {/* the same warnings as the analysis header's re-check badge */}
                           {(r.stance_warnings?.length ?? 0) > 0 && (
-                            <Badge tone="warn" className="text-[10px]"
+                            <Badge tone="warn" className="text-[11px]"
                               title={r.stance_warnings!.join('\n')}>
                               ⚠ {r.stance_warnings!.length}
                             </Badge>
                           )}
                         </span>
                       </td>
-                      <td className="py-2.5 text-right">
+                      <td className="py-2 text-right">
                         <button onClick={() => setEditing(editing === r.symbol ? null : r.symbol)}
                           className="mr-2 text-faint hover:text-text" title="Edit note/tags">
                           <Pencil className="h-3.5 w-3.5" />
@@ -326,6 +387,7 @@ export default function Watchlist({ onAnalyze }: { onAnalyze: (s: string) => voi
               </AnimatePresence>
             </tbody>
           </table>
+          </div>
           <AnimatePresence>
             {editing && sorted.some((r) => r.symbol === editing) && (
               <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }}
@@ -335,7 +397,7 @@ export default function Watchlist({ onAnalyze }: { onAnalyze: (s: string) => voi
               </motion.div>
             )}
           </AnimatePresence>
-          <p className="mt-2 text-[10px] text-faint">
+          <p className="mt-2 text-[11px] text-faint">
             Prices arrive in one batched call; band/options/earnings stream in
             chunks (cached 5–30 min after that) · Score is the last computed
             value — open the ticker to refresh it · Impl/Band &gt;1.3× usually

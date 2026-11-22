@@ -36,7 +36,14 @@ body {
 ::selection { background: color-mix(in srgb, var(--color-accent) 30%, transparent); }
 
 /* money/figures always in tabular numerals so columns don't dance */
-.tnum { font-variant-numeric: tabular-nums; }
+.tnum, table { font-variant-numeric: tabular-nums; }
+
+/* Type scale (one place to check a new component against):
+     11px  labels, fine print, badges — the floor; nothing renders smaller
+     12px  notes, caveats, secondary lines
+     13px  rows and table cells
+     14px  body copy, buttons
+   Prose is capped near 110 characters a line; figures are tabular. */
 
 /* focus ring for full keyboard navigation */
 :focus-visible {

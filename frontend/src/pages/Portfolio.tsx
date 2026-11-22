@@ -48,28 +48,28 @@ export default function Portfolio({ onAnalyze }: { onAnalyze: (s: string) => voi
       <Card>
         <div className="flex flex-wrap items-center gap-x-8 gap-y-3">
           <div>
-            <div className="text-[10px] uppercase tracking-wide text-faint">Total value</div>
+            <div className="text-[11px] uppercase tracking-wide text-faint">Total value</div>
             <div className="tnum text-2xl font-bold">
               <NumberFlow value={p.total_value} format={{ style: 'currency', currency: 'USD' }} />
             </div>
           </div>
           <div>
-            <div className="text-[10px] uppercase tracking-wide text-faint">Today</div>
+            <div className="text-[11px] uppercase tracking-wide text-faint">Today</div>
             <div className={cn('tnum text-lg font-semibold', plColor(p.day_pl))}>
               {fmtMoney(p.day_pl)} ({fmtPct(p.day_pl_pct, 2, true)})
             </div>
           </div>
           <div>
-            <div className="text-[10px] uppercase tracking-wide text-faint">Cash</div>
+            <div className="text-[11px] uppercase tracking-wide text-faint">Cash</div>
             <div className="tnum text-lg font-semibold">{fmtMoney(p.cash)}</div>
           </div>
           <div>
-            <div className="text-[10px] uppercase tracking-wide text-faint">Positions</div>
+            <div className="text-[11px] uppercase tracking-wide text-faint">Positions</div>
             <div className="tnum text-lg font-semibold">{p.positions.length}</div>
           </div>
           {income && (
             <div title={`Real dividend yields (Finnhub) over ${income.coverage_pct}% of the portfolio — not hand-maintained estimates`}>
-              <div className="text-[10px] uppercase tracking-wide text-faint">Income /yr (proj.)</div>
+              <div className="text-[11px] uppercase tracking-wide text-faint">Income /yr (proj.)</div>
               <div className="tnum text-lg font-semibold">
                 {fmtMoney(income.projected_annual, 0)}
                 <span className="ml-1.5 text-xs text-muted">
@@ -79,7 +79,7 @@ export default function Portfolio({ onAnalyze }: { onAnalyze: (s: string) => voi
             </div>
           )}
           <div className="ml-auto flex items-center gap-2">
-            <span className="text-[10px] text-faint">
+            <span className="text-[11px] text-faint">
               {p.source === 'stale' ? 'stale · ' : ''}{fmtAge(p.age_seconds)} · read-only
             </span>
             <Button onClick={() => refresh.mutate()} disabled={refresh.isPending}>
@@ -133,9 +133,11 @@ export default function Portfolio({ onAnalyze }: { onAnalyze: (s: string) => voi
       <Card>
         <CardTitle>Holdings</CardTitle>
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+          {/* cells keep a gap and never wrap: on a narrow window the table
+              scrolls inside the card instead of running figures together */}
+          <table className="w-full min-w-[46rem] whitespace-nowrap text-[13px] [&_td:not(:first-child)]:pl-4 [&_th:not(:first-child)]:pl-4">
             <thead>
-              <tr className="text-left text-[10px] uppercase tracking-wide text-faint">
+              <tr className="whitespace-nowrap text-left text-[11px] uppercase tracking-wide text-faint">
                 <th className="pb-2 font-medium">Symbol</th>
                 <th className="pb-2 text-right font-medium">Qty</th>
                 <th className="pb-2 text-right font-medium">Price paid</th>
@@ -151,31 +153,34 @@ export default function Portfolio({ onAnalyze }: { onAnalyze: (s: string) => voi
               {p.positions.map((pos) => (
                 <motion.tr
                   key={pos.symbol}
-                  layout
                   onClick={() => onAnalyze(pos.symbol)}
                   className="cursor-pointer border-t border-border/60 transition-colors hover:bg-surface-2"
                   title={`Analyze ${pos.symbol}`}>
-                  <td className="py-2.5">
+                  <td className="py-2">
                     <span className="font-bold text-text">{pos.symbol}</span>
-                    <span className="ml-2 hidden max-w-44 truncate text-xs text-faint md:inline-block align-bottom">
-                      {pos.description}
-                    </span>
+                    {/* a description that only repeats the ticker is noise */}
+                    {pos.description && pos.description.toUpperCase() !== pos.symbol && (
+                      <span className="ml-2 hidden max-w-48 truncate align-bottom text-xs text-faint xl:inline-block"
+                        title={pos.description}>
+                        {pos.description}
+                      </span>
+                    )}
                   </td>
-                  <td className="tnum py-2.5 text-right">{fmtNum(pos.qty, 2)}</td>
-                  <td className="tnum py-2.5 text-right text-muted">{fmtMoney(pos.avg_cost)}</td>
-                  <td className="tnum py-2.5 text-right font-medium">{fmtMoney(pos.market_value)}</td>
-                  <td className={cn('tnum py-2.5 text-right', plColor(pos.day_pl))}>
+                  <td className="tnum py-2 text-right">{fmtNum(pos.qty, 2)}</td>
+                  <td className="tnum py-2 text-right text-muted">{fmtMoney(pos.avg_cost)}</td>
+                  <td className="tnum py-2 text-right font-medium">{fmtMoney(pos.market_value)}</td>
+                  <td className={cn('tnum py-2 text-right', plColor(pos.day_pl))}>
                     {fmtMoney(pos.day_pl)}
                   </td>
-                  <td className={cn('tnum py-2.5 text-right', plColor(pos.gain))}>
+                  <td className={cn('tnum py-2 text-right', plColor(pos.gain))}>
                     {fmtMoney(pos.gain)}
                     <span className="ml-1 text-xs opacity-80">({fmtPct(pos.gain_pct, 1, true)})</span>
                   </td>
-                  <td className="tnum py-2.5 text-right text-muted">{fmtPct(pos.weight_pct, 1)}</td>
-                  <td className="tnum py-2.5 text-right text-muted">
+                  <td className="tnum py-2 text-right text-muted">{fmtPct(pos.weight_pct, 1)}</td>
+                  <td className="tnum py-2 text-right text-muted">
                     {fmtPct(yieldOf(pos.symbol)?.yield_pct ?? null, 2)}
                   </td>
-                  <td className="tnum py-2.5 text-right text-muted">
+                  <td className="tnum py-2 text-right text-muted">
                     {(yieldOf(pos.symbol)?.income_annual ?? 0) > 0
                       ? fmtMoney(yieldOf(pos.symbol)!.income_annual, 0) : '—'}
                   </td>
@@ -191,9 +196,11 @@ export default function Portfolio({ onAnalyze }: { onAnalyze: (s: string) => voi
 
       <RiskCard />
 
-      <SandboxCard symbols={p.positions.map((x) => x.symbol)} />
-
-      <ActionPlan />
+      {/* two half-empty full-width cards → side by side on a wide screen */}
+      <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-2">
+        <SandboxCard symbols={p.positions.map((x) => x.symbol)} />
+        <ActionPlan />
+      </div>
 
       <p className="text-[11px] text-faint">
         <Badge tone="neutral" className="mr-2">read-only</Badge>
@@ -223,26 +230,26 @@ function RiskCard() {
       <CardTitle>Portfolio risk · tomorrow's 80% range for the WHOLE account</CardTitle>
       <div className="flex flex-wrap items-center gap-x-8 gap-y-3">
         <div>
-          <div className="text-[10px] uppercase tracking-wide text-faint">80% range (next session)</div>
+          <div className="text-[11px] uppercase tracking-wide text-faint">80% range (next session)</div>
           <div className="tnum text-lg font-semibold">
             {fmtMoney(r.band_low)} – {fmtMoney(r.band_high)}
             <span className="ml-1.5 text-xs text-muted">±{fmtMoney(r.band_dollars, 0)}</span>
           </div>
         </div>
         <div>
-          <div className="text-[10px] uppercase tracking-wide text-faint">Annualized vol</div>
+          <div className="text-[11px] uppercase tracking-wide text-faint">Annualized vol</div>
           <div className="tnum text-lg font-semibold">{fmtPct(r.annualized_vol_pct, 1)}</div>
         </div>
         <div title="Weighted-average holding vol ÷ portfolio vol — above 1 means diversification is genuinely removing volatility">
-          <div className="text-[10px] uppercase tracking-wide text-faint">Diversification ratio</div>
+          <div className="text-[11px] uppercase tracking-wide text-faint">Diversification ratio</div>
           <div className="tnum text-lg font-semibold">{fmtNum(r.diversification_ratio, 2)}×</div>
         </div>
         <div title={`Herfindahl ${fmtNum(r.hhi, 3)} — lower is more diversified`}>
-          <div className="text-[10px] uppercase tracking-wide text-faint">Effective positions</div>
+          <div className="text-[11px] uppercase tracking-wide text-faint">Effective positions</div>
           <div className="tnum text-lg font-semibold">{fmtNum(r.effective_positions, 1)}</div>
         </div>
         <div>
-          <div className="text-[10px] uppercase tracking-wide text-faint">Portfolio beta</div>
+          <div className="text-[11px] uppercase tracking-wide text-faint">Portfolio beta</div>
           <div className="tnum text-lg font-semibold">{fmtNum(r.portfolio_beta, 2)}</div>
         </div>
       </div>
@@ -305,7 +312,7 @@ function SandboxCard({ symbols }: { symbols: string[] }) {
             <input value={c.amount}
               onChange={(e) => setChanges(changes.map((x, j) => j === i ? { ...x, amount: e.target.value } : x))}
               placeholder="± $ amount (e.g. -3000 = trim)" aria-label="Dollar change"
-              className="w-56 rounded-lg border border-border bg-bg px-2.5 py-1.5 text-sm outline-none focus:border-accent/60" />
+              className="w-56 min-w-0 max-w-full rounded-lg border border-border bg-bg px-2.5 py-1.5 text-sm outline-none focus:border-accent/60" />
             {i === changes.length - 1 && (
               <Button variant="ghost" onClick={() => setChanges([...changes, { symbol: '', amount: '' }])}>
                 <Plus className="h-4 w-4" />
@@ -374,7 +381,7 @@ function ActionPlan() {
           onKeyDown={(e) => e.key === 'Enter' && submit()}
           placeholder="e.g. TRIM — overlaps 401k, near breakeven"
           aria-label="Action description"
-          className="min-w-64 flex-1 rounded-lg border border-border bg-bg px-2.5 py-1.5 text-sm outline-none focus:border-accent/60" />
+          className="min-w-40 flex-1 rounded-lg border border-border bg-bg px-2.5 py-1.5 text-sm outline-none focus:border-accent/60" />
         <Button variant="accent" onClick={submit} disabled={!text.trim()}>
           <Plus className="h-4 w-4" /> Add
         </Button>

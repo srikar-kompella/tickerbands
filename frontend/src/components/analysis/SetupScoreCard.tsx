@@ -38,19 +38,19 @@ export function SetupScoreCard({ a, glossary }: {
 
   return (
     <SectionShell title="Setup Score" glossary={glossary.setup_score}>
-      <div className="flex items-center gap-5">
+      <div className="flex items-center gap-4">
         {/* the big number — clickable, animated, color-banded */}
         <button
           onClick={() => setExpanded((e) => !e)}
           aria-expanded={expanded}
           title="Show component breakdown"
           className={cn(
-            'flex h-24 w-24 shrink-0 flex-col items-center justify-center rounded-full border-4 bg-surface-2 transition-transform hover:scale-105',
+            'flex h-20 w-20 shrink-0 flex-col items-center justify-center rounded-full border-4 bg-surface-2 transition-transform hover:scale-105',
             tone.ring)}>
-          <span className={cn('tnum text-3xl font-bold leading-none', tone.text)}>
+          <span className={cn('tnum text-2xl font-bold leading-none', tone.text)}>
             <NumberFlow value={s.score} transformTiming={{ duration: 600, easing: 'ease-out' }} />
           </span>
-          <span className="mt-0.5 text-[9px] uppercase tracking-wider text-faint">/ 100</span>
+          <span className="mt-0.5 text-[11px] tracking-wide text-faint">/ 100</span>
         </button>
 
         <div className="min-w-0 flex-1">
@@ -90,7 +90,8 @@ export function SetupScoreCard({ a, glossary }: {
       {/* expandable, fully transparent composition table */}
       <button
         onClick={() => setExpanded((e) => !e)}
-        className="mt-3 flex w-full items-center justify-center gap-1 rounded-lg border border-border py-1 text-xs text-muted hover:bg-surface-2">
+        aria-expanded={expanded}
+        className="mt-2.5 flex items-center gap-1 text-xs text-faint hover:text-muted">
         <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', expanded && 'rotate-180')} />
         {expanded ? 'Hide' : 'Show'} composition
       </button>
@@ -104,7 +105,7 @@ export function SetupScoreCard({ a, glossary }: {
             className="overflow-hidden">
             <table className="mt-3 w-full text-xs">
               <thead>
-                <tr className="text-left text-[10px] uppercase tracking-wide text-faint">
+                <tr className="text-left text-[11px] uppercase tracking-wide text-faint">
                   <th className="pb-2 font-medium">Signal</th>
                   <th className="pb-2 text-right font-medium">Value</th>
                   <th className="pb-2 text-right font-medium">Weight used</th>
@@ -145,7 +146,7 @@ export function SetupScoreCard({ a, glossary }: {
       </AnimatePresence>
 
       {/* the permanent honesty line — never hidden, never optional */}
-      <p className="mt-3 border-t border-border pt-2.5 text-[11px] leading-relaxed text-faint">
+      <p className="mt-2.5 text-[11px] leading-relaxed text-faint">
         {s.disclaimer}
       </p>
     </SectionShell>

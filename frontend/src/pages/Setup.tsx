@@ -157,7 +157,7 @@ export default function Setup({ onDone }: { onDone: () => void }) {
               test {p}
             </button>
           ))}
-          <Badge className="text-[10px]">note: key-based tests pass only after Save (keys load then)</Badge>
+          <Badge className="text-[11px]">note: key-based tests pass only after Save (keys load then)</Badge>
         </div>
         {missingKeys.length > 0 && (
           <p className="mb-3 rounded-lg border border-yellow-500/30 bg-yellow-500/5 px-3 py-2 text-xs text-yellow-500">

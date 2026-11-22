@@ -163,6 +163,9 @@ def fetch_quote(symbol: str) -> dict[str, Any]:
         "net_change_pct": float(q.get("netPercentChange") or 0.0),
         "quote_time_ms": int(q.get("quoteTime") or 0),
         "asset_type": blob.get("assetMainType") or "EQUITY",
+        # Schwab files ETFs under assetMainType EQUITY; the sub-type tells
+        # them apart (ETF, CEF, ETN, COE = common equity, ADR, PRF, …)
+        "asset_sub_type": blob.get("assetSubType") or None,
     }
 
 
@@ -206,6 +209,7 @@ def fetch_quotes_batch(symbols: list[str]) -> dict[str, dict[str, Any]]:
             "net_change_pct": float(q.get("netPercentChange") or 0.0),
             "quote_time_ms": int(q.get("quoteTime") or 0),
             "asset_type": blob.get("assetMainType") or "EQUITY",
+            "asset_sub_type": blob.get("assetSubType") or None,
         }
     return out
 
@@ -282,52 +286,75 @@ def fetch_options_summary(symbol: str) -> dict[str, Any]:
         raise ProviderError("unavailable", f"option chain failed: {e}")
     if resp.status_code != 200:
         return {"available": False}
-    data = resp.json()
+    return summarize_chain(resp.json())
+
+
+ATM_MAX_DTE = 45
+
+
+def _chain_legs(exp_map: dict | None) -> tuple[int, dict[tuple[int, str], dict[float, tuple[float, float]]]]:
+    """One side of a Schwab chain → (total session volume,
+    {(dte, expiry date): {strike: (mark, iv %)}}) for contracts expiring in
+    1–ATM_MAX_DTE days that carry a real mark. Map keys read "2026-11-27:5"
+    (date:days)."""
+    total_vol = 0
+    legs: dict[tuple[int, str], dict[float, tuple[float, float]]] = {}
+    for exp_key, strikes in (exp_map or {}).items():
+        exp_date = str(exp_key).split(":")[0]
+        for _strike, contracts in (strikes or {}).items():
+            for c in contracts or []:
+                total_vol += int(c.get("totalVolume") or 0)
+                dte = int(c.get("daysToExpiration") or 9999)
+                strike = float(c.get("strikePrice") or 0.0)
+                mark = float(c.get("mark") or c.get("last") or 0.0)
+                iv = float(c.get("volatility") or 0.0)  # Schwab reports %
+                if not (0 < dte <= ATM_MAX_DTE) or mark <= 0 or strike <= 0:
+                    continue
+                side = legs.setdefault((dte, exp_date), {})
+                # an adjusted (non-standard) contract never replaces the
+                # standard one at the same strike
+                if strike not in side or not c.get("nonStandard"):
+                    side[strike] = (mark, iv)
+    return total_vol, legs
+
+
+def summarize_chain(data: dict) -> dict[str, Any]:
+    """Schwab option-chain JSON → the options summary. Pure (fixture-tested).
+
+    The ATM straddle is ONE call and ONE put of the same expiry and strike:
+    the nearest expiry (1–45 days) that has both legs with a real mark, and
+    within it the strike closest to spot that exists on both sides. The two
+    legs used to be picked independently by (strike distance, days), so a
+    call from one expiry could be paired with a put from another, and a
+    later expiry with a finer strike grid beat the nearest one."""
     if (data.get("status") or "").upper() == "FAILED":
         return {"available": False}
-
     underlying = float(data.get("underlyingPrice") or 0.0)
+    call_vol, calls = _chain_legs(data.get("callExpDateMap"))
+    put_vol, puts = _chain_legs(data.get("putExpDateMap"))
 
-    def scan(exp_map: dict) -> tuple[int, tuple | None]:
-        """Walk one side of the chain → (total volume, best ATM contract).
+    pair = None   # (dte, expiry date, strike, call (mark, iv), put (mark, iv))
+    if underlying:
+        for key in sorted(set(calls) & set(puts)):
+            common = set(calls[key]) & set(puts[key])
+            if common:
+                k = min(common, key=lambda s: (abs(s - underlying), s))
+                pair = (key[0], key[1], k, calls[key][k], puts[key][k])
+                break
 
-        Best ATM = smallest (|strike − spot|, dte) among contracts expiring in
-        1–45 days with a real mark. The dte tiebreak prefers the *nearest*
-        expiry at the same strike distance, which is what "implied move" means.
-        """
-        total_vol = 0
-        best: tuple | None = None  # (dist, mark, iv, dte, expiry date)
-        for exp_key, strikes in (exp_map or {}).items():
-            for _strike, contracts in strikes.items():
-                for c in contracts:
-                    total_vol += int(c.get("totalVolume") or 0)
-                    dte = int(c.get("daysToExpiration") or 9999)
-                    strike = float(c.get("strikePrice") or 0.0)
-                    mark = float(c.get("mark") or c.get("last") or 0.0)
-                    iv = float(c.get("volatility") or 0.0)  # Schwab reports %
-                    if underlying and 0 < dte <= 45 and mark > 0:
-                        dist = abs(strike - underlying)
-                        if best is None or (dist, dte) < (best[0], best[3]):
-                            # map keys read "2026-11-23:1" (date:days)
-                            best = (dist, mark, iv, dte, str(exp_key).split(":")[0])
-        return total_vol, best
-
-    call_vol, atm_call = scan(data.get("callExpDateMap"))
-    put_vol, atm_put = scan(data.get("putExpDateMap"))
-
-    if call_vol == 0 and put_vol == 0 and atm_call is None:
+    if call_vol == 0 and put_vol == 0 and not calls:
         return {"available": False}
 
     put_call = (put_vol / call_vol) if call_vol > 0 else None
-    implied_move_pct = atm_iv = expiry_dte = expiry_date = None
-    if atm_call and atm_put and underlying:
+    implied_move_pct = atm_iv = expiry_dte = expiry_date = atm_strike = None
+    if pair:
+        expiry_dte, expiry_date, atm_strike, (c_mark, c_iv), (p_mark, p_iv) = pair
         # ATM straddle price ≈ what the options market charges for the move
         # through expiry — expressed as ±% of spot. Honest peer for our band.
-        straddle = atm_call[1] + atm_put[1]
-        implied_move_pct = round(straddle / underlying * 100, 2)
-        atm_iv = round((atm_call[2] + atm_put[2]) / 2, 1)
-        expiry_dte = atm_call[3]
-        expiry_date = atm_call[4] or None
+        implied_move_pct = round((c_mark + p_mark) / underlying * 100, 2)
+        ivs = [v for v in (c_iv, p_iv) if v > 0]   # Schwab sends −999 for "no IV"
+        atm_iv = round(sum(ivs) / len(ivs), 1) if ivs else None
+        expiry_date = expiry_date or None
 
     return {
         "available": True,
@@ -337,7 +364,8 @@ def fetch_options_summary(symbol: str) -> dict[str, Any]:
         "atm_iv_pct": atm_iv,               # annualized implied vol, %
         "implied_move_pct": implied_move_pct,  # ±% through nearest expiry
         "implied_move_dte": expiry_dte,
-        "expiry_date": expiry_date,         # the ATM expiry, YYYY-MM-DD
+        "expiry_date": expiry_date,         # the straddle's expiry, YYYY-MM-DD
+        "atm_strike": atm_strike,           # the strike both legs share
         "as_of": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
     }
 

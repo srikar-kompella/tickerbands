@@ -299,6 +299,8 @@ def sessions_closed_after(t: dt.datetime | None, big: list[dict]) -> list[dict]:
 
 
 WINDOW_SESSIONS = 5      # the prompt's news window is never shorter than 5 sessions
+MAX_WINDOW_DAYS = 30     # …and reaches back at most this far to the last research note
+NEAR_MISS_SIGMA = 1.5    # a session from here up to 2σ is a near miss (near_miss_sessions)
 
 
 def parse_window(text: Any) -> tuple[str, str] | None:
@@ -531,19 +533,58 @@ def research_flags(claude_news: dict | None, claude_stance: dict | None,
     return out
 
 
-def news_window(last_report_date: str | None, last_session: str | None,
-                today: dt.date) -> dict[str, str]:
-    """The window a news check must cover: since the last report for this
-    ticker, or the last 5 trading days — whichever starts EARLIER."""
+def near_miss_sessions(recent: list[dict] | None, w_from: str | None = None,
+                       skip: set[str] | frozenset = frozenset()) -> list[dict]:
+    """Completed sessions that stopped just short of 2σ and were mostly the
+    company's own move, oldest first: NEAR_MISS_SIGMA ≤ |z| < BIG_MOVE_SIGMA
+    and |move net of market| ≥ one daily σ (σ in percent = move ÷ z).
+
+    `recent` are the composer's `recent_sessions` rows (date, change_pct, z,
+    net_of_market_pct). A −8.75% session at −1.96σ, −4.87% of it net of the
+    market, was called "ordinary" because the cutoff is binary. The research
+    prompt asks for the cause of these too; they are NOT ≥2σ sessions — no
+    note is failed for leaving one out (big_sessions / failed_news_check do
+    not read this list)."""
+    out = []
+    for x in recent or []:
+        d, z, chg, net = (str(x.get("date") or "")[:10], x.get("z"),
+                          x.get("change_pct"), x.get("net_of_market_pct"))
+        if not d or d in skip or (w_from and d < str(w_from)[:10]):
+            continue
+        if z is None or chg is None or net is None or not z:
+            continue
+        if NEAR_MISS_SIGMA <= abs(z) < BIG_MOVE_SIGMA and abs(net) >= abs(chg / z):
+            out.append({"session_date": d, "z": z, "move_pct": chg, "net_pct": net})
+    return sorted(out, key=lambda s: s["session_date"])
+
+
+def news_window(last_note_date: str | None, last_session: str | None,
+                today: dt.date) -> dict[str, Any]:
+    """The window a news check must cover: since the last research note on
+    this ticker that still stands (research_quality.last_research_date), at
+    most MAX_WINDOW_DAYS back, or the last 5 trading sessions — whichever
+    starts EARLIER.
+
+    It used to start at the last exported REPORT, which is no news check: a
+    ticker whose last note was months old got a 7-day window under a prompt
+    that said "since the last report". `last_note` (the note's date) is added
+    when there is one, and `capped` when it is older than the cap, so the
+    prompt can say which rule set the start."""
     d = dt.date.fromisoformat(last_session) if last_session else today
     five = d
-    for _ in range(4):
+    for _ in range(WINDOW_SESSIONS - 1):
         five = mc.previous_trading_day(five)
     start = five
-    if last_report_date:
+    out: dict[str, Any] = {}
+    if last_note_date:
         try:
-            lr = dt.date.fromisoformat(last_report_date[:10])
-            start = min(start, lr)
+            ln = dt.date.fromisoformat(str(last_note_date)[:10])
         except ValueError:
-            pass
-    return {"from": start.isoformat(), "to": today.isoformat()}
+            ln = None
+        if ln and ln <= today:
+            floor = today - dt.timedelta(days=MAX_WINDOW_DAYS)
+            out["last_note"] = ln.isoformat()
+            if ln < floor:
+                out["capped"] = True
+            start = min(start, max(ln, floor))
+    return {"from": start.isoformat(), "to": today.isoformat(), **out}

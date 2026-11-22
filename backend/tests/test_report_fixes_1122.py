@@ -169,8 +169,8 @@ def test_snapshot_lists_recent_sessions_and_the_task_uses_them(tmp_db, monkeypat
     assert "Recent sessions (official close, move, SPY's move, net of market" in snap
     assert "- Fri 2026-11-20: the Day move row above" in snap     # stated once
     assert "- Thu 2026-11-19: $145.98, −4.60% (−0.97σ); SPY −0.90%; net " in snap
-    assert ("Daily closes and SPY's move for the last sessions are in <snapshot> "
-            "(Recent sessions) — use those rows rather than searching for them.") in p
+    assert ("Each row under Recent sessions in <snapshot> gives that session's close, SPY's "
+            "move and the net figure — take them from there rather than searching.") in p
     step4 = p[p.index("4. Analyze"):p.index("5. Lay out the options")]
     assert "Use the net figure in <snapshot> Recent sessions" in step4
 
@@ -227,7 +227,7 @@ def test_step1_offers_parallel_subagents_and_the_filing_index_json(tmp_db, monke
     assert "keep steps 2 to 8 yourself" in step1
     if a.get("sec_cik"):
         assert f"https://data.sec.gov/submissions/CIK{a['sec_cik']}.json" in step1
-    assert "stay under 1,100" in p
+    assert "stay under 1,300" in p
 
 
 def test_user_notes_conflicts_vagueness_and_stale_facts_have_one_reading(tmp_db, monkeypatch):

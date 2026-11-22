@@ -61,7 +61,7 @@ export function CommandPalette({ onTicker, onTab }: {
                   placeholder="Type a ticker or command…"
                   className="w-full bg-transparent py-3.5 text-sm outline-none placeholder:text-faint"
                 />
-                <kbd className="rounded border border-border px-1.5 py-0.5 text-[10px] text-faint">esc</kbd>
+                <kbd className="rounded border border-border px-1.5 py-0.5 text-[11px] text-faint">esc</kbd>
               </div>
               <Command.List className="max-h-72 overflow-y-auto p-2">
                 <Command.Empty className="px-3 py-6 text-center text-sm text-faint">
@@ -69,7 +69,7 @@ export function CommandPalette({ onTicker, onTab }: {
                 </Command.Empty>
 
                 {validTicker && (
-                  <Command.Group heading="Analyze" className="text-[10px] uppercase tracking-wide text-faint [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5">
+                  <Command.Group heading="Analyze" className="text-[11px] uppercase tracking-wide text-faint [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5">
                     <Command.Item
                       value={`analyze-${typed}`}
                       onSelect={() => go(() => onTicker(typed))}
@@ -81,7 +81,7 @@ export function CommandPalette({ onTicker, onTab }: {
                 )}
 
                 {!!searchHits?.length && (
-                  <Command.Group heading="Companies" className="text-[10px] uppercase tracking-wide text-faint [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5">
+                  <Command.Group heading="Companies" className="text-[11px] uppercase tracking-wide text-faint [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5">
                     {searchHits.map((h) => (
                       <Command.Item
                         key={`hit-${h.symbol}`}
@@ -97,7 +97,7 @@ export function CommandPalette({ onTicker, onTab }: {
                 )}
 
                 {!!watchlist?.length && (
-                  <Command.Group heading="Watchlist" className="text-[10px] uppercase tracking-wide text-faint [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5">
+                  <Command.Group heading="Watchlist" className="text-[11px] uppercase tracking-wide text-faint [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5">
                     {watchlist.map((w) => (
                       <Command.Item
                         key={w.symbol}
@@ -113,7 +113,7 @@ export function CommandPalette({ onTicker, onTab }: {
                   </Command.Group>
                 )}
 
-                <Command.Group heading="Go to" className="text-[10px] uppercase tracking-wide text-faint [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5">
+                <Command.Group heading="Go to" className="text-[11px] uppercase tracking-wide text-faint [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5">
                   {([
                     ['analysis', 'Analysis', LineChart],
                     ['portfolio', 'Portfolio', Briefcase],

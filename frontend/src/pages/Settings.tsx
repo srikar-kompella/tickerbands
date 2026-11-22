@@ -85,7 +85,7 @@ function ScoreAuditCard() {
       ) : (
         <table className="w-full text-sm">
           <thead>
-            <tr className="text-left text-[10px] uppercase tracking-wide text-faint">
+            <tr className="text-left text-[11px] uppercase tracking-wide text-faint">
               <th className="pb-2 font-medium">Score band</th>
               <th className="pb-2 text-right font-medium">Horizon</th>
               <th className="pb-2 text-right font-medium">n</th>
