@@ -166,13 +166,13 @@ def test_snapshot_lists_recent_sessions_and_the_task_uses_them(tmp_db, monkeypat
     assert rs[-1]["z"] == a["move"]["z"]               # the same σ as the day move
     p = _prompt(a)
     snap = _block(p, "snapshot")
-    assert "Recent sessions — official closes, oldest first" in snap
+    assert "Recent sessions (official close, move, SPY's move, net of market" in snap
     assert "- Fri 2026-11-20: the Day move row above" in snap     # stated once
-    assert "- Thu 2026-11-19: close $145.98, −4.60% (−0.97σ); SPY −0.90%; net of market" in snap
+    assert "- Thu 2026-11-19: $145.98, −4.60% (−0.97σ); SPY −0.90%; net " in snap
     assert ("Daily closes and SPY's move for the last sessions are in <snapshot> "
             "(Recent sessions) — use those rows rather than searching for them.") in p
     step4 = p[p.index("4. Analyze"):p.index("5. Lay out the options")]
-    assert "net-of-market column" in step4
+    assert "Use the net figure in <snapshot> Recent sessions" in step4
 
 
 def test_prompt_reads_the_users_own_notes_in_the_working_folder(tmp_db, monkeypatch):
@@ -187,3 +187,30 @@ def test_recall_means_a_product_recall_not_the_verb():
     for t in ("Ford recalls 300,000 vehicles", "Product recall hits sales",
               "Company announces recall of two product lines"):
         assert nr.REG_RE.search(t), t
+
+
+# ── 5. from the 00:27 note: no quarter from memory, no untested trigger ──────
+
+def test_c3_gives_the_filed_quarters_and_asks_for_the_release_balance_sheet(tmp_db, monkeypatch):
+    # statements one quarter behind the Nov 17 release, as on Nov 21–22
+    a = _analyze(monkeypatch, rf.nvda_providers(fresh_statements=False), rf.NVDA_NOW, "NVDA")
+    fq = a["filed_quarters"]
+    assert fq and all(q["end"] <= "2026-07-26" for q in fq)     # only periods the filing covers
+    assert [q["end"] for q in fq] == sorted((q["end"] for q in fq), reverse=True)
+    p = _prompt(a)
+    snap = _block(p, "snapshot")
+    assert ("- Free cash flow by filed quarter (newest first): 2026-07-26 $21.4B; "
+            "2026-04-26 $48.6B; 2026-01-25 $34.9B; 2025-10-26 $22.1B") in snap
+    step2 = p[p.index("2. Reconcile the data"):p.index("3. Set and check")]
+    assert ("the latest quarter from the release plus the three most recent filed quarters "
+            "in <snapshot> (Free cash flow by filed quarter) — no quarter from memory or "
+            "from an earlier note") in step2
+    assert "Restate net cash and enterprise value from the release's balance sheet" in step2
+
+
+def test_every_trigger_is_searched_before_it_is_marked(tmp_db, monkeypatch):
+    p = _prompt(_analyze(monkeypatch, rf.nvda_providers(), rf.NVDA_NOW, "NVDA"))
+    step3 = p[p.index("3. Set and check"):p.index("4. Analyze")]  # any fixture
+    assert ("Check every trigger, yours and the user's, with a search or a filing before "
+            "you mark it, and name that search; UNKNOWN means the search could not settle "
+            "it, not that it was skipped.") in step3

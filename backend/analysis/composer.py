@@ -914,6 +914,7 @@ def analyze(symbol: str, force: bool = False, now: dt.datetime | None = None,
         "research_flags": flags,
         "big_move_sessions": big_sessions,
         "recent_sessions": recent,
+        "filed_quarters": _filed_quarters(stmts),
         "news_window": nwin,
         "headlines": headlines_view["items"],
         "headlines_view": {k: v for k, v in headlines_view.items()
@@ -947,6 +948,26 @@ def analyze(symbol: str, force: bool = False, now: dt.datetime | None = None,
 
     _touch_watchlist(symbol)
     return payload
+
+
+def _filed_quarters(stmts: dict | None, n: int = 4) -> list[dict[str, Any]]:
+    """The last `n` filed quarters' free cash flow, newest first, only for
+    periods the cash-flow statement covers. When the latest quarter is only
+    in an earnings release, a research session adds that quarter to these
+    three to get TTM — a session without them took one quarter "from
+    memory" (NVDA note, 2026-11-22)."""
+    if not stmts or not stmts.get("available"):
+        return []
+    cf_end = (stmts.get("periods") or {}).get("cashflow")
+    src = (stmts.get("period_sources") or {}).get("cashflow")
+    out = []
+    for q in stmts.get("quarters") or []:
+        end, fcf = q.get("end"), q.get("fcf")
+        if not end or fcf is None or (cf_end and str(end)[:10] > str(cf_end)[:10]):
+            continue
+        out.append({"end": str(end)[:10], "fcf": fcf, "source": src})
+    out.sort(key=lambda x: x["end"], reverse=True)
+    return out[:n]
 
 
 def _value_lens_with_freshness(mcap: float | None, stmts: dict | None,

@@ -248,21 +248,21 @@ def _data_blocks(a: dict) -> tuple[list[str], list[str], dict[str, Any]]:
         snap.append(f"- Setup Score: {score['score']}/100 — context, not a buy/sell input")
     recent = a.get("recent_sessions") or []
     if recent:
-        snap += ["", "Recent sessions — official closes, oldest first; SPY is the S&P 500 "
-                     "ETF; net of market = the move − beta × SPY's move"]
+        snap += ["", "Recent sessions (official close, move, SPY's move, net of market = "
+                     "move − beta × SPY move), oldest first"]
         for x in recent:
             d = dt.date.fromisoformat(x["date"])
             if x["date"] == basis.get("session_date") and dm:
                 ln = f"- {d:%a} {x['date']}: the Day move row above"   # stated once
             else:
-                ln = (f"- {d:%a} {x['date']}: close ${x['close']:,.2f}, "
+                ln = (f"- {d:%a} {x['date']}: ${x['close']:,.2f}, "
                       f"{signed(x['change_pct'], 2, '%')}")
                 if x.get("z") is not None:
                     ln += f" ({signed(x['z'], 2, 'σ')})"
             if x.get("spy_change_pct") is not None:
                 ln += f"; SPY {signed(x['spy_change_pct'], 2, '%')}"
             if x.get("net_of_market_pct") is not None:
-                ln += f"; net of market {signed(x['net_of_market_pct'], 2, '%')}"
+                ln += f"; net {signed(x['net_of_market_pct'], 2, '%')}"
             snap.append(ln)
 
     lag = bool(smeta.get("warning"))
@@ -273,6 +273,12 @@ def _data_blocks(a: dict) -> tuple[list[str], list[str], dict[str, Any]]:
         if stmt:
             snap.append(f"- Statements: {stmt}" + (" [C3]" if lag else ""))
         snap += fund
+        fq = a.get("filed_quarters") or []
+        if lag and fq:
+            snap.append("- Free cash flow by filed quarter (newest first): "
+                        + "; ".join(f"{q['end']} {big_money(q['fcf'])}"
+                                    for q in fq)
+                        + (f" ({fq[0]['source']})" if fq[0].get("source") else ""))
     lens = _lens_rows(a.get("value_lens"))
     if lens:
         snap += ["", "Value lens — statement-derived comparisons; weigh them in step 4"
@@ -695,7 +701,7 @@ def build_claude_prompt(a: dict) -> str:
         "why it matters.",
     ]
     if a.get("recent_sessions"):
-        step4.insert(2, "Use the net-of-market column in <snapshot> Recent sessions to "
+        step4.insert(2, "Use the net figure in <snapshot> Recent sessions to "
                         "say how much of each large move was the company's own and how "
                         "much the market's.")
     if fx["has_lens"]:
@@ -816,7 +822,12 @@ def build_claude_prompt(a: dict) -> str:
         + ". Where a snapshot figure is out of date, show both: \"snapshot X (as of "
         "D1) → newer Y (as of D2, source)\". "
         + ("C3 applies, so recompute trailing free cash flow from the earnings "
-           "release and show the arithmetic (the four quarters you added). "
+           "release and show the arithmetic (the four quarters you added)"
+           + (": the latest quarter from the release plus the three most recent filed "
+              "quarters in <snapshot> (Free cash flow by filed quarter) — no quarter "
+              "from memory or from an earlier note" if a.get("filed_quarters") else "")
+           + ". Restate net cash and enterprise value from the release's balance "
+           "sheet too, and say which date each figure is as of. "
            if fx["lag"] else "")
         + "When two numbers conflict, name both and say which you use and why. Quote "
         "only the snapshot beta (60 daily returns vs SPY): betas on other sites use "
@@ -828,6 +839,9 @@ def build_claude_prompt(a: dict) -> str:
         "event, never a price direction "
         "(frontmatter `proposed_triggers`). If the user already stated triggers in "
         "this conversation or in instructions you were given, check those as well. "
+        "Check every trigger, yours and the user's, with a search or a filing before "
+        "you mark it, and name that search; UNKNOWN means the search could not "
+        "settle it, not that it was skipped. "
         "Mark each trigger MET, NOT MET or UNKNOWN, with the evidence (MET → "
         "`plan_triggers_met`, UNKNOWN → `plan_triggers_unknown`). Any MET trigger "
         "goes in the first line of the TL;DR, and the stance follows it or "

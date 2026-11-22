@@ -449,7 +449,7 @@ def test_v5_names_a_big_session_inside_the_window_that_is_not_the_last_one(
     step1 = p[p.index("1. Research first"):p.index("2. Reconcile the data")]
     assert ("   Sessions in this window that moved 2σ or more and still need a cause:\n"
             "   - 2026-11-20 (Fri): its row under Recent sessions in <snapshot>\n") in step1
-    assert "- Fri 2026-11-20: close $125.53, −14.01% (−2.97σ)" in _block(p, "snapshot")
+    assert "- Fri 2026-11-20: $125.53, −14.01% (−2.97σ)" in _block(p, "snapshot")
     assert '"no material news" is not an available conclusion for this window' in step1
     assert ("state the reported cause with two independent sources, or write \"cause "
             "not found after searching: …\"") in step1
