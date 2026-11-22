@@ -26,7 +26,8 @@ from typing import Any, Callable  # noqa: F401
 
 import config
 from analysis import (earnings_moves, fundamentals_ttm, market_clock, news_lex,
-                      news_relevance, price_basis, report_view, research_quality,
+                      news_relevance, options_iv, price_basis, report_view,
+                      research_quality,
                       setup_score, statements, value_lens, vol_bands)
 from cache.store import _get_row, get_or_fetch
 from db import connect
@@ -464,15 +465,21 @@ def _fetch_sections(symbol: str, force: bool,
     return out
 
 
-def _spy_closes(force: bool) -> list[float] | None:
-    """SPY history for beta/correlation — cached like any other section."""
+def _spy_bars(force: bool) -> list[dict] | None:
+    """SPY completed daily bars — cached like any other section."""
     fns = _providers()
     try:
         wrapped = get_or_fetch("history:SPY", config.TTL["history"],
                                lambda: fns["history"]("SPY"), force=force)
-        return [b["close"] for b in vol_bands.completed_bars(wrapped["data"])]
+        return vol_bands.completed_bars(wrapped["data"])
     except ProviderError:
         return None  # beta simply won't render; not worth failing anything
+
+
+def _spy_closes(force: bool) -> list[float] | None:
+    """SPY history for beta/correlation."""
+    bars = _spy_bars(force)
+    return [b["close"] for b in bars] if bars else None
 
 
 def _load_band_engine() -> str:
@@ -565,7 +572,8 @@ def _context_hash(payload: dict) -> str:
             if k not in {"generated_ts", "sections", "score_history",
                          # derived presentation layer + clock-dependent bits
                          "report_view", "news_window", "research_flags",
-                         "big_move_sessions", "statements_meta"}}
+                         "big_move_sessions", "statements_meta",
+                         "recent_sessions"}}
     if isinstance(slim.get("price_basis"), dict):
         slim["price_basis"] = {k: v for k, v in slim["price_basis"].items()
                                if k != "generated_ny"}
@@ -629,6 +637,11 @@ def analyze(symbol: str, force: bool = False, now: dt.datetime | None = None,
         quote_age_s=qenv.get("age_seconds"))
     price = basis["price"]
     closes = [b["close"] for b in bars]
+    # implied vol read over a closed market drifts up as expiry nears on
+    # frozen marks — restate it to the close those marks are from
+    if sections["options"].get("data"):
+        sections["options"] = {**sections["options"], "data": options_iv.restate_to_close(
+            sections["options"]["data"], basis)}
     volumes = [b.get("volume") or 0 for b in bars]
     ex_amt = basis.get("ex_div_amount") or 0.0
 
@@ -717,10 +730,19 @@ def analyze(symbol: str, force: bool = False, now: dt.datetime | None = None,
             si_data["short_interest"] / (shares_m * 1e6) * 100, 2)
 
     beta = None
+    spy_bars = None
     if closes and symbol != "SPY":
-        spy = _spy_closes(force)
-        if spy:
-            beta = vol_bands.beta_and_correlation(closes, spy)
+        spy_bars = _spy_bars(force)
+        if spy_bars:
+            beta = vol_bands.beta_and_correlation(closes, [b["close"] for b in spy_bars])
+
+    # the last 10 completed sessions with SPY's move beside each, so a
+    # research session need not look up closes or the market's day
+    recent = []
+    if len(bars) >= 22:
+        recent = vol_bands.recent_sessions(
+            bars, vol_bands.adjust_closes_for_dividends(bars, div_events),
+            spy_bars, (beta or {}).get("beta"))
 
     week52 = None
     if quote and quote.get("week52_high") and quote.get("week52_low") and price:
@@ -891,6 +913,7 @@ def analyze(symbol: str, force: bool = False, now: dt.datetime | None = None,
         "claude_stance": claude_stance,
         "research_flags": flags,
         "big_move_sessions": big_sessions,
+        "recent_sessions": recent,
         "news_window": nwin,
         "headlines": headlines_view["items"],
         "headlines_view": {k: v for k, v in headlines_view.items()

@@ -269,3 +269,35 @@ def beta_and_correlation(closes: list[float], spy_closes: list[float],
         "correlation": round(cov / math.sqrt(var_a * var_b), 2),
         "window": window,
     }
+
+
+def recent_sessions(bars: list[dict], adj_closes: list[float],
+                    spy_bars: list[dict] | None, beta: float | None,
+                    n: int = 10) -> list[dict[str, Any]]:
+    """The last `n` completed sessions, oldest first: official close, the
+    move (dividend-adjusted), the move in σ of the band that applied (20
+    returns through the prior session — the same σ as the report's day move),
+    SPY's move that day, and the move net of beta × SPY.
+
+    Why: a research session could not verify the Nov 18 close (source page
+    blocked) or the S&P 500's Nov 20 move, so it could not separate company
+    news from the market — the app has both."""
+    if len(bars) < 22 or len(adj_closes) != len(bars):
+        return []
+    spy = {b["date"]: b["close"] for b in (spy_bars or []) if b.get("close")}
+    out = []
+    for i in range(max(21, len(bars) - n), len(bars)):
+        prev = adj_closes[i - 1]
+        if not prev:
+            continue
+        chg = (adj_closes[i] / prev - 1) * 100
+        sig = realized_vol(adj_closes[:i], 20) / math.sqrt(TRADING_DAYS)
+        d, pd = bars[i]["date"], bars[i - 1]["date"]
+        spy_chg = ((spy[d] / spy[pd] - 1) * 100) if d in spy and spy.get(pd) else None
+        net = (chg - beta * spy_chg) if (beta is not None and spy_chg is not None) else None
+        out.append({"date": d, "close": round(bars[i]["close"], 2),
+                    "change_pct": round(chg, 2),
+                    "z": round(chg / sig, 2) if sig > 0 else None,
+                    "spy_change_pct": round(spy_chg, 2) if spy_chg is not None else None,
+                    "net_of_market_pct": round(net, 2) if net is not None else None})
+    return out

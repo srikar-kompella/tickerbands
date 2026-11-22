@@ -320,8 +320,12 @@ export function OptionsPanel({ a, g }: { a: Analysis; g: G }) {
             value={pc == null ? '— (thin volume)' : fmtNum(pc, 2)}
             valueClass={pc == null ? 'text-faint' : pc < 0.7 ? 'text-up' : pc > 1.1 ? 'text-down' : undefined} />
           <Row label="Call / Put volume" value={`${fmtCompact(o.call_volume)} / ${fmtCompact(o.put_volume)}`} />
-          <Row label="ATM implied vol" value={o.atm_iv_pct != null ? `${fmtNum(o.atm_iv_pct, 1)}%` : '—'} tip={g.atm_iv} />
-          <Row label={`Implied move (${o.implied_move_dte ?? '—'}d)`}
+          <Row label={o.atm_iv_note ? 'ATM implied vol (at last close)' : 'ATM implied vol'}
+            value={o.atm_iv_pct != null ? `${fmtNum(o.atm_iv_pct, 1)}%` : '—'} tip={g.atm_iv} />
+          {o.atm_iv_note && (
+            <p className="py-1 text-xs text-warn">⚠ {o.atm_iv_note}</p>
+          )}
+          <Row label={a.report_view?.fields?.implied_move?.label ?? `Implied move (${o.implied_move_dte ?? '—'}d)`}
             value={o.implied_move_pct != null ? `±${o.implied_move_pct}%` : '—'} tip={g.implied_move} />
         </div>
       )}

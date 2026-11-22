@@ -115,7 +115,8 @@ def fetch_options_summary(symbol: str) -> dict[str, Any]:
         "put_volume": int(5e4 * (0.3 + _seed(symbol, "pv")) * pc),
         "atm_iv_pct": iv,
         "implied_move_pct": round(iv / math.sqrt(252) * 2.2, 2),
-        "implied_move_dte": 7 + int(_seed(symbol, "dte") * 20),
+        "implied_move_dte": (dte := 7 + int(_seed(symbol, "dte") * 20)),
+        "expiry_date": (dt.date.today() + dt.timedelta(days=dte)).isoformat(),
         "as_of": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
     }
 

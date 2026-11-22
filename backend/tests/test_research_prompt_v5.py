@@ -448,7 +448,8 @@ def test_v5_names_a_big_session_inside_the_window_that_is_not_the_last_one(
     p = _prompt(a)
     step1 = p[p.index("1. Research first"):p.index("2. Reconcile the data")]
     assert ("   Sessions in this window that moved 2σ or more and still need a cause:\n"
-            "   - 2026-11-20 (Fri): −14.01%, −2.97σ\n") in step1
+            "   - 2026-11-20 (Fri): its row under Recent sessions in <snapshot>\n") in step1
+    assert "- Fri 2026-11-20: close $125.53, −14.01% (−2.97σ)" in _block(p, "snapshot")
     assert '"no material news" is not an available conclusion for this window' in step1
     assert ("state the reported cause with two independent sources, or write \"cause "
             "not found after searching: …\"") in step1
@@ -457,7 +458,7 @@ def test_v5_names_a_big_session_inside_the_window_that_is_not_the_last_one(
             "say which the evidence favors.") in step4
     assert "needs no story" not in p and "an ordinary day" not in p
     assert "The last session moved less than 2σ" not in p
-    assert p.count("−14.01%") == 1                # stated once, where it is asked about
+    assert p.count("−14.01%") == 1                # stated once, in its Recent sessions row
 
 
 def test_v5_note_written_after_the_monday_session_must_state_the_cause(tmp_db, monkeypatch):
@@ -495,7 +496,7 @@ def test_v5_note_written_after_the_monday_session_must_state_the_cause(tmp_db, m
     page = html.unescape(build_report_html(a, list_discussions("NVDA"), []))
     assert f"⚠ INVALID — {want}; do not build on this note" in page
     # the session is still asked for: an INVALID note explains nothing
-    assert "- 2026-11-20 (Fri): −14.01%, −2.97σ" in _prompt(a)
+    assert "- 2026-11-20 (Fri): its row under Recent sessions in <snapshot>" in _prompt(a)
 
 
 def test_v5_cause_wording_does_not_pass_for_move_cause_found(tmp_db, monkeypatch):
@@ -1382,7 +1383,7 @@ def test_v5_step1_long_window_is_daily_for_five_sessions_and_weekly_before(
     assert "2026-11-20" in big and all("2026-08-04" <= d <= "2026-11-23" for d in big)
     listed = re.findall(r"^   - (\d{4}-\d\d-\d\d) \(\w{3}\): ", step1, re.M)
     assert listed == big
-    assert "   - 2026-11-20 (Fri): −14.01%, −2.97σ\n" in step1
+    assert "   - 2026-11-20 (Fri): its row under Recent sessions in <snapshot>\n" in step1
     # step 7 checks the same thing step 1 asked for
     step7 = p[p.index("7. Check your work before writing"):p.index("8. Write the file")]
     assert ("   - the whole window 2026-08-04 → 2026-11-23 is covered — day by day from "

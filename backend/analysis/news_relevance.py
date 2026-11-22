@@ -128,7 +128,11 @@ REG_RE = re.compile(
     r"probe\w*|investigat\w*|attorneys? general|class[- ]action|lawsuit\w*|sued|"
     r"export (?:control|rule|restriction|curb)s?|BIS|Commerce Department|antitrust|FTC|"
     r"restat\w*|auditor|accounting (?:issue|irregularit)\w*|whistleblower|indict\w*|"
-    r"settle\w*|fine[ds]?|penalt\w*|recall\w*)\b", re.I)
+    r"settle\w*|fine[ds]?|penalt\w*|"
+    # a product recall, not the verb ("Trump Recalls Helping Musk" was listed
+    # as a regulatory item, NVDA 11/22)
+    r"(?:product|safety|voluntary|vehicle|drug|device) recalls?|"
+    r"recall(?:s|ed)? (?:of|over|affecting|on) |recall(?:s|ed)? \d[\d,]*)\b", re.I)
 CAUSE_RE = re.compile(
     REG_RE.pattern[:-3] + r"|downgrad\w*|upgrad\w*|guidance|outlook|earnings|results|"
     r"miss\w*|beat\w*|CEO|CFO|resign\w*|ousted|steps down|acquisi\w*|merger|deal|"
@@ -155,20 +159,35 @@ def describe_8k(items: str) -> tuple[str, bool]:
     return (", ".join(names) or "exhibits only"), any(c in RED_FLAG_ITEMS for c in codes)
 
 
+# commentary that names a story without reporting it: questions, listicles,
+# "what it means for you" pieces (NVDA 11/21: "…could reach your 401(k)" was
+# offered as the cause of a −14% session)
+COMMENTARY_RE = re.compile(
+    r"\?|\byour (?:401\(k\)|portfolio\b|money\b|retirement\b)|\bshould you\b|"
+    r"\bhere'?s (?:why|what)\b|\bwhat (?:it means|investors|shareholders|you)\b|"
+    r"\b(?:is it|time to) (?:buy|sell)\b|\bbuy the dip\b|\b\d+ reasons?\b|"
+    r"\b(?:sell|buy),? or\b|\bmillionaire\b|\bsmartest\b|\byear-old\b", re.I)
+
+
 def regulatory_scan(relevant: list[dict], since: str) -> list[dict]:
-    """Relevant headlines since `since` that mention a regulator, a probe, a
-    lawsuit, export rules, a restatement or similar."""
+    """Relevant headlines since `since` whose HEADLINE names a regulator, a
+    probe, a lawsuit, export rules, a restatement or similar. A match only in
+    the summary is not enough: NVDA 11/21 listed "Marvell Just Dropped 22% …
+    Sell, or Load Up?" because its blurb mentioned the SEC. Reports come
+    before commentary, then newest first."""
     out = []
     for h in relevant:
         d = ny_date(h.get("ts")).isoformat()
         if d < since[:10]:
             continue
-        text = f"{h.get('headline') or ''} {h.get('summary') or ''}"
-        m = sorted({x.group(0).lower() for x in REG_RE.finditer(text)})
+        title = h.get("headline") or ""
+        m = sorted({x.group(0).lower() for x in REG_RE.finditer(title)})
         if m:
-            out.append({"date": d, "headline": h.get("headline"), "source": h.get("source"),
-                        "terms": m, "url": h.get("url")})
-    return sorted(out, key=lambda x: x["date"], reverse=True)
+            out.append({"date": d, "headline": title, "source": h.get("source"),
+                        "terms": m, "url": h.get("url"),
+                        "commentary": bool(COMMENTARY_RE.search(title))})
+    out.sort(key=lambda x: x["date"], reverse=True)
+    return sorted(out, key=lambda x: x["commentary"])        # stable: keeps date order
 
 
 def move_cause(relevant: list[dict], filings: list[dict], session_date: str | None,
@@ -184,16 +203,39 @@ def move_cause(relevant: list[dict], filings: list[dict], session_date: str | No
     for h in relevant:
         hd = ny_date(h.get("ts")).isoformat()
         if lo <= hd <= hi:
-            text = f"{h.get('headline') or ''} {h.get('summary') or ''}"
+            title = h.get("headline") or ""
+            text = f"{title} {h.get('summary') or ''}"
             if CAUSE_RE.search(text):
-                found.append({"date": hd, "headline": h.get("headline"),
-                              "source": h.get("source"),
-                              "regulatory": bool(REG_RE.search(text))})
-    # regulatory/legal candidates first, then newest
-    found = sorted(found, key=lambda x: (0 if x["regulatory"] else 1, -int(x["date"].replace("-", ""))))
+                score = _cause_score(title, text, hd, session_date)
+                found.append({"date": hd, "headline": title, "source": h.get("source"),
+                              "regulatory": bool(REG_RE.search(title)),
+                              "commentary": bool(COMMENTARY_RE.search(title)),
+                              "_score": score})
+    # strongest candidate first: a reported event named in the headline, on
+    # the session's own date; commentary and summary-only matches last
+    found.sort(key=lambda x: (-x["_score"], -int(x["date"].replace("-", ""))))
+    for x in found:
+        x.pop("_score", None)
     fil = [f for f in filings if lo <= f.get("date", "") <= hi]
     return {"found": found[:6], "filings": fil, "session_date": session_date,
             "status": "candidates found" if (found or fil) else "cause not found"}
+
+
+def _cause_score(title: str, text: str, date: str, session_date: str) -> float:
+    """How strongly one headline reads as the reported cause of a session's
+    move. Not proof — an ordering of candidates for the reader."""
+    score = 0.0
+    if REG_RE.search(title):
+        score += 3.0                      # a regulator/probe/lawsuit in the headline
+    elif CAUSE_RE.search(title):
+        score += 2.0                      # another cause word in the headline
+    elif REG_RE.search(text):
+        score += 1.0                      # only the blurb mentions it
+    if date == session_date:
+        score += 1.0                      # reported that day
+    if COMMENTARY_RE.search(title):
+        score -= 2.5                      # a question / listicle / "what it means"
+    return score
 
 
 def _parse_ts(s: str | None) -> dt.datetime | None:

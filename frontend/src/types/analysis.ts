@@ -136,6 +136,11 @@ export interface OptionsSummary {
   atm_iv_pct?: number | null
   implied_move_pct?: number | null
   implied_move_dte?: number | null
+  expiry_date?: string | null
+  // set when the chain was read over a closed market: atm_iv_pct is restated
+  // to the last close, the broker's figure kept here
+  atm_iv_raw_pct?: number | null
+  atm_iv_note?: string | null
   as_of?: string
 }
 

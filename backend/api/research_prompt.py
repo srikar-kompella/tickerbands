@@ -246,6 +246,24 @@ def _data_blocks(a: dict) -> tuple[list[str], list[str], dict[str, Any]]:
     score = a.get("setup_score")
     if score:
         snap.append(f"- Setup Score: {score['score']}/100 — context, not a buy/sell input")
+    recent = a.get("recent_sessions") or []
+    if recent:
+        snap += ["", "Recent sessions — official closes, oldest first; SPY is the S&P 500 "
+                     "ETF; net of market = the move − beta × SPY's move"]
+        for x in recent:
+            d = dt.date.fromisoformat(x["date"])
+            if x["date"] == basis.get("session_date") and dm:
+                ln = f"- {d:%a} {x['date']}: the Day move row above"   # stated once
+            else:
+                ln = (f"- {d:%a} {x['date']}: close ${x['close']:,.2f}, "
+                      f"{signed(x['change_pct'], 2, '%')}")
+                if x.get("z") is not None:
+                    ln += f" ({signed(x['z'], 2, 'σ')})"
+            if x.get("spy_change_pct") is not None:
+                ln += f"; SPY {signed(x['spy_change_pct'], 2, '%')}"
+            if x.get("net_of_market_pct") is not None:
+                ln += f"; net of market {signed(x['net_of_market_pct'], 2, '%')}"
+            snap.append(ln)
 
     lag = bool(smeta.get("warning"))
     fund = rows(FUND_KEYS)
@@ -432,14 +450,17 @@ def _daily_from(a: dict) -> str | None:
     return day.isoformat() if w_from < day else None
 
 
-def _session_line(s: dict, basis: dict) -> str:
+def _session_line(s: dict, basis: dict, recent: set[str] | frozenset = frozenset()) -> str:
     """'2026-11-20 (Fri): −14.01%, −2.97σ' — or a pointer to the Day move row
-    when it is the snapshot's own session, so the figure is stated once."""
+    (the snapshot's own session) or to its Recent sessions row, so each
+    figure is stated once."""
     d = dt.date.fromisoformat(s["session_date"])
     head = f"{s['session_date']} ({d.strftime('%a')})"
     if s["session_date"] == basis.get("session_date"):
         return head + (": still trading — the Day move row in <snapshot>" if s.get("live")
                        else ": the Day move row in <snapshot>")
+    if s["session_date"] in recent:
+        return head + ": its row under Recent sessions in <snapshot>"
     pct = s.get("move_pct")
     return head + ": " + (signed(pct, 2, "%") + ", " if pct is not None else "") \
         + signed(s["z"], 2, "σ")
@@ -673,6 +694,10 @@ def build_claude_prompt(a: dict) -> str:
         "Say what you are least certain about. Tie each claim to a number and say "
         "why it matters.",
     ]
+    if a.get("recent_sessions"):
+        step4.insert(2, "Use the net-of-market column in <snapshot> Recent sessions to "
+                        "say how much of each large move was the company's own and how "
+                        "much the market's.")
     if fx["has_lens"]:
         step4.append("Weigh the value-lens rows: cite the metrics that drive your view "
                      "and the ones that argue against it; where the lens and the price "
@@ -733,7 +758,10 @@ def build_claude_prompt(a: dict) -> str:
         "something only the user knows, make a reasonable assumption, state it in "
         "one line in the note, and carry on. Use what the user has already said in "
         "this conversation or in instructions you were given, but do not wait for "
-        "more.",
+        "more. If your working folder holds the user's own notes or rules (for "
+        "example a CLAUDE.md or a notes file), read them first: they count as "
+        "instructions you were given, and their rules and triggers apply in steps 3 "
+        "and 5.",
         "",
         f"1. Research first, before any analysis. Window: {w_from} → {w_to}{span} — "
         "since the last report on this ticker or the last 5 trading days, whichever "
@@ -752,7 +780,10 @@ def build_claude_prompt(a: dict) -> str:
         "differs, say so with the link.",
         "   Prefer primary sources (filings, releases, the company's own pages) over "
         "summaries of them. Log every search that found nothing — \"searched X, "
-        "nothing found\" is evidence too.",
+        "nothing found\" is evidence too."
+        + (" Daily closes and SPY's move for the last sessions are in <snapshot> "
+           "(Recent sessions) — use those rows rather than searching for them."
+           if a.get("recent_sessions") else ""),
         "   If you have no web search tool in this session, say so in the first "
         "line of your reply, do not invent sources, and set research_status: "
         "\"failed\" — the snapshot's feed rows are leads, and a note built on them "
@@ -762,7 +793,8 @@ def build_claude_prompt(a: dict) -> str:
     if to_explain:
         lines += [
             "   Sessions in this window that moved 2σ or more and still need a cause:",
-            *[f"   - {_session_line(s, basis)}" for s in to_explain],
+            *[f"   - {_session_line(s, basis, {x['date'] for x in a.get('recent_sessions') or []})}"
+              for s in to_explain],
             "   A move that size usually has a reported cause, so \"no material news\" "
             "is not an available conclusion for this window. For each session listed, "
             "state the reported cause with two independent sources, or write \"cause "

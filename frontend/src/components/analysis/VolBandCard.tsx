@@ -86,6 +86,9 @@ export function VolBandCard({ a, glossary }: {
 
   const cov = a.band_coverage
   const opts = a.options
+  // implied move ÷ (band × √sessions to expiry) — the report's own ratio
+  const ivbRaw = a.report_view?.fields?.implied_vs_band?.value
+  const ivb = typeof ivbRaw === 'number' ? ivbRaw : null
 
   return (
     <SectionShell title="Price · 30 days + next session's range"
@@ -127,10 +130,11 @@ export function VolBandCard({ a, glossary }: {
           <span className="flex items-center gap-1">
             <span className="tnum">
               Options market implies <span className="font-semibold text-text">±{opts.implied_move_pct}%</span>
-              {' '}through {opts.implied_move_dte}d —{' '}
-              {opts.implied_move_pct > a.band.half_width_pct * 1.6
+              {' '}{(a.report_view?.fields?.implied_move?.label ?? '')
+                .replace(/^Implied move \((.*)\)$/, 'over $1') || `through ${opts.implied_move_dte}d`} —{' '}
+              {(ivb ?? opts.implied_move_pct / a.band.half_width_pct) > 1.6
                 ? 'pricing an event well beyond recent vol'
-                : opts.implied_move_pct > a.band.half_width_pct
+                : (ivb ?? opts.implied_move_pct / a.band.half_width_pct) > 1
                   ? 'a bit above recent realized vol'
                   : 'in line with recent realized vol'}
             </span>

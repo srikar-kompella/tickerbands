@@ -13,15 +13,64 @@ from __future__ import annotations
 
 import datetime as dt
 import html
+import re
 from typing import Any
 
 from analysis import news_relevance, research_quality
+
+_LIST_ITEM = re.compile(r"^( *)([-*+]|\d+[.)])\s+")
+_FENCE = re.compile(r"^\s*(```|~~~)")
+
+
+def normalize_md(text: str) -> str:
+    """Make research notes render the way their authors (and the app's own
+    CommonMark view) see them. Python-Markdown needs a blank line before a
+    list that follows a paragraph, and 4 spaces per nesting level; sessions
+    write CommonMark — a list straight under a sentence, nested by 2 spaces.
+    NVDA 11/22: "- Q4 FY26: 34.9 … - Q1 + Q2 …" ran together in the export.
+    Code fences and tables are left alone."""
+    out: list[str] = []
+    in_fence = False
+    stack: list[int] = []          # source indents of the open list levels
+    prev = ""
+    for line in (text or "").split("\n"):
+        if _FENCE.match(line):
+            in_fence = not in_fence
+            out.append(line)
+            prev, stack = line, []
+            continue
+        m = None if in_fence else _LIST_ITEM.match(line)
+        if m:
+            ind = len(m.group(1))
+            prev_is_item = bool(_LIST_ITEM.match(prev)) or (prev.startswith(" ") and stack)
+            if not stack or not prev.strip():
+                stack = [ind]
+            else:
+                while stack and ind < stack[-1]:
+                    stack.pop()
+                if not stack or ind > stack[-1]:
+                    stack.append(ind)
+            if prev.strip() and not prev_is_item and not prev.lstrip().startswith("|"):
+                out.append("")             # a list straight under a paragraph
+            level = len(stack) - 1
+            line = " " * (4 * level) + line[ind:]
+        elif not in_fence and not line.strip():
+            stack = []
+        elif not in_fence and stack and line.startswith(" "):
+            # continuation of a list item: re-indent to the item's level
+            line = " " * (4 * len(stack)) + line.lstrip()
+        else:
+            stack = [] if not in_fence and not line.startswith(" ") else stack
+        out.append(line)
+        prev = line
+    return "\n".join(out)
+
 
 try:
     import markdown as _md
 
     def md(text: str) -> str:
-        return _md.markdown(text or "", extensions=["tables", "sane_lists"])
+        return _md.markdown(normalize_md(text or ""), extensions=["tables", "sane_lists"])
 except ImportError:  # dependency missing → readable fallback, never a crash
     def md(text: str) -> str:
         return f"<pre style='white-space:pre-wrap'>{html.escape(text or '')}</pre>"

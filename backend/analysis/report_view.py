@@ -20,10 +20,11 @@ lens rule is unchanged. Pure functions; `now` is injectable.
 from __future__ import annotations
 
 import datetime as dt
+import math
 from typing import Any
 
 from analysis import market_clock as mc
-from analysis import research_quality
+from analysis import options_iv, research_quality
 from analysis.fundamentals_ttm import DIVERGENCE_LIMIT, ttm_sum
 from analysis.news_relevance import MIN_HEADLINES_FOR_SENTIMENT, MIN_TAGGED_SOCIAL, signed
 
@@ -514,15 +515,30 @@ def build(inp: dict[str, Any]) -> dict[str, Any]:
         add(_field("put_call", "Put/Call (session volume)", o.get("put_call_ratio"),
                    ratio(o.get("put_call_ratio"), 2, ""), "broker option chain", o_asof,
                    "session volume", "put volume ÷ call volume", warnings=o_warn))
+        iv_note = o.get("atm_iv_note")
         add(_field("atm_iv", "ATM implied vol", o.get("atm_iv_pct"), pct(o.get("atm_iv_pct"), 1),
-                   "broker option chain", o_asof, "nearest expiry ≤45d", "avg of ATM call/put IV"))
+                   "broker option chain", o_asof,
+                   "nearest expiry ≤45d" + ("; restated to the last close" if iv_note else ""),
+                   "avg of ATM call/put IV" + (" × √(time to expiry now ÷ at the close)"
+                                               if iv_note else ""),
+                   warnings=[iv_note] if iv_note else []))
         im = o.get("implied_move_pct")
-        add(_field("implied_move", f"Implied move ({o.get('implied_move_dte', '—')}d)", im,
+        n_sess = options_iv.sessions_to_expiry(o, b)
+        exp_c = options_iv.expiry_close(o)
+        span = (f"{n_sess} session{'s' if n_sess != 1 else ''}" if n_sess
+                else f"{o.get('implied_move_dte', '—')}d")
+        add(_field("implied_move", f"Implied move ({span})", im,
                    f"±{im:.2f}%" if im is not None else "—", "broker option chain", o_asof,
-                   "ATM straddle ÷ underlying", "(ATM call + ATM put) ÷ spot"))
-        ivb = (im / band["half_width_pct"]) if im is not None and band.get("half_width_pct") else None
+                   "ATM straddle ÷ underlying"
+                   + (f", expiry {exp_c:%a %b} {exp_c.day}" if exp_c else ""),
+                   "(ATM call + ATM put) ÷ spot"))
+        # the band is one session wide; a straddle over n sessions is compared
+        # with the band widened by √n
+        k = math.sqrt(n_sess) if n_sess and n_sess > 1 else 1.0
+        ivb = (im / (band["half_width_pct"] * k)) if im is not None and band.get("half_width_pct") else None
         add(_field("implied_vs_band", "Implied move vs our band", ivb, ratio(ivb, 2, "×"),
-                   "derived", o_asof, "", "implied move ÷ band half-width"))
+                   "derived", o_asof, f"band × √{n_sess} sessions" if k > 1 else "",
+                   "implied move ÷ (band half-width × √sessions to expiry)"))
 
     # news sentiment (with sample size; withheld below the minimum)
     n = inp.get("news") or {}

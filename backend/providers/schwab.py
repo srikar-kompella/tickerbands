@@ -296,8 +296,8 @@ def fetch_options_summary(symbol: str) -> dict[str, Any]:
         expiry at the same strike distance, which is what "implied move" means.
         """
         total_vol = 0
-        best: tuple | None = None  # (dist, mark, iv, dte)
-        for _exp, strikes in (exp_map or {}).items():
+        best: tuple | None = None  # (dist, mark, iv, dte, expiry date)
+        for exp_key, strikes in (exp_map or {}).items():
             for _strike, contracts in strikes.items():
                 for c in contracts:
                     total_vol += int(c.get("totalVolume") or 0)
@@ -308,7 +308,8 @@ def fetch_options_summary(symbol: str) -> dict[str, Any]:
                     if underlying and 0 < dte <= 45 and mark > 0:
                         dist = abs(strike - underlying)
                         if best is None or (dist, dte) < (best[0], best[3]):
-                            best = (dist, mark, iv, dte)
+                            # map keys read "2026-11-23:1" (date:days)
+                            best = (dist, mark, iv, dte, str(exp_key).split(":")[0])
         return total_vol, best
 
     call_vol, atm_call = scan(data.get("callExpDateMap"))
@@ -318,7 +319,7 @@ def fetch_options_summary(symbol: str) -> dict[str, Any]:
         return {"available": False}
 
     put_call = (put_vol / call_vol) if call_vol > 0 else None
-    implied_move_pct = atm_iv = expiry_dte = None
+    implied_move_pct = atm_iv = expiry_dte = expiry_date = None
     if atm_call and atm_put and underlying:
         # ATM straddle price ≈ what the options market charges for the move
         # through expiry — expressed as ±% of spot. Honest peer for our band.
@@ -326,6 +327,7 @@ def fetch_options_summary(symbol: str) -> dict[str, Any]:
         implied_move_pct = round(straddle / underlying * 100, 2)
         atm_iv = round((atm_call[2] + atm_put[2]) / 2, 1)
         expiry_dte = atm_call[3]
+        expiry_date = atm_call[4] or None
 
     return {
         "available": True,
@@ -335,6 +337,7 @@ def fetch_options_summary(symbol: str) -> dict[str, Any]:
         "atm_iv_pct": atm_iv,               # annualized implied vol, %
         "implied_move_pct": implied_move_pct,  # ±% through nearest expiry
         "implied_move_dte": expiry_dte,
+        "expiry_date": expiry_date,         # the ATM expiry, YYYY-MM-DD
         "as_of": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
     }
 

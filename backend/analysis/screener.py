@@ -21,11 +21,13 @@ as last cached — it never fetches.
 from __future__ import annotations
 
 import json
+import math
 import time
 from typing import Any, Callable
 
 import config
-from analysis import market_clock, news_relevance, price_basis, research_quality, vol_bands
+from analysis import (market_clock, news_relevance, options_iv, price_basis,
+                      research_quality, vol_bands)
 from analysis.report_view import SHARE_CLASSES
 from cache.store import _get_row, get_or_fetch
 from db import connect
@@ -208,7 +210,11 @@ def screen_symbol(symbol: str, providers: dict, force: bool = False,
     if options and options.get("available") and options.get("implied_move_pct") is not None:
         row["implied_move_pct"] = options["implied_move_pct"]
         if row["band_half_pct"]:
-            row["implied_vs_band"] = round(options["implied_move_pct"] / row["band_half_pct"], 2)
+            # a straddle over n sessions vs a one-session band widened by √n
+            # (same rule as the report's implied_vs_band)
+            n = options_iv.sessions_to_expiry(options, basis) or 1
+            row["implied_vs_band"] = round(
+                options["implied_move_pct"] / (row["band_half_pct"] * math.sqrt(n)), 2)
 
     conn = connect()
     try:
