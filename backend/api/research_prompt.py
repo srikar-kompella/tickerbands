@@ -767,7 +767,13 @@ def build_claude_prompt(a: dict) -> str:
         "more. If your working folder holds the user's own notes or rules (for "
         "example a CLAUDE.md or a notes file), read them first: they count as "
         "instructions you were given, and their rules and triggers apply in steps 3 "
-        "and 5.",
+        "and 5. Notes like these drift, so read them this way: where two versions "
+        "of a rule conflict, the most recent dated one wins and the older one is "
+        "named as replaced; a rule too vague to check against a number, a filing "
+        "or an event is applied in the narrowest reading that is checkable, and you "
+        "say which reading you used; positions, weights and prices come from "
+        "<snapshot>, not from the notes, which may be out of date. Two sessions "
+        "given the same notes should reach the same verdict on every rule.",
         "",
         f"1. Research first, before any analysis. Window: {w_from} → {w_to}{span} — "
         "since the last report on this ticker or the last 5 trading days, whichever "

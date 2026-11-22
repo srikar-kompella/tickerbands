@@ -228,3 +228,14 @@ def test_step1_offers_parallel_subagents_and_the_filing_index_json(tmp_db, monke
     if a.get("sec_cik"):
         assert f"https://data.sec.gov/submissions/CIK{a['sec_cik']}.json" in step1
     assert "stay under 1,100" in p
+
+
+def test_user_notes_conflicts_vagueness_and_stale_facts_have_one_reading(tmp_db, monkeypatch):
+    """Two runs of one prompt with the same notes file disagreed (hold vs trim):
+    one applied a vague old rule, the other a newer narrow one."""
+    p = _prompt(_analyze(monkeypatch, rf.nvda_providers(), rf.NVDA_NOW, "NVDA"))
+    pre = p[p.index("## Your task, in order"):p.index("1. Research first")]
+    assert "the most recent dated one wins and the older one is named as replaced" in pre
+    assert "applied in the narrowest reading that is checkable" in pre
+    assert ("positions, weights and prices come from <snapshot>, not from the notes, "
+            "which may be out of date") in pre
