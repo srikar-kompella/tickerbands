@@ -2,9 +2,9 @@
 api/research_prompt.py — the research-discussion prompt, version 5.
 
 The "Ask Claude" button copies this text into any agent session; the session
-researches, talks with the user, and writes one markdown file the watcher
-ingests (discussions_svc/parser.py). Contract and field meanings:
-docs/RESEARCH_PROMPT.md.
+researches, analyzes and writes one markdown file the watcher ingests
+(discussions_svc/parser.py) in one run, without asking the user anything.
+Contract and field meanings: docs/RESEARCH_PROMPT.md.
 
 Shape (in this order — data first, instructions after it, output last):
   1. role + the two core rules, each with its reason
@@ -12,12 +12,11 @@ Shape (in this order — data first, instructions after it, output last):
   3. <data_caveats> (each caveat once, with a code), <snapshot> (compact rows
      from report_view, codes instead of repeated warnings), <prior_notes>
      (each with STATUS: OK / STALE / INVALID / SUPERSEDED)
-  4. "Your task, in order" — eight numbered steps; the session asks for the
-     user's plan, does steps 1–2 in the same turn, then waits — the file is
-     written only after the user has answered
+  4. "Your task, in order" — eight numbered steps, run straight through with
+     no question to the user and no pause; where the session lacks something
+     only the user knows, it states its assumption and carries on
   5. output contract: body headings, frontmatter template, three filled
-     examples (owned with a plan / not owned without one / research failed
-     for want of a search tool)
+     examples (owned / not owned / research failed for want of a search tool)
 
 What v5 fixes (Nov 2026): a session checked only same-day headlines and wrote
 "no material news" the day after a ≥2σ session; a hold was built on that; an
@@ -32,9 +31,14 @@ and never mention the drop.
 
 Hard rules that stay: the app never predicts short-term direction, never
 computes buy/sell, and the value lens never feeds the Setup Score. The app
-does not take the user's position plan as an input — the prompt asks the
-session to ask. What a session records in its own file (plan_triggers_*,
-proposed_triggers) is local research metadata, shown back, never computed on.
+does not take the user's position plan as an input, and the session does not
+ask for one: it sets its own checkable triggers (step 3) and checks them. What
+a session records in its own file (proposed_triggers, plan_triggers_*) is
+local research metadata, shown back, never computed on.
+
+No questions (Nov 2026): v5 first opened by asking the user for a plan and
+stopping; a session that stops for an answer delivers nothing, so the prompt
+now forbids questions and pauses outright.
 
 Guardrails against invented research: research_status is defined in the
 prompt; a session with no web search tool says so and writes "failed"; the
@@ -61,7 +65,7 @@ from discussions_svc.parser import list_discussions
 PROMPT_VERSION = 5
 PRIOR_NOTES_SHOWN = 5
 BODY_HEADINGS = ("## TL;DR", "## What happened", "## Evidence & sources",
-                 "## Your plan, checked", "## What the numbers say",
+                 "## Triggers, checked", "## What the numbers say",
                  "## Your options", "## Stance & what would change it",
                  "## Unknowns")
 
@@ -279,7 +283,7 @@ def _data_blocks(a: dict) -> tuple[list[str], list[str], dict[str, Any]]:
     snap.append(f"- {FEED_LEAD}: headlines — {hd.get('display', '0 relevant')} "
                 f"({hd.get('basis') or 'window unknown'})")
     for h in (hd.get("items") or [])[:6]:
-        when = dt.datetime.fromtimestamp(h["ts"]).strftime("%b %d") if h.get("ts") else "?"
+        when = news_relevance.ny_date(h["ts"]).strftime("%b %d") if h.get("ts") else "?"
         snap.append(f"  - {when}: {h['headline']} ({h.get('source')})")
 
     pos = a.get("position") or {}
@@ -370,7 +374,8 @@ def _prior_notes(sym: str, a: dict) -> tuple[list[str], dict[str, Any]]:
                   f"stance unreadable ('{unread['stance']}')" if unread.get("stance") else
                   "no stance")
         if research_quality.stance_label(d) == "AVOID":
-            stance += " (avoid — not owned)"
+            stance += (" (avoid — not owned)" if research_quality.stance_owned(d) == "no"
+                       else " (avoid — ownership unknown when written)")
         lines.append(f"- {str(d.get('created_ts'))[:19]} · {stance} · "
                      f"\"{d.get('summary') or '(no summary)'}\"{tags} · STATUS: {st['status']}"
                      + (f" — {st['reason']}" if st["reason"] else ""))
@@ -448,7 +453,7 @@ def frontmatter_template(sym: str, created_ts: str, context_hash: str,
     quotes so the result is strict YAML whatever the text contains;
     `created_ts` and `context_hash` are written by the app and stay as given."""
     nw = news_window or {}
-    own = {True: '"yes"', False: '"no"'}.get(owned, '"<yes|no>"')
+    own = {True: ['owned: "yes"'], False: ['owned: "no"']}.get(owned, [])
     return "\n".join([
         "---",
         f'ticker: "{sym}"',
@@ -463,10 +468,10 @@ def frontmatter_template(sym: str, created_ts: str, context_hash: str,
         'move_cause: "<found|not_found|na>"',
         'sources_count: "<number of distinct sources in the evidence table>"',
         'price_used: "<the price your arithmetic used, as a plain number>"',
-        f"owned: {own}",
-        'plan_triggers_met: ["<a trigger of the user\'s that is met, with the evidence>"]',
-        'plan_triggers_unknown: ["<a trigger you could not check>"]',
-        'proposed_triggers: ["<checkable trigger>", "<checkable trigger>"]',
+        *own,
+        'proposed_triggers: ["<checkable trigger from step 3>", "<checkable trigger from step 3>"]',
+        'plan_triggers_met: ["<a step 3 trigger that is met, with the evidence>"]',
+        'plan_triggers_unknown: ["<a step 3 trigger you could not check>"]',
         'decision: "<buy|sell|trim|hold|pass>"',
         'stance: "<buy|sell|hold|trim|watch>"',
         'stance_horizon: "<for example 3-6mo>"',
@@ -485,15 +490,15 @@ def frontmatter_template(sym: str, created_ts: str, context_hash: str,
 
 # Filled examples. The tickers, companies, dates and every number are
 # invented (no real security, no real holdings) — they show the form, not a
-# view. The first is an owned name whose user gave a plan; the second is a
-# name the user does not own and has no plan for, with the negative stance;
+# view. The first is an owned name with one of its triggers met; the second is
+# a name the user does not own, with the negative stance;
 # the third (EXAMPLE_FAILED, below) is a session that could not research.
 EXAMPLE = """---
 ticker: "ZZZT"
 created_ts: 2031-02-03T10:15:00
 prompt_version: 5
-summary: "Fictional example — your leverage trigger is MET; the recall is the reported cause (two sources); hold with dated conditions"
-tags: ["product-recall", "plan-check"]
+summary: "Fictional example — the leverage trigger is MET; the recall is the reported cause (two sources); hold with dated conditions"
+tags: ["product-recall", "trigger-check"]
 research_status: "complete"
 news_window: "2031-01-27..2031-02-03"
 news_view: "bearish"
@@ -502,12 +507,13 @@ move_cause: "found"
 sources_count: 7
 price_used: 12.34
 owned: "yes"
+proposed_triggers: ["trim if net debt is above 2.5x EBITDA", "exit if the recall cost is above $5M", "add if the Q1 release shows net debt back under 2.0x EBITDA"]
 plan_triggers_met: ["net debt above 2.5x EBITDA — 2.8x in the Q4 release (2031-01-29)"]
 plan_triggers_unknown: ["recall cost above $5M — not disclosed yet"]
 stance: "hold"
 stance_horizon: "3-6mo"
 stance_confidence: "medium"
-stance_note: "Recall looks sized and funded from cash; the leverage trigger is met, so the trim rule is the user's to weigh"
+stance_note: "Leverage trigger met, but I hold rather than trim: the Q4 release guides net debt back under 2.5x by Q1 and the recall is funded from cash; a miss in the Q1 release turns this into a trim"
 upgrade_if: ["by 2031-05-05: the Q1 release shows net debt back under 2.5x EBITDA"]
 downgrade_if: ["by 2031-03-15: an 8-K or the 10-K puts the recall cost above $5M", "any restatement of FY2030 results"]
 review_by: "2031-05-06"
@@ -515,13 +521,13 @@ supersedes: ["2031-01-28T09:00:00"]
 context_hash: sha256:0000fictional0000
 ---
 ## TL;DR
-Your own trigger is MET: net debt rose to 2.8x EBITDA, above your 2.5x line (Q4 release, 2031-01-29). The 2031-01-30 drop has a reported cause — a recall of two product lines (8-K item 8.01; Example Wire). I hold with dated conditions; the recall cost is not verified yet."""
+The leverage trigger is MET: net debt rose to 2.8x EBITDA, above the 2.5x trim line (Q4 release, 2031-01-29). The 2031-01-30 drop has a reported cause — a recall of two product lines (8-K item 8.01; Example Wire). I hold with dated conditions; the recall cost is not verified yet."""
 
 EXAMPLE_NOT_OWNED = """---
 ticker: "ZZQX"
 created_ts: 2031-03-10T14:40:00
 prompt_version: 5
-summary: "Fictional example — not owned and no plan yet; avoid at this price, with three entry triggers proposed"
+summary: "Fictional example — not owned; avoid at this price, with three entry triggers set and none met"
 tags: ["entry-criteria", "refinancing"]
 research_status: "complete"
 news_window: "2031-03-03..2031-03-10"
@@ -531,7 +537,7 @@ move_cause: "na"
 sources_count: 5
 price_used: 48.10
 owned: "no"
-proposed_triggers: ["price at or below $40.00, about 12x trailing free cash flow", "the 2032 notes are refinanced below 7%", "two straight quarters of revenue growth above 5%"]
+proposed_triggers: ["buy if valuation falls to 12x trailing free cash flow or less (about $40.00 a share)", "buy if the 2032 notes are refinanced below 7%", "off the list if revenue shrinks for two straight quarters"]
 stance: "sell"
 stance_horizon: "6-12mo"
 stance_confidence: "low"
@@ -540,7 +546,7 @@ review_by: "2031-06-10"
 context_hash: sha256:1111fictional1111
 ---
 ## TL;DR
-You do not own this and I would not buy it at $48.10 (stance: sell, which for a name you do not own means avoid). No session in the window moved 2σ or more, so there is no move to explain. You gave no plan, so I propose three entry triggers for you to accept or edit."""
+You do not own this and I would not buy it at $48.10 (stance: sell, which for a name you do not own means avoid). No session in the window moved 2σ or more, so there is no move to explain. I set three entry triggers that would change this; none is met yet."""
 
 # What a session with no web search tool writes: research_status "failed",
 # the stance forced to watch, stance_note starting "research incomplete".
@@ -560,6 +566,8 @@ move_cause: "na"
 sources_count: 0
 price_used: 27.60
 owned: "no"
+proposed_triggers: ["buy if price to free cash flow is at or below 15x on the latest filed statements", "off the list if the completed searches find a restatement or a subpoena"]
+plan_triggers_unknown: ["both triggers — not checked, the step 1 searches were not run"]
 stance: "watch"
 stance_horizon: "1-3mo"
 stance_confidence: "low"
@@ -589,13 +597,11 @@ def build_claude_prompt(a: dict) -> str:
     path = home_path(os.path.join(config.DISCUSSIONS_DIR, sym, f"{now}.md"))
     release = fx["release"]
 
-    # what the session asks for (step 3), the options rows (step 5) and the
-    # stance words (step 6) all follow ownership
-    ask_owned = ("their thesis for this position, their exit and add triggers, any "
-                 "price targets")
-    ask_not_owned = ("why they are looking at it, their entry criteria — the price, "
-                     "valuation or event that would make them buy — the size they "
-                     "would consider, and what would take it off their list")
+    # the triggers the session sets (step 3), the options rows (step 5) and
+    # the stance words (step 6) all follow ownership
+    trig_owned = "exit, trim and add triggers for a holder"
+    trig_not_owned = ("entry triggers that would make it a buy, and what would take "
+                      "it off the list")
     stance_owned = ("hold, buy (= add), trim or sell — watch only when research is "
                     "incomplete")
     stance_not_owned = ("buy, watch or sell. For a name the user does not own, sell "
@@ -607,19 +613,31 @@ def build_claude_prompt(a: dict) -> str:
                     f"The user holds {fx['linked'].get('symbol')}, another share class of "
                     "the same company — treat it as owned, so the rows are Hold / Add / "
                     "Trim / Exit.")
-        ask = ask_owned
-        stance_words = f"The user owns this, so the stance is {stance_owned}."
+        trig = trig_owned
+        stance_words = (f"The user owns this, so the stance is {stance_owned}."
+                        if fx["owned"] else
+                        f"The user holds {fx['linked'].get('symbol')}, another share "
+                        f"class — treat it as owned, so the stance is {stance_owned}.")
     elif fx["owned"] is False:
         own_line = "The user does not own this, so the rows are Buy / Watch / Pass."
-        ask = ask_not_owned
+        trig = trig_not_owned
         stance_words = f"The user does not own this, so the stance is {stance_not_owned}."
     else:
-        own_line = ("The app has no position data, so ask the user whether they own it "
-                    "(with the plan question). Owned: Hold / Add / Trim / Exit. Not "
-                    "owned: Buy / Watch / Pass.")
-        ask = (f"whether they own it; if they do: {ask_owned}; if they do not: "
-               f"{ask_not_owned}")
-        stance_words = f"Owned: {stance_owned}. Not owned: {stance_not_owned}."
+        own_line = ("The app has no position data. Do not ask whether the user owns "
+                    "it: unless they already said so (in this conversation or in instructions "
+                    "you were given), give both "
+                    "sets of rows — if owned: Hold / Add / Trim / Exit; if not owned: "
+                    "Buy / Watch / Pass.")
+        trig = ("since ownership is unknown, cover both cases: at least one exit or "
+                "trim trigger for a holder and at least one entry trigger for a buyer")
+        stance_words = ("Ownership is unknown, so unless the user already said (in this "
+                        "conversation or in instructions you were given), write the stance for someone deciding whether to "
+                        "own it at this price: buy, watch or sell, where sell means avoid "
+                        "(you would not own it at this price and risk; the app tracks it "
+                        "as a call that the stock will lag the market). Leave the `owned` "
+                        "key out. If the user did say they own it, the stance is "
+                        f"{stance_owned}, with `owned: \"yes\"`; if they said they do "
+                        "not, add `owned: \"no\"`.")
 
     # every ≥2σ session in the window: the ones this session must explain,
     # and the ones a sound earlier note already explains
@@ -648,7 +666,7 @@ def build_claude_prompt(a: dict) -> str:
         "4. Analyze.",
         ("For each 2σ session listed in step 1, give the competing explanations "
          "and say which the evidence favors." if to_explain else
-         "No session in the window is waiting for a cause, so no move needs a "
+         "No session in the window still needs a cause, so no move needs a "
          "story. Explain a move only where your research found material news "
          "behind it, giving the competing explanations and which the evidence "
          "favors; where it found none, say the move was ordinary."),
@@ -708,12 +726,14 @@ def build_claude_prompt(a: dict) -> str:
         "",
         "## Your task, in order",
         "",
-        "Open the conversation by asking the user for their plan (step 3 lists what "
-        "to ask) unless they have already given it. In that same turn do steps 1 "
-        "and 2, which do not depend on the answer, and report what you found; then "
-        "stop and wait for the reply. Steps 3 to 8 come after it: write the file "
-        "only once the user has answered, has said they have no plan, or has asked "
-        "you to go ahead without one.",
+        "Run all eight steps now, start to finish, in this one turn, and end by "
+        "writing the file. Do not ask the user anything and do not stop for a reply "
+        "— not about their plan, their position, their account rules or how to "
+        "proceed: a session that stops to ask delivers nothing. Where you lack "
+        "something only the user knows, make a reasonable assumption, state it in "
+        "one line in the note, and carry on. Use what the user has already said in "
+        "this conversation or in instructions you were given, but do not wait for "
+        "more.",
         "",
         f"1. Research first, before any analysis. Window: {w_from} → {w_to}{span} — "
         "since the last report on this ticker or the last 5 trading days, whichever "
@@ -736,7 +756,8 @@ def build_claude_prompt(a: dict) -> str:
         "   If you have no web search tool in this session, say so in the first "
         "line of your reply, do not invent sources, and set research_status: "
         "\"failed\" — the snapshot's feed rows are leads, and a note built on them "
-        "alone would pass for a news check that did not happen.",
+        "alone would pass for a news check that did not happen. Then carry on "
+        "through step 8: the file is still written.",
     ]
     if to_explain:
         lines += [
@@ -769,18 +790,24 @@ def build_claude_prompt(a: dict) -> str:
         "only the snapshot beta (60 daily returns vs SPY): betas on other sites use "
         "other windows and are not comparable. Say whether each margin or ratio is "
         "TTM or latest-quarter, and whether a dividend yield is forward or trailing.",
-        "3. Ask for and check the user's plan. The app does not store it, so the "
-        "user is the only source. Ask once, at the start, unless they already gave "
-        f"it: {ask}, and account rules that constrain a trade (for example a "
-        "position-size limit). Check each trigger and mark it "
-        "MET, NOT MET or UNKNOWN, with the evidence. If the user has no plan, "
-        "propose 2–3 checkable triggers for them to accept or edit (frontmatter "
-        "`proposed_triggers`). Any MET trigger goes in the first line of the TL;DR.",
+        "3. Set and check the triggers. The app does not store the user's plan and "
+        f"you do not ask for it: set 2–4 checkable triggers yourself ({trig}), "
+        "each a number (a valuation, leverage or growth level), a filing or an "
+        "event, never a price direction "
+        "(frontmatter `proposed_triggers`). If the user already stated triggers in "
+        "this conversation or in instructions you were given, check those as well. "
+        "Mark each trigger MET, NOT MET or UNKNOWN, with the evidence (MET → "
+        "`plan_triggers_met`, UNKNOWN → `plan_triggers_unknown`). Any MET trigger "
+        "goes in the first line of the TL;DR, and the stance follows it or "
+        "stance_note says why not.",
         " ".join(step4),
         f"5. Lay out the options in a table. {own_line} For each row: shares and "
         "dollars at the report price where a trade is involved, what must be true "
-        "for it to be the right choice, the main risk, and whether an account rule "
-        "the user stated blocks it.",
+        "for it to be the right choice, the main risk, and — only where the user's "
+        "account rules are already available to you (this conversation or "
+        "instructions you were given) — whether one blocks it; do not ask for them. "
+        "Where the size of a trade is not known, use an illustrative size (for "
+        "example 10 shares), label it illustrative, and do not ask for one.",
         "6. Give one stance: your reasoned multi-month judgment from the whole "
         "picture — valuation, thesis, risk, news — not a short-term direction call. "
         f"{stance_words} If research_status is partial or failed, the stance is "
@@ -791,13 +818,13 @@ def build_claude_prompt(a: dict) -> str:
         "and the app flags it that way. Every stance carries stance_confidence and "
         "a review_by date; the app marks it expired after that date and shows the "
         "latest stance beside the ticker until a newer discussion replaces it.",
-        "   If the user states a decision during the conversation (buy / sell / "
-        "trim / hold / pass), record it in `decision` — the app captures the price "
-        "at that moment and tracks how the call aged. Record only what they "
-        "stated; never invent one.",
+        "   If the user has already stated a decision in this conversation (buy / "
+        "sell / trim / hold / pass), record it in `decision` — the app captures the "
+        "price at that moment and tracks how the call aged. Record only what they "
+        "stated; never invent one, and do not ask for one.",
         "7. Check your work before writing:",
-        "   - the user has answered the plan question, or told you to go ahead "
-        "without a plan;",
+        "   - you asked the user nothing and stopped nowhere, and every assumption "
+        "you made in place of asking is stated in the note;",
         f"   - the price you used is the report price ({fx['price_display']});",
         f"   - the whole window {w_from} → {w_to} is covered{covered} and each minimum "
         "search is in the evidence table;",
@@ -807,7 +834,9 @@ def build_claude_prompt(a: dict) -> str:
         "   - nothing from an INVALID or SUPERSEDED note is carried forward;",
         "   - every text value in the frontmatter is in double quotes;",
         "   - no <…> placeholder is left, and optional keys you did not use are deleted.",
-        "8. Write the file, following the output contract.",
+        "8. Write the file, following the output contract. Then end your reply with "
+        "the TL;DR, the stance and the file path, and stop — no closing question and "
+        "no offer of further work.",
         "",
         "## Output contract",
         "",
@@ -815,8 +844,9 @@ def build_claude_prompt(a: dict) -> str:
         "so it is correct from any working folder; a repo checkout is the wrong "
         "place). Create a new file for every discussion and leave earlier "
         "discussion files as they are — each conversation is its own timeline "
-        "entry. If you have no filesystem (claude.ai), output the complete file in "
-        "one code block for the user to save at that path.",
+        "entry. If you cannot write to that path (no filesystem, as on claude.ai, or "
+        "the write fails), output the complete file in one code block for the user "
+        "to save at that path — do not ask where to put it.",
         "",
         "The file holds your analysis only: the app already displays the snapshot, "
         "so leave this prompt, the tagged blocks and raw JSON out of it. Aim for "
@@ -829,14 +859,15 @@ def build_claude_prompt(a: dict) -> str:
         "words) that supports the claim. List only links you actually opened in "
         "this session; a claim you could not open a source for is \"not verified\". "
         "Add a row for each search that found nothing (\"searched X, nothing found\").",
-        "4. `## Your plan, checked` — each trigger as MET / NOT MET / UNKNOWN with "
-        "the evidence, or the triggers you propose.",
+        "4. `## Triggers, checked` — each trigger from step 3 as MET / NOT MET / "
+        "UNKNOWN with the evidence.",
         "5. `## What the numbers say` — the reasoning core: reconciled figures and "
         "what they mean.",
         "6. `## Your options` — the table from step 5.",
         "7. `## Stance & what would change it` — the stance, your confidence, the "
         "upgrade and downgrade conditions, the review date.",
-        "8. `## Unknowns` — what you could not verify and what would settle it.",
+        "8. `## Unknowns` — what you could not verify and what would settle it, and "
+        "each assumption you made in place of asking.",
         "",
         "Frontmatter (the app parses it). Keep `ticker`, `created_ts`, "
         "`prompt_version` and `context_hash` as given. Put every text value in "
@@ -852,10 +883,10 @@ def build_claude_prompt(a: dict) -> str:
         "does not, and \"na\" only when step 1 lists no session — the app marks a "
         "note INVALID when a 2σ session in its window is left without "
         "\"found\". `review_by` is a date written "
-        "YYYY-MM-DD. Optional keys, deleted when unused: `decision` (only a "
-        "decision the user stated), `plan_triggers_met` and "
-        "`plan_triggers_unknown` (when the user gave a plan), `proposed_triggers` "
-        "(when they had none), `supersedes`.",
+        "YYYY-MM-DD. `proposed_triggers` holds every trigger from step 3. Optional "
+        "keys, deleted when unused: `decision` (only a decision the user stated), "
+        "`plan_triggers_met` (when a trigger is MET), `plan_triggers_unknown` (when "
+        "one could not be checked), `supersedes`.",
         "",
         "```markdown",
         frontmatter_template(sym, now, a["context_hash"], nwin,
@@ -863,11 +894,14 @@ def build_claude_prompt(a: dict) -> str:
         "```",
         "",
         "Three filled examples of the form — the tickers, dates and numbers are "
-        "fictional. The first is a name the user owns and gave a plan for; the "
-        "second is a name they do not own and have no plan for; the third is what "
+        "fictional. The first is a name the user owns, with one trigger met; the "
+        "second is a name they do not own; the third is what "
         "to write when the research could not be done (no web search tool): "
         "research_status \"failed\", stance \"watch\", stance_note starting "
-        "\"research incomplete\":",
+        "\"research incomplete\":"
+        + ("" if fx["owned"] is not None or fx["linked"] else
+           " (the examples carry `owned` because the app knew the position there; "
+           "yours leaves it out unless the user said)"),
         "",
         "<examples>",
         "<example>",

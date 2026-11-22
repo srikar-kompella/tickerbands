@@ -107,10 +107,15 @@ def stance_owned(stance: dict | None) -> str | None:
 def stance_label(stance: dict | None) -> str:
     """How a stance is shown. `sell` on a name the user does not own means
     avoid/pass (prompt v5, step 6) and is shown as AVOID; the stored value
-    stays `sell`, which the scorecard scores as a call to lag the market."""
+    stays `sell`, which the scorecard scores as a call to lag the market.
+    A v5 note written with ownership unknown (no `owned`, no account data) was
+    written for someone deciding whether to own it (step 6), so its `sell` is
+    an avoid too."""
     word = str((stance or {}).get("stance") or "").lower()
-    if word == "sell" and stance_owned(stance) == "no":
-        return "AVOID"
+    if word == "sell":
+        owned = stance_owned(stance)
+        if owned == "no" or (owned is None and is_v5(stance)):
+            return "AVOID"
     return word.upper()
 
 
@@ -446,7 +451,7 @@ def stance_flags(stance: dict | None, bars: list[dict] | None = None,
 
     met = m.get("plan_triggers_met") or []
     if met:
-        out.append("your own trigger(s) met: " + "; ".join(str(x) for x in met))
+        out.append("trigger(s) met: " + "; ".join(str(x) for x in met))
     return out
 
 

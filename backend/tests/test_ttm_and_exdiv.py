@@ -75,7 +75,8 @@ def test_adjust_closes_noop_without_events():
 def test_composer_exdiv_today_flag_and_anchor(tmp_db, mock_mode, monkeypatch):
     from analysis import composer
     from providers import mock as mockmod
-    today = dt.date.today().isoformat()
+    from analysis import market_clock as _mc
+    today = _mc.now_ny().date().isoformat()   # the app's market day is NY's
 
     def fake_divs(symbol):
         return {"available": True, "source": "mock", "as_of": today,
@@ -171,7 +172,8 @@ def test_composer_exdiv_pending_when_amount_unpublished(tmp_db, mock_mode, monke
     fabricate a number)."""
     from analysis import composer
     from providers import mock as mockmod
-    today = dt.date.today().isoformat()
+    from analysis import market_clock as _mc
+    today = _mc.now_ny().date().isoformat()   # the app's market day is NY's
 
     def fake_divs(symbol):
         return {"available": True, "source": "mock", "as_of": today,

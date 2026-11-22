@@ -463,17 +463,17 @@ def test_avoid_label_for_sell_on_a_name_not_owned():
     assert _EXPECT["sell"] == -1
 
 
-def test_flag_own_trigger_met():
+def test_flag_trigger_met():
     w = rq.stance_flags(stance(plan_triggers_met=["net debt above 2.5x EBITDA", "CFO left"]),
                         today=TODAY)
-    assert w == ["your own trigger(s) met: net debt above 2.5x EBITDA; CFO left"]
+    assert w == ["trigger(s) met: net debt above 2.5x EBITDA; CFO left"]
 
 
 def test_flags_accumulate_in_a_stable_order():
     w = rq.stance_flags(stance("watch", research_status="partial", upgrade_if=[],
                                review_by="2031-01-01", move_cause="not_found",
                                plan_triggers_met=["x"]), today=TODAY)
-    assert [x.split(" ")[0] for x in w] == ["research", "watch", "expired", "the", "your"]
+    assert [x.split(" ")[0] for x in w] == ["research", "watch", "expired", "the", "trigger(s)"]
 
 
 def test_stance_conditions_for_display():
@@ -792,7 +792,8 @@ def test_avoid_label_falls_back_to_the_account_and_a_mismatch_is_flagged():
     # the note does not say → the account decides
     assert rq.stance_label({**sell, "account_owned": False}) == "AVOID"
     assert rq.stance_label({**sell, "account_owned": True}) == "SELL"
-    assert rq.stance_label(sell) == "SELL"                       # no account data
+    assert rq.stance_label(sell) == "AVOID"     # no account data: a v5 note is written for a buyer
+    assert rq.stance_label({"stance": "sell"}) == "SELL"         # pre-v5, no data: stored word
     assert rq.stance_owned({**sell, "account_owned": False}) == "no"
     assert rq.stance_owned(sell) is None
     # the note says → the note decides the label…

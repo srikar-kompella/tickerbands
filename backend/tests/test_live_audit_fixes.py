@@ -189,7 +189,7 @@ def test_busy_day_cannot_crowd_out_the_window():
     items = [_h(f"Nvidia item {i}", day=21, hour=1 + i % 20) for i in range(40)]
     items.append(_h("Nvidia: Reuters says SEC enforcement examining accounting", day=20))
     v = nr.filter_headlines(items, "NVDA", "NVIDIA CORP")
-    days = {dt.datetime.fromtimestamp(h["ts"]).date().day for h in v["items"]}
+    days = {nr.ny_date(h["ts"]).day for h in v["items"]}
     assert 20 in days and v["days_covered"] == 2
 
 
@@ -934,3 +934,10 @@ def test_catch_up_scan_reports_a_file_it_could_not_move(tmp_db, tmp_discussions,
     assert bad.exists()
     out = capsys.readouterr().out
     assert "empty body" in out and "(could not be moved to _failed/)" in out
+
+
+def test_ny_date_is_the_new_york_calendar_day_whatever_the_machine_zone():
+    """8 PM ET on Fri Nov 20 is Nov 21 in UTC; market days are NY days."""
+    import datetime as _dt
+    ts = _dt.datetime(2026, 11, 21, 1, 0, tzinfo=_dt.timezone.utc).timestamp()
+    assert nr.ny_date(ts) == _dt.date(2026, 11, 20)

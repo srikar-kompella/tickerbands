@@ -15,7 +15,7 @@ import datetime as dt
 import html
 from typing import Any
 
-from analysis import research_quality
+from analysis import news_relevance, research_quality
 
 try:
     import markdown as _md
@@ -238,7 +238,7 @@ def build_report_html(a: dict, discussions: list[dict],
     if items:
         head_html = "<ul>" + "".join(
             f"<li>{esc(h['headline'])} <span class='mut'>({esc(h.get('source'))}"
-            f"{', ' + dt.datetime.fromtimestamp(h['ts']).strftime('%b %d') if h.get('ts') else ''})</span></li>"
+            f"{', ' + news_relevance.ny_date(h['ts']).strftime('%b %d') if h.get('ts') else ''})</span></li>"
             for h in items[:6]) + "</ul>"
     else:
         head_html = (f"<p class='mut'>No headlines about {esc(sym)} in the feed window "

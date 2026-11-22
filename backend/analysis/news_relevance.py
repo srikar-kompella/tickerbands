@@ -44,6 +44,13 @@ _NO_NEWS = re.compile(
     r"|\bno (?:[\w&.'-]+ )?news\b", re.I)
 
 
+def ny_date(ts) -> dt.date:
+    """Calendar date of an epoch timestamp IN NEW YORK — market days are NY
+    days. (Machine-local dates broke on a UTC CI runner: an 8 PM ET headline
+    landed on the next day.)"""
+    return mc.to_ny(dt.datetime.fromtimestamp(int(ts or 0), dt.timezone.utc)).date()
+
+
 def name_terms(symbol: str, name: str | None) -> list[str]:
     """Search terms for a company: ticker, cleaned legal name's leading
     word(s), and known aliases. 'NVIDIA CORP' → ['nvda', 'nvidia']."""
@@ -81,7 +88,7 @@ def spread_by_day(items: list[dict], per_day: int = 2, cap: int = 12) -> list[di
     cannot crowd the whole window out of the list."""
     out, seen = [], {}
     for h in sorted(items, key=lambda x: int(x.get("ts") or 0), reverse=True):
-        d = dt.datetime.fromtimestamp(int(h.get("ts") or 0)).date()
+        d = ny_date(h.get("ts"))
         if seen.get(d, 0) >= per_day:
             continue
         seen[d] = seen.get(d, 0) + 1
@@ -97,7 +104,7 @@ def filter_headlines(items: list[dict] | None, symbol: str,
     terms = name_terms(symbol, name)
     kept = [h for h in items if is_relevant(h, symbol, terms)]
     tss = [int(h.get("ts") or 0) for h in items if h.get("ts")]
-    days = sorted({dt.datetime.fromtimestamp(int(h.get("ts") or 0)).date().isoformat()
+    days = sorted({ny_date(h.get("ts")).isoformat()
                    for h in kept if h.get("ts")})
     return {
         "items": spread_by_day(kept),
@@ -107,9 +114,9 @@ def filter_headlines(items: list[dict] | None, symbol: str,
         "dropped": len(items) - len(kept),
         "terms": terms,
         "days_covered": len(days),
-        "window_from": (dt.datetime.fromtimestamp(min(tss)).date().isoformat()
+        "window_from": (ny_date(min(tss)).isoformat()
                         if tss else None),
-        "window_to": (dt.datetime.fromtimestamp(max(tss)).date().isoformat()
+        "window_to": (ny_date(max(tss)).isoformat()
                       if tss else None),
     }
 
@@ -153,7 +160,7 @@ def regulatory_scan(relevant: list[dict], since: str) -> list[dict]:
     lawsuit, export rules, a restatement or similar."""
     out = []
     for h in relevant:
-        d = dt.datetime.fromtimestamp(int(h.get("ts") or 0)).date().isoformat()
+        d = ny_date(h.get("ts")).isoformat()
         if d < since[:10]:
             continue
         text = f"{h.get('headline') or ''} {h.get('summary') or ''}"
@@ -175,7 +182,7 @@ def move_cause(relevant: list[dict], filings: list[dict], session_date: str | No
     lo, hi = (d - dt.timedelta(days=1)).isoformat(), (d + dt.timedelta(days=1)).isoformat()
     found = []
     for h in relevant:
-        hd = dt.datetime.fromtimestamp(int(h.get("ts") or 0)).date().isoformat()
+        hd = ny_date(h.get("ts")).isoformat()
         if lo <= hd <= hi:
             text = f"{h.get('headline') or ''} {h.get('summary') or ''}"
             if CAUSE_RE.search(text):

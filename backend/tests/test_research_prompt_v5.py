@@ -99,7 +99,7 @@ def test_v5_sections_come_in_the_required_order(p):
              "\n<data_caveats>\n", "</data_caveats>", "\n<snapshot>\n", "</snapshot>",
              "\n<prior_notes>\n", "</prior_notes>", "## Your task, in order",
              "1. Research first", "2. Reconcile the data",
-             "3. Ask for and check the user's plan", "4. Analyze",
+             "3. Set and check the triggers", "4. Analyze",
              "5. Lay out the options", "6. Give one stance",
              "7. Check your work before writing", "8. Write the file",
              "## Output contract", "```markdown", "\n<examples>\n", "<example>",
@@ -269,11 +269,11 @@ def test_v5_position_block_when_not_held_or_unknown(tmp_db, monkeypatch):
     assert "The user does not own this, so the rows are Buy / Watch / Pass." in p
     assert "Hold / Add / Trim / Exit" not in p
     assert 'owned: "no"' in _template(p)
-    # step 3 asks about entering, not about a position that does not exist
-    step3 = p[p.index("3. Ask for and check the user's plan"):p.index("4. Analyze")]
-    assert ("why they are looking at it, their entry criteria — the price, valuation or "
-            "event that would make them buy — the size they would consider, and what "
-            "would take it off their list, and account rules that constrain a trade") in step3
+    # step 3 sets entry triggers, not triggers for a position that does not exist
+    step3 = p[p.index("3. Set and check the triggers"):p.index("4. Analyze")]
+    assert ("set 2–4 checkable triggers yourself (entry triggers that would make it a "
+            "buy, and what would take it off the list)") in step3
+    assert "exit, trim and add triggers" not in step3
     assert "this position" not in step3 and "exit and add triggers" not in step3
     # step 6 offers a negative stance, so a non-buy is not forced into watch
     step6 = p[p.index("6. Give one stance"):p.index("7. Check your work")]
@@ -281,23 +281,29 @@ def test_v5_position_block_when_not_held_or_unknown(tmp_db, monkeypatch):
             "For a name the user does not own, sell means avoid: you would not own it "
             "at this price and risk, and the app tracks it as a call that the stock "
             "will lag the market.") in step6
-    assert "buy (= add)" not in step6 and "trim" not in step6.split("If the user states")[0]
+    assert "buy (= add)" not in step6 and "trim" not in step6.split("If the user has already stated")[0]
 
 
-def test_v5_position_unknown_asks_the_user(tmp_db, monkeypatch):
+def test_v5_position_unknown_gives_both_sides_without_asking(tmp_db, monkeypatch):
+    """No brokerage data: the session must not ask whether the user owns it —
+    it lays out both sets of rows and triggers and leaves `owned` out."""
     prov = rf.nvda_providers()
     prov["account"] = None                       # no brokerage connected
     p = _prompt(_analyze(monkeypatch, prov, rf.NVDA_NOW, "NVDA"))
     assert "Your position\n- unknown — the app has no brokerage data" in _block(p, "snapshot")
-    assert "ask the user whether they own it" in p
-    assert "Owned: Hold / Add / Trim / Exit. Not owned: Buy / Watch / Pass." in p
-    assert 'owned: "<yes|no>"' in _template(p)
-    step3 = p[p.index("3. Ask for and check the user's plan"):p.index("4. Analyze")]
-    assert "whether they own it; if they do: their thesis for this position" in step3
-    assert "if they do not: why they are looking at it, their entry criteria" in step3
+    assert "ask the user whether" not in p
+    assert "Do not ask whether the user owns it" in p
+    assert ("give both sets of rows — if owned: Hold / Add / Trim / Exit; if not owned: "
+            "Buy / Watch / Pass.") in p
+    assert "owned:" not in _template(p)          # unknown → the key is left out
+    step3 = p[p.index("3. Set and check the triggers"):p.index("4. Analyze")]
+    assert ("(since ownership is unknown, cover both cases: at least one exit or trim "
+            "trigger for a holder and at least one entry trigger for a buyer)") in step3
+    assert "yours leaves it out unless the user said" in p
     step6 = p[p.index("6. Give one stance"):p.index("7. Check your work")]
-    assert ("Owned: hold, buy (= add), trim or sell — watch only when research is "
-            "incomplete. Not owned: buy, watch or sell.") in step6
+    assert "write the stance for someone deciding whether to own it at this price" in step6
+    assert "Leave the `owned` key out." in step6
+    assert step6.count("sell means avoid") == 1
     assert "sell means avoid" in step6
 
 
@@ -536,7 +542,7 @@ def test_v5_session_already_explained_by_an_ok_note_is_not_asked_for_again(
             "<prior_notes> states the cause — re-check that cause before you carry it "
             "forward.") in step1
     step4 = p[p.index("4. Analyze"):p.index("5. Lay out the options")]
-    assert "No session in the window is waiting for a cause, so no move needs a story." in step4
+    assert "No session in the window still needs a cause, so no move needs a story." in step4
     # a later note may then say "na"
     rf.add_discussion("NVDA", "2026-11-23T18:30:00", "Nothing new since Saturday",
                       news_view="neutral", news_note="Nov 17–23: nothing new since the probe",
@@ -551,7 +557,7 @@ def test_v5_session_already_explained_by_an_ok_note_is_not_asked_for_again(
 
 
 def test_v5_step2_reconcile(p):
-    step = p[p.index("2. Reconcile the data"):p.index("3. Ask for and check")]
+    step = p[p.index("2. Reconcile the data"):p.index("3. Set and check")]
     assert "The snapshot is the price basis: use its price ($125.53)" in step
     assert "the extended-hours quote in C2 is not the price" in step
     assert '"snapshot X (as of D1) → newer Y (as of D2, source)"' in step
@@ -562,31 +568,36 @@ def test_v5_step2_reconcile(p):
     assert "TTM or latest-quarter" in step and "forward or trailing" in step
 
 
-def test_v5_opening_asks_then_waits_and_gates_the_file_on_the_answer(p):
-    """Turn-based sessions cannot "run steps while they wait": ask, do steps
-    1–2 in the same turn, stop; the file comes only after the answer."""
+def test_v5_runs_straight_through_and_never_asks_the_user(p):
+    """The session must deliver results in one run: an earlier v5 opened by
+    asking for the user's plan and stopping, and a session that stops for an
+    answer delivers nothing."""
     pre = p[p.index("## Your task, in order"):p.index("1. Research first")]
-    assert "Open the conversation by asking the user for their plan" in pre
-    assert "In that same turn do steps 1 and 2" in pre
-    assert "then stop and wait for the reply" in pre
-    assert ("write the file only once the user has answered, has said they have no "
-            "plan, or has asked you to go ahead without one") in pre
-    assert "while you wait" not in p
+    assert "Run all eight steps now, start to finish, in this one turn" in pre
+    assert "Do not ask the user anything and do not stop for a reply" in pre
+    assert "not about their plan, their position, their account rules or how to proceed" in pre
+    assert "make a reasonable assumption, state it in one line in the note" in pre
     step7 = p[p.index("7. Check your work before writing"):p.index("8. Write the file")]
-    assert ("the user has answered the plan question, or told you to go ahead "
-            "without a plan") in step7
+    assert "you asked the user nothing and stopped nowhere" in step7
+    # nothing anywhere invites a question or a pause
+    low = p.lower()
+    for phrase in ("ask the user for", "ask for and check", "wait for the reply",
+                   "stop and wait", "once the user has answered", "plan question",
+                   "for them to accept or edit", "ask once", "unless they already gave",
+                   "while you wait", "your plan, checked"):
+        assert phrase not in low, phrase
+    assert "?" not in p[p.index("## Your task, in order"):p.index("## Output contract")]
 
 
-def test_v5_step3_asks_for_the_users_plan_and_checks_triggers(p):
-    assert "Open the conversation by asking the user for their plan" in p
-    step = p[p.index("3. Ask for and check the user's plan"):p.index("4. Analyze")]
-    assert "The app does not store it" in step
-    assert "unless they already gave it" in step
-    for ask in ("thesis", "exit and add triggers", "price targets",
-                "account rules that constrain a trade (for example a position-size limit)"):
-        assert ask in step, ask
+def test_v5_step3_sets_its_own_triggers_and_checks_them(p):
+    step = p[p.index("3. Set and check the triggers"):p.index("4. Analyze")]
+    assert "The app does not store the user's plan and you do not ask for it" in step
+    assert "set 2–4 checkable triggers yourself" in step
+    assert "yourself (exit, trim and add triggers for a holder), each a number" in step
+    assert "never a price direction" in step and "`proposed_triggers`" in step
+    assert "If the user already stated triggers in this conversation" in step
     assert "MET, NOT MET or UNKNOWN, with the evidence" in step
-    assert "propose 2–3 checkable triggers" in step and "`proposed_triggers`" in step
+    assert "`plan_triggers_met`" in step and "`plan_triggers_unknown`" in step
     assert "Any MET trigger goes in the first line of the TL;DR" in step
 
 
@@ -606,7 +617,7 @@ def test_v5_step4_no_story_for_an_ordinary_move_and_no_trailing_space(client):
     p = client.get("/api/analysis/AAPL/prompt").json()["prompt"]
     step = p[p.index("4. Analyze"):p.index("5. Lay out the options")]
     assert a["big_move_sessions"] == []
-    assert "No session in the window is waiting for a cause, so no move needs a story." in step
+    assert "No session in the window still needs a cause, so no move needs a story." in step
     assert "Explain a move only where your research found material news behind it" in step
     assert "For each 2σ session listed in step 1" not in step
     # no prior notes → the step ends cleanly, and no line anywhere ends in a space
@@ -619,7 +630,7 @@ def test_v5_step5_options_follow_ownership(p):
     assert "The user owns this (see <snapshot>), so the rows are Hold / Add / Trim / Exit." in step
     assert "Buy / Watch / Pass" not in step
     for col in ("shares and dollars at the report price", "what must be true",
-                "the main risk", "an account rule the user stated blocks it"):
+                "the main risk", "whether one blocks it; do not ask for them"):
         assert col in step, col
 
 
@@ -655,7 +666,7 @@ def test_v5_output_contract_headings_length_path_and_fallback(p):
     from api.research_prompt import BODY_HEADINGS
     out = p[p.index("## Output contract"):p.index("```markdown")]
     assert BODY_HEADINGS == ("## TL;DR", "## What happened", "## Evidence & sources",
-                             "## Your plan, checked", "## What the numbers say",
+                             "## Triggers, checked", "## What the numbers say",
                              "## Your options", "## Stance & what would change it",
                              "## Unknowns")
     at = [out.index(f"`{h}`") for h in BODY_HEADINGS]
@@ -667,8 +678,9 @@ def test_v5_output_contract_headings_length_path_and_fallback(p):
     assert '"searched X, nothing found"' in out
     assert "/discussions/NVDA/" in out and "under the TickerBands home" in out
     assert "Create a new file for every discussion" in out
-    assert ("If you have no filesystem (claude.ai), output the complete file in one "
-            "code block for the user to save") in out
+    assert ("If you cannot write to that path (no filesystem, as on claude.ai, or the "
+            "write fails), output the complete file in one code block for the user to "
+            "save at that path — do not ask where to put it.") in out
     # removed: the v4 headings
     for old in ("## What's going on", "## Bottom line", "## Risks & what would change this view"):
         assert old not in p
@@ -707,10 +719,10 @@ def test_v5_example_is_strict_yaml_fictional_and_complete(p):
     assert meta["news_note"].startswith("Jan 27–Feb 3: recall")
     assert meta["prompt_version"] == 5 and meta["price_used"] == 12.34
     assert meta["stance"] == "hold" and meta["upgrade_if"] and meta["downgrade_if"]
-    assert set(meta) >= (V5_KEYS - {"proposed_triggers"})     # user had a plan → no proposals
+    assert set(meta) >= V5_KEYS                  # every trigger key filled in
     assert "decision" not in meta                             # user stated none → key deleted
     assert "<" not in ex.split("---")[1]                      # no placeholder left
-    assert post.content.startswith("## TL;DR\nYour own trigger is MET")
+    assert post.content.startswith("## TL;DR\nThe leverage trigger is MET")
 
 
 def test_v5_example_and_template_go_through_the_real_parser(p, tmp_path):
@@ -732,7 +744,7 @@ def test_v5_example_and_template_go_through_the_real_parser(p, tmp_path):
     from analysis import research_quality as rq
     import datetime as dt
     assert rq.stance_flags({**row, "research_meta": meta}, None, dt.date(2031, 2, 3)) == \
-        ["your own trigger(s) met: net debt above 2.5x EBITDA — 2.8x in the Q4 release (2031-01-29)"]
+        ["trigger(s) met: net debt above 2.5x EBITDA — 2.8x in the Q4 release (2031-01-29)"]
 
     # an unfilled template is still valid YAML; placeholders are dropped, not stored
     (tmp_path / "NVDA").mkdir()
@@ -757,7 +769,7 @@ def test_v5_example_and_template_go_through_the_real_parser(p, tmp_path):
 
 def test_v5_second_example_is_not_owned_with_the_negative_stance(p, tmp_path):
     """The only example used to be an owned hold, so sessions copied `hold`.
-    The second one: not owned, no plan, `sell` = avoid, no hold/watch."""
+    The second one: not owned, `sell` = avoid, three entry triggers set, no hold/watch."""
     import datetime as dt
 
     from analysis import research_quality as rq
@@ -844,7 +856,7 @@ def test_payload_carries_stance_meta_flags_and_conditions(nvda_v5):
     assert "expired — review_by 2026-11-20 has passed; re-run research" in flags
     assert any(f.startswith("price_used $130.03 is 3.6% away from the 2026-11-20 session "
                             "close $125.53") for f in flags)
-    assert "your own trigger(s) met: the dividend was cut in the Q3 release" in flags
+    assert "trigger(s) met: the dividend was cut in the Q3 release" in flags
     assert not any("no conditions" in f or "research incomplete" in f for f in flags)
     f = a["report_view"]["fields"]["claude_stance"]
     assert f["warnings"] == flags                 # what the header's re-check badge reads
@@ -866,7 +878,7 @@ def test_report_shows_stance_conditions_and_flags(nvda_v5):
     assert "Downgrade if: an 8-K item 4.02 (non-reliance) is filed" in strip
     assert "Review by 2026-11-20 · confidence medium" in strip
     assert "⚠ expired — review_by 2026-11-20 has passed" in strip
-    assert "⚠ your own trigger(s) met: the dividend was cut in the Q3 release" in strip
+    assert "⚠ trigger(s) met: the dividend was cut in the Q3 release" in strip
     assert "⚠ price_used $130.03 is 3.6% away" in strip
 
 
@@ -1120,7 +1132,8 @@ def test_avoid_label_falls_back_to_the_account_when_the_note_does_not_say(
     prov["account"] = None
     invalidate("portfolio:")
     a = _analyze(monkeypatch, prov, rf.NVDA_NOW, "NVDA")
-    assert "account_owned" not in a["claude_stance"] and a["claude_stance"]["label"] == "SELL"
+    # no account data and no `owned`: a v5 note was written for a buyer → AVOID
+    assert "account_owned" not in a["claude_stance"] and a["claude_stance"]["label"] == "AVOID"
 
 
 def test_note_that_says_not_owned_about_a_held_position_is_flagged(tmp_db, monkeypatch):
@@ -1260,10 +1273,10 @@ def test_screener_matches_the_header_and_uses_only_the_cached_account(tmp_db, mo
     from analysis import market_clock as mc
     monkeypatch.setattr(mc, "now_ny", lambda: rf.NVDA_NOW)
 
-    # no cached account: the note does not say, so the label is the stored word
+    # no cached account and the v5 note does not say: written for a buyer → AVOID
     assert screener.held_symbols() is None
     row, = screener.screen_watchlist(prov)
-    assert (row["stance_label"], row["stance_owned"]) == ("SELL", None)
+    assert (row["stance_label"], row["stance_owned"]) == ("AVOID", None)
     assert row["stance_warnings"] == ["expired — review_by 2026-11-20 has passed; re-run research"]
     assert sorted(calls) == ["history", "quote"]
     # a cached account without the name → AVOID; with it → SELL
@@ -1307,8 +1320,7 @@ def test_v5_third_example_is_failed_research_with_a_watch_stance(p, tmp_path):
     assert meta["stance_note"].startswith("research incomplete")
     assert meta["sources_count"] == 0 and meta["stance_confidence"] == "low"
     assert meta["upgrade_if"] and meta["downgrade_if"] and meta["prompt_version"] == 5
-    assert set(meta) >= (V5_KEYS - {"proposed_triggers", "plan_triggers_met",
-                                    "plan_triggers_unknown", "supersedes"})
+    assert set(meta) >= (V5_KEYS - {"plan_triggers_met", "supersedes"})
     assert "<" not in failed.split("---")[1]
     assert "no web search tool" in post.content
     intro = p[p.index("Three filled examples"):p.index("<examples>")]
@@ -1570,3 +1582,61 @@ def test_note_statuses_use_cached_dividends_and_read_only_the_cache(tmp_db, monk
         "status": "OK", "reason": "", "as_of": "2026-11-20"}
     # tickers with no notes, blanks and duplicates are harmless
     assert screener.note_statuses(["ZZNONE", "", None]) == {}
+
+
+# ── no questions, in every ownership branch ───────────────────────────────────
+
+def _branch_prompt(branch, monkeypatch):
+    if branch == "linked":                       # GOOG report, GOOGL position
+        prov = rf.googl_providers()
+        q = prov["quotes"]("GOOGL")
+        prov["quotes"] = lambda s: {**q, "symbol": "GOOG", "name": "Alphabet Inc Class C"}
+        return _prompt(_analyze(monkeypatch, prov, rf.GOOGL_NOW, "GOOG"))
+    prov = rf.nvda_providers()
+    if branch == "not_owned":
+        acct = prov["account"]()
+        prov["account"] = lambda: {**acct, "positions": []}
+    elif branch == "unknown":
+        prov["account"] = None
+    return _prompt(_analyze(monkeypatch, prov, rf.NVDA_NOW, "NVDA"))
+
+
+@pytest.mark.parametrize("branch", ["owned", "not_owned", "unknown", "linked"])
+def test_v5_no_branch_invites_a_question_or_a_pause(branch, tmp_db, monkeypatch):
+    """Every mention of asking or waiting in the instructions is a prohibition;
+    with those removed, nothing that asks, waits, confirms or clarifies is left,
+    and no instruction text carries a question mark."""
+    p = _branch_prompt(branch, monkeypatch)
+    text = p[p.index("## Your task, in order"):p.index("<examples>")]
+    assert "?" not in text
+    left = re.sub(r"(?i)(do not|does not|never|stops to) (ask|wait)\w*|asked the user "
+                  r"nothing|in place of asking", "", text)
+    assert not re.search(r"(?i)\b(ask|wait|confirm with|check with|clarif)\w*", left), \
+        re.search(r"(?i).{60}\b(ask|wait|confirm with|check with|clarif)\w*.{60}", left)
+    assert "no closing question and no offer of further work" in text
+    assert "do not ask where to put it" in text
+
+
+def test_v5_note_without_owned_parses_with_no_flags(tmp_path, tmp_db, monkeypatch):
+    """Ownership unknown → the template leaves `owned` out; a note that does
+    so is complete, and its `sell` reads as AVOID (written for a buyer)."""
+    from analysis import research_quality as rq
+    from discussions_svc.parser import parse_discussion_file
+    p = _branch_prompt("unknown", monkeypatch)
+    _, not_owned, _ = _examples(p)
+    body = not_owned.replace('owned: "no"\n', "")
+    assert "owned:" not in body.split("---")[1]
+    d = tmp_path / "ZZQX"
+    d.mkdir()
+    f = d / "2031-03-10T14:40:00.md"
+    f.write_text(body)
+    row = parse_discussion_file(str(f))
+    meta = json.loads(row["research_meta"])     # stored as JSON text, as in the db
+    assert "owned" not in meta and meta["research_status"] == "complete"
+    st = {**row, "research_meta": meta}
+    assert st["stance"] == "sell"
+    import datetime as dt
+    assert rq.stance_flags(st, today=dt.date(2031, 3, 11)) == []
+    assert rq.stance_label(st) == "AVOID"
+    # a note from before v5 with no ownership data keeps the stored word
+    assert rq.stance_label({"stance": "sell", "research_meta": {}}) == "SELL"

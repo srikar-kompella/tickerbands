@@ -290,7 +290,7 @@ export default function Watchlist({ onAnalyze }: { onAnalyze: (s: string) => voi
                         <span className="inline-flex items-center justify-end gap-1">
                           <span title={r.stance_ts
                             ? `Claude's stance from ${fmtDate(r.stance_ts)}`
-                              + (r.stance_label === 'AVOID' ? ' — sell on a name not owned means avoid' : '')
+                              + (r.stance_label === 'AVOID' ? ' — sell on a name not owned (or ownership unknown) means avoid' : '')
                               + ' — open the ticker for reasoning'
                             : 'No Claude discussion with a stance yet'}>
                             {r.stance ? (

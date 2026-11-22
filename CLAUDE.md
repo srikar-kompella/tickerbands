@@ -176,8 +176,9 @@ move_cause/sources_count/price_used/owned`, `decision` = what the USER decided
 stance_note` = YOUR reasoned multi-month call. hold/watch need dated
 `upgrade_if` + `downgrade_if` lists or the app flags "no conditions"; every
 stance carries `review_by` (flagged once it passes); unfinished research is
-`watch` + "research incomplete", never a forced verdict. Optional: `plan_triggers_met/unknown`, `proposed_triggers`
-(the app does not store the user's plan — the session asks), `supersedes`.
+`watch` + "research incomplete", never a forced verdict. `proposed_triggers` = the
+session's own triggers (the app does not store the user's plan, and the session
+never asks the user anything). Optional: `plan_triggers_met/unknown`, `supersedes`.
 Double-quote every text value (a bare colon is invalid YAML). The watcher
 ingests it live; new file per discussion, never append. Fields, checks and how
 to change the prompt: `docs/RESEARCH_PROMPT.md`.
