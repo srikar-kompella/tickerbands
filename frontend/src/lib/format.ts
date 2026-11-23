@@ -54,3 +54,19 @@ export const fmtDateTime = (iso: string | null | undefined): string => {
 /** P&L color class — the ONLY place green/red get chosen (accent stays cyan). */
 export const plColor = (v: number | null | undefined): string =>
   v == null || v === 0 ? 'text-muted' : v > 0 ? 'text-up' : 'text-down'
+
+/** Is a failed price refresh worth an alarm? One failed request right after a
+ *  good one is a blip — the page retries within a minute and the cached copy is
+ *  seconds old. It is a real problem when the provider needs action (expired
+ *  login), nothing is cached, or the copy is older than the market needs:
+ *  10 minutes while the session is open, 6 hours when it is closed (the
+ *  official close does not move). */
+export const staleIsSerious = (
+  env: { status?: string; age_seconds?: number; error_reason?: string } | null | undefined,
+  marketState: string | null | undefined,
+): boolean => {
+  if (!env) return false
+  if (env.error_reason === 'auth_expired' || env.status === 'unavailable') return true
+  if (env.age_seconds == null) return true
+  return env.age_seconds > (marketState === 'open' ? 10 * 60 : 6 * 3600)
+}

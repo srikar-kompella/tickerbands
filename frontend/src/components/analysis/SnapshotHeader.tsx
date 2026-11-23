@@ -3,7 +3,7 @@
 // Stays pinned while the user scrolls the section grid.
 import NumberFlow from '@number-flow/react'
 import { CalendarClock, Eye, EyeOff, FileDown, MessageSquarePlus, Moon, RefreshCw } from 'lucide-react'
-import { fmtMoney, fmtPct, plColor } from '@/lib/format'
+import { fmtAge, fmtMoney, fmtPct, plColor, staleIsSerious } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { Badge, Button, Stat } from '@/components/ui'
 import { useExtendedHours } from '@/hooks'
@@ -70,7 +70,8 @@ export function SnapshotHeader({ a, onRefresh, refreshing, onAskClaude, watched,
   const staleEnv = ['quote', 'history']
     .map((k) => a.sections?.[k])
     .find((e) => e && ['stale', 'unavailable'].includes(e.status))
-  const staleAgeH = staleEnv?.age_seconds ? (staleEnv.age_seconds / 3600).toFixed(1) : null
+  // one failed refresh right after a good one is a blip, not an alarm
+  const staleSerious = staleIsSerious(staleEnv, a.price_basis?.state)
 
   // What the page's figures are as of: the price line the report prints, with
   // the statement and news dates one hover away.
@@ -86,15 +87,21 @@ export function SnapshotHeader({ a, onRefresh, refreshing, onAskClaude, watched,
   return (
     <div className="sticky top-0 z-30 -mx-6 border-b border-border bg-bg/90 px-6 py-2.5 backdrop-blur-md"
       title={q?.name ? `${a.symbol} — ${q.name}` : undefined}>
-      {staleEnv && (
+      {staleEnv && staleSerious && (
         <div className="mb-2 flex flex-wrap items-center gap-x-2 rounded-lg bg-warn/10 px-3 py-1.5 text-xs text-warn">
-          <span className="font-semibold">PRICES ARE STALE</span>
+          <span className="font-semibold">Prices are out of date</span>
           <span>
-            provider failing ({staleEnv.error_reason ?? 'error'})
-            {staleAgeH ? ` — showing data from ${staleAgeH}h ago` : ''}
+            the price feed is failing ({staleEnv.error_reason ?? 'error'})
+            {` — showing data from ${fmtAge(staleEnv.age_seconds)}`}
             {staleEnv.error_reason === 'auth_expired' &&
               ' · fix: backend/.venv/bin/python backend/schwab_reauth.py'}
           </span>
+        </div>
+      )}
+      {staleEnv && !staleSerious && (
+        <div className="mb-1.5 text-[11px] text-faint">
+          One price refresh failed ({staleEnv.error_reason ?? 'error'}) — showing data
+          from {fmtAge(staleEnv.age_seconds)}; retrying automatically.
         </div>
       )}
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">

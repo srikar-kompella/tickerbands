@@ -5,6 +5,7 @@ import {
 import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import { api } from '@/lib/api'
+import { fmtAge, staleIsSerious } from '@/lib/format'
 import type { ScreenerRow, StreamEvent } from '@/types'
 
 export function useAnalysis(symbol: string | null) {
@@ -33,14 +34,16 @@ export function useRefreshAnalysis(symbol: string | null) {
       // "refreshed" while serving days-old cache is a lie — check what came back
       const bad = ['quote', 'history'].filter(
         (k) => ['stale', 'unavailable'].includes(data.sections?.[k]?.status ?? ''))
-      if (bad.length) {
-        const env = data.sections?.[bad[0]]
-        const ageH = env?.age_seconds ? (env.age_seconds / 3600).toFixed(1) : '?'
-        const hint = env?.error_reason === 'auth_expired'
+      const env = bad.length ? data.sections?.[bad[0]] : null
+      if (env && staleIsSerious(env, data.price_basis?.state)) {
+        const hint = env.error_reason === 'auth_expired'
           ? ' — Schwab token expired: run backend/schwab_reauth.py'
-          : ` (${env?.error_reason ?? 'provider error'})`
-        toast.warning(`${symbol}: provider failing — showing ${ageH}h-old cached data${hint}`,
+          : ` (${env.error_reason ?? 'provider error'})`
+        toast.warning(`${symbol}: price feed failing — showing data from ${fmtAge(env.age_seconds)}${hint}`,
           { duration: 8000 })
+      } else if (env) {
+        // a blip: the cached copy is fresh enough and the next poll retries
+        toast.message(`${symbol}: one price refresh failed — showing data from ${fmtAge(env.age_seconds)}`)
       } else {
         toast.success(`${symbol} refreshed`)
       }
