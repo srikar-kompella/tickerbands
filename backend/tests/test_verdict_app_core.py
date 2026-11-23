@@ -338,10 +338,10 @@ def test_owner_line_owned_not_owned_unknown(verdict, own, not_own):
 
 def test_owner_line_ownership_sources_and_owner_note():
     r = _row({"verdict": "fair", "owned": "no",
-              "owner_note": "your buying freeze blocks an add"}, account_owned=True)
+              "owner_note": "your rule — trim above 10% of the account — is not met"}, account_owned=True)
     # the account wins over the note's `owned`; the note travels separately
     assert rq.owner_line(r) == "You own it: hold"
-    assert rq.verdict_fields(r)["owner_note"] == "your buying freeze blocks an add"
+    assert rq.verdict_fields(r)["owner_note"] == "your rule — trim above 10% of the account — is not met"
     del r["account_owned"]
     assert rq.owner_line(r).startswith("Not owned: wait")
     assert rq.owner_line({"research_meta": {}}) is None
