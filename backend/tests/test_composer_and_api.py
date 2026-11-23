@@ -161,6 +161,15 @@ def test_api_glossary_shape(client):
     assert "direction" in g["entries"]["expected_range"]["why"].lower()
 
 
+def test_glossary_has_the_verdict_terms(client):
+    """The Verdict card and header help icons read these keys."""
+    e = client.get("/api/glossary").json()["entries"]
+    for k in ("verdict", "value_grade", "risk_grade", "hard_flags", "soft_signals",
+              "watch_items", "trust"):
+        assert e[k]["term"] and e[k]["plain"] and e[k]["why"], k
+    assert all(w in e["trust"]["plain"] for w in ("Current", "Out of date", "Don't use"))
+
+
 def test_api_prompt_contract(client):
     r = client.get("/api/analysis/AAPL/prompt")
     assert r.status_code == 200
@@ -193,12 +202,12 @@ def test_api_prompt_embeds_prior_discussions(client, tmp_discussions):
     p = client.get("/api/analysis/AAPL/prompt").json()["prompt"]
     notes = p[p.index("\n<prior_notes>\n"):p.index("</prior_notes>")]
     assert "Decided range is fair; wait for earnings" in notes
-    assert "2026-07-10T09:00:00" in notes and "STATUS: OK" in notes
+    assert "2026-07-10T09:00:00" in notes and "trust: Current" in notes
     # and a fresh ticker has no phantom notes:
     p2 = client.get("/api/analysis/XOM/prompt").json()["prompt"]
     notes2 = p2[p2.index("\n<prior_notes>\n"):p2.index("</prior_notes>")]
     assert "No earlier discussions on this ticker." in notes2
-    assert "STATUS:" not in notes2 and "wait for earnings" not in p2
+    assert "trust:" not in notes2 and "wait for earnings" not in p2
 
 
 def test_api_symbol_search(client):

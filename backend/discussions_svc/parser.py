@@ -201,7 +201,7 @@ def _salvage_frontmatter(text: str) -> tuple[dict, str] | None:
             meta[key] = _unquote(val)
         last_key = key
     known = {"ticker", "created_ts", "summary", "stance", "news_note", "news_view",
-             "decision", "context_hash", "tags"}
+             "decision", "context_hash", "tags", "verdict"}
     if not known & set(meta):
         return None                       # nothing recognizable → still an error
     return meta, "\n".join(lines[end + 1:])
@@ -381,6 +381,15 @@ def _parse_file(path: str) -> dict[str, Any]:
     research_meta = _research_meta(meta)
     if stance_unreadable:
         research_meta.setdefault("unreadable", {})["stance"] = stance_unreadable
+    stance_note = str(meta.get("stance_note")).strip() if meta.get("stance_note") else None
+    if stance is None and not stance_unreadable and _is_v6_meta(research_meta):
+        # prompt v6 writes `verdict`, not `stance`: the legacy column is derived
+        # so the scorecard, sorting and every older code path keep working
+        # (docs/VERDICT_SPEC.md §7). A note from before v6 is left alone.
+        stance = VERDICT_TO_STANCE.get(research_meta.get("verdict"))
+        if stance:
+            research_meta["stance_derived"] = True
+            stance_note = stance_note or research_meta.get("verdict_note")
     if news_view_unreadable:
         research_meta.setdefault("unreadable", {})["news_view"] = news_view_unreadable
     if salvaged:
@@ -403,23 +412,49 @@ def _parse_file(path: str) -> dict[str, Any]:
         "stance": stance,
         "stance_horizon": (str(meta.get("stance_horizon")).strip()
                            if meta.get("stance_horizon") else None),
-        "stance_note": (str(meta.get("stance_note")).strip()
-                        if meta.get("stance_note") else None),
+        "stance_note": stance_note,
         "created_ts": created_ts,
         "file_mtime": dt.datetime.fromtimestamp(os.path.getmtime(path)).isoformat(timespec="seconds"),
     }
 
 
-# prompt v5 keys (all optional; older files simply lack them)
+# prompt v5 keys (all optional; older files simply lack them); v6 adds the
+# verdict keys (docs/VERDICT_SPEC.md §7)
 _LIST_KEYS = ("upgrade_if", "downgrade_if", "plan_triggers_met",
-              "plan_triggers_unknown", "supersedes", "proposed_triggers")
+              "plan_triggers_unknown", "supersedes", "proposed_triggers",
+              "hard_flags", "soft_signals", "watch_items")
+_TEXT_KEYS = ("value_basis", "verdict_note", "owner_note")
+VERDICTS = ("attractive", "fair", "stretched", "avoid", "unrated")
+VALUE_GRADES = ("cheap", "fair", "expensive", "paused")
+RISK_GRADES = ("clean", "watch", "red_flag")
 _ENUMS = {"research_status": {"complete", "partial", "failed"},
           "move_cause": {"found", "not_found", "na"},
           "owned": {"yes", "no"},
-          "stance_confidence": {"low", "medium", "high"}}
+          "stance_confidence": {"low", "medium", "high"},
+          "verdict": set(VERDICTS),
+          "value_grade": set(VALUE_GRADES),
+          "risk_grade": set(RISK_GRADES)}
 # other spellings of an allowed value; anything else is unreadable (fails closed)
 _ENUM_ALIASES = {"research_status": {"incomplete": "partial"},
-                 "move_cause": {"n/a": "na"}}
+                 "move_cause": {"n/a": "na"},
+                 "value_grade": {"value_paused": "paused"},
+                 "risk_grade": {"redflag": "red_flag", "red": "red_flag"}}
+# the legacy stance a v6 verdict stands for (scorecard, sorting, older code)
+# — one table, in research_quality (§7)
+from analysis.research_quality import VERDICT_TO_STANCE  # noqa: E402
+V6_KEYS = ("verdict", "value_grade", "risk_grade")
+
+
+def _is_v6_meta(rm: dict) -> bool:
+    """A note written from prompt v6 or later: `prompt_version` ≥ 6, or it
+    carries a verdict key (readable or not)."""
+    try:
+        if int(rm.get("prompt_version") or 0) >= 6:
+            return True
+    except (TypeError, ValueError):
+        pass
+    unread = rm.get("unreadable") if isinstance(rm.get("unreadable"), dict) else {}
+    return any(k in rm or k in unread for k in V6_KEYS)
 _EXTENDED_HOURS = re.compile(r"after[- ]?hours|pre[- ]?market|post[- ]?market|extended", re.I)
 _PRICE = re.compile(r"\d[\d,]*(?:\.\d+)?|\.\d+")
 
@@ -495,6 +530,14 @@ def _research_meta(meta: dict) -> dict[str, Any]:
         vals = _as_list(meta.get(k))
         if vals:
             out[k] = vals
+    for k in _TEXT_KEYS:
+        v = meta.get(k)
+        if isinstance(v, (list, tuple)):
+            v = "; ".join(_as_list(v))
+        elif v not in (None, "") and not isinstance(v, bool):
+            v = _item_text(v)
+        if isinstance(v, str) and v.strip() and not _is_placeholder(v):
+            out[k] = v.strip()
     if meta.get("news_window"):
         out["news_window"] = str(meta["news_window"]).strip()
     rb = meta.get("review_by")

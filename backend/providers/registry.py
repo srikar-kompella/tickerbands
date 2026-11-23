@@ -41,6 +41,9 @@ IMPLEMENTATIONS: dict[str, dict[str, Callable]] = {
                      "mock": (mock, "fetch_fundamentals")},
     "dividend_history": {"yfinance": (yfinance, "fetch_dividends"),
                          "mock": (mock, "fetch_dividends")},
+    # ~6 years of daily closes + splits + distributions (valuation_range)
+    "long_history": {"yfinance": (yfinance, "fetch_history_long"),
+                     "mock": (mock, "fetch_history_long")},
     "eps_check": {"yfinance": (yfinance, "fetch_eps_ttm"),
                   "mock": (mock, "fetch_eps_ttm")},
     # SEC XBRL = the filed numbers (primary); Yahoo = fallback that is often
@@ -86,7 +89,8 @@ _ALIAS = {"quotes_batch": "quotes", "option_chain_lens": "option_chain",
           # keyless Yahoo flag rides on the same provider as the EPS check
           "earnings_confirm": "eps_check", "statements_fallback": "eps_check",
           "rating_changes": "eps_check", "sec_filings": "insiders",
-          "security_profile": "eps_check", "sec_exhibit": "insiders"}
+          "security_profile": "eps_check", "sec_exhibit": "insiders",
+          "long_history": "eps_check"}
 
 
 def use_mock() -> bool:

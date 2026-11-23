@@ -163,7 +163,7 @@ def test_nvda_prompt_demands_window_cause_and_regulatory_pass(nvda):
                  "class actions", "8-K"):
         assert term in p
     assert "- 2026-11-13T09:00:00 ·" in p          # prior notes are dated…
-    assert "STATUS: STALE" in p and "STATUS: INVALID" in p      # …and judged
+    assert "trust: Out of date" in p and "trust: Don't use" in p      # …and judged
     assert "$130.03" in p and "an extended-hours quote, not the price" in p
     assert "Market cap: $3.03T" in p and "P/E (TTM): 13.5" in p
 

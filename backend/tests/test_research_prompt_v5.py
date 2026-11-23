@@ -27,6 +27,10 @@ V5_KEYS = {"prompt_version", "research_status", "news_window", "move_cause",
            "supersedes", "proposed_triggers"}
 V4_KEYS = {"ticker", "created_ts", "summary", "tags", "news_view", "news_note",
            "decision", "stance", "stance_horizon", "stance_note", "context_hash"}
+# prompt v6 (docs/VERDICT_SPEC.md §7): the verdict keys replace stance / stance_note
+V6_KEYS = {"verdict", "value_grade", "risk_grade", "value_basis", "verdict_note",
+           "hard_flags", "soft_signals", "watch_items", "owner_note"}
+V6_TEMPLATE_KEYS = (V4_KEYS - {"stance", "stance_note"}) | V5_KEYS | V6_KEYS
 
 
 def _analyze(monkeypatch, providers, now, symbol):
@@ -100,7 +104,7 @@ def test_v5_sections_come_in_the_required_order(p):
              "\n<prior_notes>\n", "</prior_notes>", "## Your task, in order",
              "1. Research first", "2. Reconcile the data",
              "3. Set and check the triggers", "4. Analyze",
-             "5. Lay out the options", "6. Give one stance",
+             "5. Set the verdict", "6. Lay out the options",
              "7. Check your work before writing", "8. Write the file",
              "## Output contract", "```markdown", "\n<examples>\n", "<example>",
              "</example>", "</examples>"]
@@ -211,7 +215,7 @@ def test_v5_snapshot_uses_report_displays_and_caveat_codes(p):
 
 def test_v5_value_lens_is_merged_and_formatted(p):
     s = _block(p, "snapshot")
-    assert "Value lens — statement-derived comparisons; weigh them in step 4 [C3]" in s
+    assert "Value lens — statement-derived comparisons [C3]" in s
     assert "- Dividends paid ÷ FCF (TTM): 9.8%" in s
     assert "- ROIC, approximate (TTM): 148.3%" in s
     assert "- Flag: net income materially exceeds free cash flow (TTM)" in s
@@ -267,8 +271,9 @@ def test_v5_position_block_when_not_held_or_unknown(tmp_db, monkeypatch):
     prov["account"] = lambda: {**acct, "positions": []}
     p = _prompt(_analyze(monkeypatch, prov, rf.NVDA_NOW, "NVDA"))
     assert "Your position\n- not held" in _block(p, "snapshot")
-    assert "The user does not own this, so the rows are Buy / Watch / Pass." in p
-    assert "Hold / Add / Trim / Exit" not in p
+    # v6: the not-owned rows are Buy / Wait / Pass (spec §5)
+    assert "The user does not own this, so the rows are Buy / Wait / Pass." in p
+    assert "Hold / Add / Trim / Exit" not in p and "Buy / Watch / Pass" not in p
     assert 'owned: "no"' in _template(p)
     # step 3 sets entry triggers, not triggers for a position that does not exist
     step3 = p[p.index("3. Set and check the triggers"):p.index("4. Analyze")]
@@ -276,13 +281,11 @@ def test_v5_position_block_when_not_held_or_unknown(tmp_db, monkeypatch):
             "buy, and what would take it off the list)") in step3
     assert "exit, trim and add triggers" not in step3
     assert "this position" not in step3 and "exit and add triggers" not in step3
-    # step 6 offers a negative stance, so a non-buy is not forced into watch
-    step6 = p[p.index("6. Give one stance"):p.index("7. Check your work")]
-    assert ("The user does not own this, so the stance is buy, watch or sell. "
-            "For a name the user does not own, sell means avoid: you would not own it "
-            "at this price and risk, and the app tracks it as a call that the stock "
-            "will lag the market.") in step6
-    assert "buy (= add)" not in step6 and "trim" not in step6.split("If the user has already stated")[0]
+    # the verdict step is the same text whatever the ownership
+    owned = _prompt(_analyze(monkeypatch, rf.nvda_providers(), rf.NVDA_NOW, "NVDA"))
+    step5 = p[p.index("5. Set the verdict"):p.index("6. Lay out the options")]
+    assert step5 == owned[owned.index("5. Set the verdict"):owned.index("6. Lay out the options")]
+    assert "sell means avoid" not in p
 
 
 def test_v5_position_unknown_gives_both_sides_without_asking(tmp_db, monkeypatch):
@@ -295,17 +298,14 @@ def test_v5_position_unknown_gives_both_sides_without_asking(tmp_db, monkeypatch
     assert "ask the user whether" not in p
     assert "Do not ask whether the user owns it" in p
     assert ("give both sets of rows — if owned: Hold / Add / Trim / Exit; if not owned: "
-            "Buy / Watch / Pass.") in p
+            "Buy / Wait / Pass — and leave the `owned` key out") in p
     assert "owned:" not in _template(p)          # unknown → the key is left out
     step3 = p[p.index("3. Set and check the triggers"):p.index("4. Analyze")]
     assert ("(since ownership is unknown, cover both cases: at least one exit or trim "
             "trigger for a holder and at least one entry trigger for a buyer)") in step3
     assert "yours leaves it out unless the user said" in p
-    step6 = p[p.index("6. Give one stance"):p.index("7. Check your work")]
-    assert "write the stance for someone deciding whether to own it at this price" in step6
-    assert "Leave the `owned` key out." in step6
-    assert step6.count("sell means avoid") == 1
-    assert "sell means avoid" in step6
+    # v6: no ownership-dependent stance to write
+    assert "sell means avoid" not in p and "the stance is" not in p
 
 
 # ── <prior_notes> ────────────────────────────────────────────────────────────
@@ -314,13 +314,13 @@ def test_v5_prior_notes_carry_date_stance_summary_and_status(p):
     notes = _block(p, "prior_notes").splitlines()
     assert notes[0].startswith("Each note is true only as of its date.")
     assert notes[1] == (
-        '- 2026-11-21T10:05:00 · stance: hold · "A +3.6% bounce is ordinary noise; '
-        'looks cheaper on cash flow" · STATUS: INVALID — its news check failed — it '
+        '- 2026-11-21T10:05:00 · earlier-format stance: hold · "A +3.6% bounce is ordinary noise; '
+        'looks cheaper on cash flow" · trust: Don\'t use — its news check failed — it '
         "reports no material news after the ≥2σ session of 2026-11-20")
     assert notes[2] == (
-        '- 2026-11-13T09:00:00 · no stance · "Board had not hired a search firm as of '
-        'Nov 13" · STATUS: STALE — written before the ≥2σ session of 2026-11-20 closed')
-    assert "A note marked INVALID is not a basis for anything" in p
+        '- 2026-11-13T09:00:00 · no verdict · "Board had not hired a search firm as of '
+        'Nov 13" · trust: Out of date — written before the ≥2σ session of 2026-11-20 closed')
+    assert "A note marked Don\'t use is not a basis for anything" in p
     assert "list its created_ts in `supersedes`" in p
     assert "only after re-checking" in p
 
@@ -340,35 +340,35 @@ def test_v5_prior_notes_superseded_partial_and_open_conditions(tmp_db, monkeypat
                           "review_by": "2027-04-16"})
     p = _prompt(_analyze(monkeypatch, rf.nvda_providers(), rf.NVDA_NOW, "NVDA"))
     n = _block(p, "prior_notes")
-    assert '"Third pass" · STATUS: OK\n  open conditions — upgrade_if: by 2027-04-15: ' \
+    assert '"Third pass" · trust: Current\n  open conditions — upgrade_if: by 2027-04-15: ' \
            'revenue growth at or above 12% · downgrade_if: an 8-K item 4.02 is filed · ' \
            'review_by: 2027-04-16' in n
     # already replaced → SUPERSEDED, not INVALID: a later session is not told
     # to supersede it a second time
-    assert '"Second pass, wrong price" · STATUS: SUPERSEDED — replaced by the note of ' \
+    assert '"Second pass, wrong price" · trust: replaced — replaced by the note of ' \
            '2026-11-21T10:00' in n
-    assert '"First pass, searches timed out" · STATUS: INVALID — its research was ' \
+    assert '"First pass, searches timed out" · trust: Don\'t use — its research was ' \
            'incomplete (research_status: partial)' in n
     assert "Check each open condition listed in <prior_notes>" in p
-    step4 = p[p.index("4. Analyze"):p.index("5. Lay out the options")]
-    assert ("A note marked INVALID is not a basis for anything: redo its work for the "
+    step4 = p[p.index("4. Analyze"):p.index("5. Set the verdict")]
+    assert ("A note marked Don\'t use is not a basis for anything: redo its work for the "
             "sessions inside this window and list its created_ts in `supersedes`; its failed "
             "checks on sessions before the window are not redone here") in step4
-    assert ("A note marked SUPERSEDED was already replaced by a later one: build nothing "
+    assert ("A note marked replaced was already replaced by a later one: build nothing "
             "on it and leave it out of `supersedes`.") in step4
     # no open conditions are listed for a note that cannot be built on
     assert n.count("open conditions — ") == 1
 
 
 def test_v5_superseded_sentence_only_when_a_note_is_superseded(p):
-    assert "STATUS: SUPERSEDED" not in _block(p, "prior_notes")
-    assert "A note marked SUPERSEDED" not in p
+    assert "trust: replaced" not in _block(p, "prior_notes")
+    assert "A note marked replaced" not in p
 
 
 def test_v5_first_discussion_has_an_empty_notes_block(tmp_db, monkeypatch):
     p = _prompt(_analyze(monkeypatch, rf.nvda_providers(), rf.NVDA_NOW, "NVDA"))
     assert _block(p, "prior_notes") == "No earlier discussions on this ticker."
-    assert "A note marked INVALID" not in p
+    assert "A note marked Don\'t use" not in p
 
 
 # ── the task ─────────────────────────────────────────────────────────────────
@@ -379,8 +379,8 @@ def test_v5_step1_research_window_and_minimum_searches(p):
     # the window runs from the last note that still stands (the STALE note of
     # Nov 13), and the sentence after it says which rule set the start
     assert "Window: 2026-11-13 → 2026-11-21 (8 days back, 6 trading sessions)" in step
-    assert ("since the last research note on this ticker that still stands (OK or STALE "
-            "in <prior_notes>), at most 30 days back, or the last 5 trading sessions, "
+    assert ("since the last research note on this ticker that still stands (Current or Out "
+            "of date in <prior_notes>), at most 30 days back, or the last 5 trading sessions, "
             "whichever is longer. Here it starts at the note of 2026-11-13.") in step
     assert "since the last report" not in step
     assert "Same-day headlines are not enough" in step
@@ -470,7 +470,7 @@ def test_v5_names_a_big_session_inside_the_window_that_is_not_the_last_one(
     assert '"no material news" is not an available conclusion for this window' in step1
     assert ("state the reported cause with two independent sources, or write \"cause "
             "not found after searching: …\"") in step1
-    step4 = p[p.index("4. Analyze"):p.index("5. Lay out the options")]
+    step4 = p[p.index("4. Analyze"):p.index("5. Set the verdict")]
     assert ("For each 2σ session listed in step 1, give the competing explanations and "
             "say which the evidence favors.") in step4
     assert "needs no story" not in p and "an ordinary day" not in p
@@ -499,7 +499,7 @@ def test_v5_note_written_after_the_monday_session_must_state_the_cause(tmp_db, m
             "(move_cause: na) — a v5 note needs move_cause: found for every ≥2σ session "
             "in its window")
     n = _block(_prompt(a), "prior_notes")
-    assert f'"Quiet week; hold" · STATUS: INVALID — {want}' in n
+    assert f'"Quiet week; hold" · trust: Don\'t use — {want}' in n
     assert "open conditions" not in n
     assert a["research_flags"]["news"] == [
         "does not state the cause of the −14.01% (−3.0σ) Fri Nov 20 session (move_cause: "
@@ -533,7 +533,7 @@ def test_v5_cause_wording_does_not_pass_for_move_cause_found(tmp_db, monkeypatch
                           stance="hold", stance_horizon="3-6mo", stance_note="thesis intact",
                           research_meta=meta)
         a = _analyze(monkeypatch, rf.nvda_providers(), rf.NVDA_NOW, "NVDA")
-        assert (f'"Selloff note {i}" · STATUS: INVALID — its news check does not state the '
+        assert (f'"Selloff note {i}" · trust: Don\'t use — its news check does not state the '
                 f"cause of the ≥2σ session of 2026-11-20 ({shown})") in _block(_prompt(a), "prior_notes")
         assert any(w.startswith("does not state the cause of the −14.01% (−3.0σ) Fri Nov 20 "
                                 f"session ({shown})") for w in a["research_flags"]["news"])
@@ -558,8 +558,8 @@ def test_v5_session_already_explained_by_an_ok_note_is_not_asked_for_again(
     assert "still need a cause" not in step1
     assert ("   Already explained: 2026-11-20 moved 2σ or more and an earlier note in "
             "<prior_notes> states the cause — re-check that cause before you carry it "
-            "forward.") in step1
-    step4 = p[p.index("4. Analyze"):p.index("5. Lay out the options")]
+            "forward; once re-checked, it counts as found for `move_cause`.") in step1
+    step4 = p[p.index("4. Analyze"):p.index("5. Set the verdict")]
     assert "No session in the window still needs a cause, so no move needs a story." in step4
     # a later note may then say "na"
     rf.add_discussion("NVDA", "2026-11-23T18:30:00", "Nothing new since Saturday",
@@ -569,8 +569,8 @@ def test_v5_session_already_explained_by_an_ok_note_is_not_asked_for_again(
                                      "news_window": "2026-11-17..2026-11-23"})
     a = _analyze(monkeypatch, prov, rf.ny(2026, 11, 23, 19, 0), "NVDA")
     n = _block(_prompt(a), "prior_notes")
-    assert '"Nothing new since Saturday" · STATUS: OK' in n
-    assert '"Probe is the reported cause" · STATUS: OK' in n
+    assert '"Nothing new since Saturday" · trust: Current' in n
+    assert '"Probe is the reported cause" · trust: Current' in n
     assert a["research_flags"] == {"news": [], "stance": []}
 
 
@@ -623,7 +623,7 @@ def test_v5_step3_sets_its_own_triggers_and_checks_them(p):
 
 
 def test_v5_step4_analysis(p):
-    step = p[p.index("4. Analyze"):p.index("5. Lay out the options")]
+    step = p[p.index("4. Analyze"):p.index("5. Set the verdict")]
     # a ≥2σ session in the window: explanations are required
     assert ("For each 2σ session listed in step 1, give the competing explanations and "
             "say which the evidence favors.") in step
@@ -636,7 +636,7 @@ def test_v5_step4_no_story_for_an_ordinary_move_and_no_trailing_space(client):
     a = client.get("/api/analysis/AAPL").json()
     assert abs(a["move"]["z"]) < 2
     p = client.get("/api/analysis/AAPL/prompt").json()["prompt"]
-    step = p[p.index("4. Analyze"):p.index("5. Lay out the options")]
+    step = p[p.index("4. Analyze"):p.index("5. Set the verdict")]
     assert a["big_move_sessions"] == []
     assert "No session in the window still needs a cause, so no move needs a story." in step
     assert "Explain a move only where your research found material news behind it" in step
@@ -646,25 +646,27 @@ def test_v5_step4_no_story_for_an_ordinary_move_and_no_trailing_space(client):
     assert not [ln for ln in p.splitlines() if ln != ln.rstrip()]
 
 
-def test_v5_step5_options_follow_ownership(p):
-    step = p[p.index("5. Lay out the options"):p.index("6. Give one stance")]
+def test_v5_step6_options_follow_ownership(p):
+    step = p[p.index("6. Lay out the options"):p.index("7. Check your work")]
     assert "The user owns this (see <snapshot>), so the rows are Hold / Add / Trim / Exit." in step
-    assert "Buy / Watch / Pass" not in step
-    for col in ("shares and dollars at the report price", "what must be true",
-                "the main risk", "whether one blocks it; do not ask for them"):
+    assert "Buy / Wait / Pass" not in step and "Buy / Watch / Pass" not in step
+    for col in ("\"verdict supports it\"", "\"your rules\"", "shares and dollars at the report price",
+                "what must be true", "the main risk", "block it or are silent",
+                "leave the \"your rules\" column out; do not ask for them"):
         assert col in step, col
 
 
-def test_v5_step6_one_stance_with_ownership_semantics_and_conditions(p):
-    step = p[p.index("6. Give one stance"):p.index("7. Check your work")]
+def test_v5_step5_verdict_carries_the_conditions_and_the_decision_contract(p):
+    step = p[p.index("5. Set the verdict"):p.index("6. Lay out the options")]
     assert "not a short-term direction call" in step
-    assert ("The user owns this, so the stance is hold, buy (= add), trim or sell — "
-            "watch only when research is incomplete.") in step
+    assert "it describes the security, not the user's position" in step
     assert "Not owned" not in step and "means avoid" not in step
-    assert 'the stance is watch instead and stance_note starts with "research incomplete"' in step
-    assert "A hold or watch needs at least one upgrade_if and one downgrade_if" in step
-    assert "dated and checkable — a number, a filing or an event, never a price direction" in step
-    assert "stance_confidence and a review_by date" in step
+    assert 'An unrated `verdict_note` starts "research incomplete" when the research is ' \
+           'incomplete' in step
+    assert ("a `review_by` date for every verdict and, for every verdict except unrated, at "
+            "least one `upgrade_if` and one `downgrade_if`, each dated and checkable — a "
+            "number, a filing or an event, never a price direction") in step
+    assert "`stance_confidence`, `stance_horizon`" in step
     # decision contract stays: only what the user stated
     assert "record it in `decision`" in step and "never invent one" in step
 
@@ -674,7 +676,7 @@ def test_v5_step7_self_check_list(p):
     for item in ("the price you used is the report price ($125.53)",
                  "the whole window 2026-11-13 → 2026-11-21 is covered",
                  'every number has a source or the label "snapshot"',
-                 "nothing from an INVALID or SUPERSEDED note is carried forward",
+                 "nothing from a Don\'t use or replaced note is carried forward",
                  "every text value in the frontmatter is in double quotes, and "
                  "`sources_count` and `price_used` are numbers without quotes",
                  "no <…> placeholder is left",
@@ -689,7 +691,7 @@ def test_v5_output_contract_headings_length_path_and_fallback(p):
     out = p[p.index("## Output contract"):p.index("```markdown")]
     assert BODY_HEADINGS == ("## TL;DR", "## What happened", "## Evidence & sources",
                              "## Triggers, checked", "## What the numbers say",
-                             "## Your options", "## Stance & what would change it",
+                             "## Your options", "## Verdict & what would change it",
                              "## Unknowns")
     at = [out.index(f"`{h}`") for h in BODY_HEADINGS]
     assert at == sorted(at)
@@ -708,7 +710,8 @@ def test_v5_output_contract_headings_length_path_and_fallback(p):
             "write fails), output the complete file in one code block for the user to "
             "save at that path — do not ask where to put it.") in out
     # removed: the v4 headings
-    for old in ("## What's going on", "## Bottom line", "## Risks & what would change this view"):
+    for old in ("## What's going on", "## Bottom line", "## Risks & what would change this view",
+                "## Stance & what would change it"):
         assert old not in p
 
 
@@ -716,8 +719,8 @@ def test_v5_template_is_strict_yaml_with_every_text_value_quoted(p, nvda):
     tpl = _template(p)
     post = frontmatter.loads(tpl)                 # strict loader — no salvage path
     meta = post.metadata
-    assert set(meta) == V4_KEYS | V5_KEYS
-    assert meta["prompt_version"] == 5 and meta["ticker"] == "NVDA"
+    assert set(meta) == V6_TEMPLATE_KEYS
+    assert meta["prompt_version"] == 6 and meta["ticker"] == "NVDA"
     assert meta["news_window"] == "2026-11-13..2026-11-21" and meta["owned"] == "yes"
     assert post.content.startswith("## TL;DR")
     fm = tpl.split("---")[1].strip().splitlines()
@@ -737,99 +740,8 @@ def test_v5_template_is_strict_yaml_with_every_text_value_quoted(p, nvda):
     assert re.fullmatch(r"sha256:[0-9a-f]{16}", nvda["context_hash"])
 
 
-def test_v5_example_is_strict_yaml_fictional_and_complete(p):
-    ex = _examples(p)[0]
-    post = frontmatter.loads(ex)                  # strict loader — no salvage path
-    meta = post.metadata
-    assert meta["ticker"] == "ZZZT" and "Fictional" in meta["summary"]
-    assert str(meta["created_ts"]).startswith("2031-")        # obviously not a real date
-    assert meta["ticker"].startswith("ZZ")        # a fictional symbol, never a real one
-    assert "fictional" in p[p.index("```\n\nThree filled examples"):p.index("<examples>")]
-    # the value that broke v4's own example: a colon inside the text, now quoted
-    assert meta["news_note"].startswith("Jan 27–Feb 3: recall")
-    assert meta["prompt_version"] == 5 and meta["price_used"] == 12.34
-    assert meta["stance"] == "hold" and meta["upgrade_if"] and meta["downgrade_if"]
-    assert set(meta) >= V5_KEYS                  # every trigger key filled in
-    assert "decision" not in meta                             # user stated none → key deleted
-    assert "<" not in ex.split("---")[1]                      # no placeholder left
-    assert post.content.startswith("## TL;DR\nThe leverage trigger is MET")
-
-
-def test_v5_example_and_template_go_through_the_real_parser(p, tmp_path):
-    from discussions_svc.parser import parse_discussion_file
-    d = tmp_path / "ZZZT"
-    d.mkdir()
-    ex = d / "example.md"
-    ex.write_text(_examples(p)[0])
-    row = parse_discussion_file(str(ex))
-    meta = json.loads(row["research_meta"])
-    assert "parse_note" not in meta                           # strict YAML, not salvaged
-    assert row["ticker"] == "ZZZT" and row["stance"] == "hold" and row["news_view"] == "bearish"
-    assert row["created_ts"] == "2031-02-03T10:15:00"
-    assert meta["research_status"] == "complete" and meta["owned"] == "yes"
-    assert meta["sources_count"] == 7 and meta["price_used"] == 12.34
-    assert meta["review_by"] == "2031-05-06" and meta["stance_confidence"] == "medium"
-    assert len(meta["downgrade_if"]) == 2 and meta["supersedes"] == ["2031-01-28T09:00:00"]
-    # and the example passes the app's own stance checks
-    from analysis import research_quality as rq
-    import datetime as dt
-    assert rq.stance_flags({**row, "research_meta": meta}, None, dt.date(2031, 2, 3)) == \
-        ["trigger(s) met: net debt above 2.5x EBITDA — 2.8x in the Q4 release (2031-01-29)"]
-
-    # an unfilled template is still valid YAML; placeholders are dropped, not stored
-    (tmp_path / "NVDA").mkdir()
-    tp = tmp_path / "NVDA" / "template.md"
-    tp.write_text(_template(p))
-    row = parse_discussion_file(str(tp))
-    meta = json.loads(row["research_meta"])
-    assert "parse_note" not in meta
-    assert row["stance"] is None and row["decision"] is None and row["news_view"] is None
-    assert meta["prompt_version"] == 5 and "research_status" not in meta
-    assert "price_used" not in meta and "sources_count" not in meta
-    # …list items and free-text values too: nothing "<…>" reaches the row
-    for k in ("upgrade_if", "downgrade_if", "plan_triggers_met", "plan_triggers_unknown",
-              "proposed_triggers", "supersedes", "review_by", "stance_confidence",
-              "unreadable"):
-        assert k not in meta, k
-    assert row["news_note"] is None and row["stance_note"] is None
-    assert row["stance_horizon"] is None and json.loads(row["tags"]) == []
-    assert row["summary"] == "TL;DR"              # falls back to the first body line
-    assert "<" not in json.dumps({k: v for k, v in row.items() if k != "response_markdown"})
-
-
-def test_v5_second_example_is_not_owned_with_the_negative_stance(p, tmp_path):
-    """The only example used to be an owned hold, so sessions copied `hold`.
-    The second one: not owned, `sell` = avoid, three entry triggers set, no hold/watch."""
-    import datetime as dt
-
-    from analysis import research_quality as rq
-    from discussions_svc.parser import parse_discussion_file
-    owned, not_owned, _failed = _examples(p)
-    assert len(_examples(p)) == 3 and owned.startswith('---\nticker: "ZZZT"')
-    post = frontmatter.loads(not_owned)           # strict loader — no salvage path
-    meta = post.metadata
-    assert meta["ticker"] == "ZZQX" and "Fictional" in meta["summary"]
-    assert str(meta["created_ts"]).startswith("2031-")
-    assert meta["owned"] == "no" and meta["stance"] == "sell" and meta["move_cause"] == "na"
-    assert len(meta["proposed_triggers"]) == 3
-    for absent in ("plan_triggers_met", "plan_triggers_unknown", "decision", "supersedes"):
-        assert absent not in meta, absent
-    assert "<" not in not_owned.split("---")[1]
-    assert "means avoid" in post.content
-    # every example is filed under a fictional ZZ-prefixed symbol
-    for ex in _examples(p):
-        assert frontmatter.loads(ex).metadata["ticker"].startswith("ZZ")
-    # through the real parser and the app's own checks: nothing to flag
-    d = tmp_path / "ZZQX"
-    d.mkdir()
-    (d / "example.md").write_text(not_owned)
-    row = parse_discussion_file(str(d / "example.md"))
-    rm = json.loads(row["research_meta"])
-    assert "parse_note" not in rm and "unreadable" not in rm
-    assert row["stance"] == "sell" and rm["owned"] == "no" and rm["price_used"] == 48.10
-    stance = {**row, "research_meta": rm}
-    assert rq.stance_flags(stance, None, dt.date(2031, 3, 10)) == []
-    assert rq.stance_label(stance) == "AVOID"
+# The three filled examples moved to v6 keys: tests/test_prompt_v6_verdict.py
+# holds them to strict YAML, the real parser and the rulebook arithmetic.
 
 
 # ── style + removals ─────────────────────────────────────────────────────────
@@ -977,7 +889,7 @@ def test_v5_file_flows_from_disk_to_the_api_payload(client, tmp_discussions):
         ["by 2026-08-01: guidance is cut in the Q3 release"]
     # the next prompt tells the next session not to build on it
     p = client.get("/api/analysis/AAPL/prompt").json()["prompt"]
-    assert "STATUS: INVALID — its research was incomplete (research_status: partial)" in p
+    assert "trust: Don\'t use — its research was incomplete (research_status: partial)" in p
     # and the report page renders the flags
     page = client.get("/api/analysis/AAPL/report").text
     assert "research incomplete (research_status: partial)" in page
@@ -1024,9 +936,9 @@ def test_failed_note_stays_invalid_in_the_prompt_and_report_after_a_calm_session
     assert [s["session_date"] for s in a["big_move_sessions"]] == ["2026-11-20"]
     assert a["big_move_sessions"][0]["z"] <= -2
     n = _block(_prompt(a), "prior_notes")
-    assert ("STATUS: INVALID — its news check failed — it reports no material news "
+    assert ("trust: Don\'t use — its news check failed — it reports no material news "
             "after the ≥2σ session of 2026-11-20") in n
-    assert "STATUS: STALE — written before the ≥2σ session of 2026-11-20 closed" in n
+    assert "trust: Out of date — written before the ≥2σ session of 2026-11-20 closed" in n
     page = html.unescape(build_report_html(a, list_discussions("NVDA"), []))
     assert "INVALID — its news check failed" in page and "STALE — written before" in page
     assert any("says no material news after a" in w and "Fri Nov 20 session" in w
@@ -1053,7 +965,7 @@ def test_v5_note_with_cause_found_is_not_flagged_for_logging_empty_searches(
     a = _analyze(monkeypatch, rf.nvda_providers(), rf.NVDA_NOW, "NVDA")
     assert a["research_flags"] == {"news": [], "stance": []}
     assert a["claude_news"]["move_cause"] == "found"
-    assert '"Probe is the reported cause" · STATUS: OK' in _block(_prompt(a), "prior_notes")
+    assert '"Probe is the reported cause" · trust: Current' in _block(_prompt(a), "prior_notes")
 
 
 def test_unreadable_stance_on_the_newest_note_is_flagged_not_hidden(tmp_db, monkeypatch):
@@ -1219,7 +1131,11 @@ def test_news_row_flags_failed_research_and_an_unreadable_newer_view(tmp_db, mon
                   "completed; do not read it as a result")
     assert f["warnings"][0] == incomplete
     assert "⚠ " + incomplete in html.unescape(build_report_html(a, [], []))
-    assert set(a["claude_news"]) == {"news_view", "news_note", "created_ts", "move_cause"}
+    # the public news check: these keys only (the rest of the row is internal);
+    # `trust` is the note's trust label (spec §9) — a failed note is "dont_use"
+    assert set(a["claude_news"]) == {"news_view", "news_note", "created_ts", "move_cause",
+                                     "trust"}
+    assert a["claude_news"]["trust"] == "dont_use"
 
     rf.add_discussion("NVDA", "2026-11-21T10:30:00", "Second pass",
                       news_note="Nov 16–21: probe reported (two sources)",
@@ -1332,49 +1248,6 @@ def test_screener_matches_the_header_and_uses_only_the_cached_account(tmp_db, mo
 
 
 # ── final-review fixes ───────────────────────────────────────────────────────
-
-def test_v5_third_example_is_failed_research_with_a_watch_stance(p, tmp_path):
-    """No search tool → research_status "failed", stance "watch", stance_note
-    starting "research incomplete". Sessions without a search tool had only
-    the two confident examples to copy."""
-    import datetime as dt
-
-    from analysis import research_quality as rq
-    from discussions_svc.parser import parse_discussion_file
-    failed = _examples(p)[2]
-    post = frontmatter.loads(failed)              # strict loader — no salvage path
-    meta = post.metadata
-    assert meta["ticker"] == "ZZKM" and "Fictional" in meta["summary"]
-    assert str(meta["created_ts"]).startswith("2031-")
-    assert meta["research_status"] == "failed" and meta["stance"] == "watch"
-    assert meta["stance_note"].startswith("research incomplete")
-    assert meta["sources_count"] == 0 and meta["stance_confidence"] == "low"
-    assert meta["upgrade_if"] and meta["downgrade_if"] and meta["prompt_version"] == 5
-    assert set(meta) >= (V5_KEYS - {"plan_triggers_met", "supersedes"})
-    assert "<" not in failed.split("---")[1]
-    assert "no web search tool" in post.content
-    intro = p[p.index("Three filled examples"):p.index("<examples>")]
-    assert ('the third is what to write when the research could not be done (no web '
-            'search tool): research_status "failed", stance "watch", stance_note starting '
-            '"research incomplete"') in intro
-    # through the real parser, then the app's own checks: the note is INVALID
-    # as a basis and its stance carries the research-incomplete flag, no other
-    d = tmp_path / "ZZKM"
-    d.mkdir()
-    (d / "example.md").write_text(failed)
-    row = parse_discussion_file(str(d / "example.md"))
-    rm = json.loads(row["research_meta"])
-    assert "parse_note" not in rm and "unreadable" not in rm
-    assert row["stance"] == "watch" and rm["research_status"] == "failed"
-    assert rm["price_used"] == 27.60 and rm["review_by"] == "2031-04-21"
-    stance = {**row, "research_meta": rm}
-    assert rq.stance_flags(stance, None, dt.date(2031, 4, 14)) == [
-        "research incomplete (research_status: failed) — the stance rests on an "
-        "unfinished news check"]
-    assert rq.prior_note_status([stance], None, None) == [
-        {"created_ts": "2031-04-14T16:45:00", "status": "INVALID",
-         "reason": "its research was incomplete (research_status: failed)"}]
-
 
 SWEEP = "(the name with the month and year, read for anything dated in the period)"
 NO_WEEKEND = ("; a weekend or market holiday needs a search of its own only where a story "
@@ -1668,34 +1541,11 @@ def test_v5_no_branch_invites_a_question_or_a_pause(branch, tmp_db, monkeypatch)
     p = _branch_prompt(branch, monkeypatch)
     text = p[p.index("## Your task, in order"):p.index("<examples>")]
     assert "?" not in text
+    # "Wait" is an options row (spec §5), not a pause: only its row labels are exempt
+    text = text.replace("Buy / Wait / Pass", "").replace("Hold / Wait", "")
     left = re.sub(r"(?i)(do not|does not|never|stops to) (ask|wait)\w*|asked the user "
                   r"nothing|in place of asking", "", text)
     assert not re.search(r"(?i)\b(ask|wait|confirm with|check with|clarif)\w*", left), \
         re.search(r"(?i).{60}\b(ask|wait|confirm with|check with|clarif)\w*.{60}", left)
     assert "no closing question and no offer of further work" in text
     assert "do not ask where to put it" in text
-
-
-def test_v5_note_without_owned_parses_with_no_flags(tmp_path, tmp_db, monkeypatch):
-    """Ownership unknown → the template leaves `owned` out; a note that does
-    so is complete, and its `sell` reads as AVOID (written for a buyer)."""
-    from analysis import research_quality as rq
-    from discussions_svc.parser import parse_discussion_file
-    p = _branch_prompt("unknown", monkeypatch)
-    _, not_owned, _ = _examples(p)
-    body = not_owned.replace('owned: "no"\n', "")
-    assert "owned:" not in body.split("---")[1]
-    d = tmp_path / "ZZQX"
-    d.mkdir()
-    f = d / "2031-03-10T14:40:00.md"
-    f.write_text(body)
-    row = parse_discussion_file(str(f))
-    meta = json.loads(row["research_meta"])     # stored as JSON text, as in the db
-    assert "owned" not in meta and meta["research_status"] == "complete"
-    st = {**row, "research_meta": meta}
-    assert st["stance"] == "sell"
-    import datetime as dt
-    assert rq.stance_flags(st, today=dt.date(2031, 3, 11)) == []
-    assert rq.stance_label(st) == "AVOID"
-    # a note from before v5 with no ownership data keeps the stored word
-    assert rq.stance_label({"stance": "sell", "research_meta": {}}) == "SELL"

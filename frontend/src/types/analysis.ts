@@ -161,6 +161,8 @@ export interface ClaudeNews {
   news_note: string | null
   created_ts: string
   move_cause?: 'found' | 'not_found' | 'na'
+  // the trust label of the note the news check comes from (spec §9)
+  trust?: Trust | null
 }
 
 // Warnings on the stored research news check and stance (backend
@@ -231,6 +233,91 @@ export interface ClaudeStance {
   account_owned?: boolean
   // how the stance is shown: AVOID for a `sell` on a name not owned
   label?: string
+  // ── prompt v6 verdict (docs/VERDICT_SPEC.md). All optional: absent on an
+  // older backend and on notes written before v6 (format "earlier").
+  format?: NoteFormat
+  verdict?: Verdict | null
+  value_grade?: ValueGrade | null
+  risk_grade?: RiskGrade | null
+  verdict_label?: string | null
+  value_basis?: string | null
+  verdict_note?: string | null
+  hard_flags?: string[]
+  soft_signals?: string[]
+  watch_items?: string[]
+  // derived by the app (spec §5): "If you own it: …" — may hold both cases
+  owner_line?: string | null
+  owner_note?: string | null
+  // the backend's own rulebook arithmetic (spec §4/§8), for the explainer
+  expected_verdict?: Verdict | null
+  expected_risk?: RiskGrade | null
+  // the app's rule computations, if the backend nests them here
+  rule_inputs?: RuleInputs | RuleInput[] | null
+  trust?: Trust | null
+  // the stance row's internal status, where the backend sends it
+  status?: string | null
+  status_reason?: string | null
+  warnings?: string[]
+}
+
+// ── Verdict (docs/VERDICT_SPEC.md) ───────────────────────────────────────────
+export type Verdict = 'attractive' | 'fair' | 'stretched' | 'avoid' | 'unrated'
+export type ValueGrade = 'cheap' | 'fair' | 'expensive' | 'paused'
+export type RiskGrade = 'clean' | 'watch' | 'red_flag'
+export type NoteFormat = 'v6' | 'earlier'
+// replaces the four internal note statuses in the UI (spec §9)
+export type Trust = 'current' | 'out_of_date' | 'dont_use' | 'replaced'
+
+// The valuation measure now vs its own last five fiscal year-ends (spec §6).
+export interface ValuationRange {
+  measure?: 'p_fcf' | 'ev_ebit' | 'pe' | 'p_sales' | 'p_tbv' | 'distribution_rate' | string
+  label?: string
+  now?: number | null
+  now_basis?: string | null
+  points?: { fy_end: string; value: number | null }[]
+  median?: number | null
+  low?: number | null
+  high?: number | null
+  // the grade on the reported figure; when current cash flow / profit is
+  // more than double its five-year average (no negative year), also the
+  // grade on that average — the research note picks one and says why
+  grade_hint?: 'cheap' | 'fair' | 'expensive' | null
+  normalized_grade_hint?: 'cheap' | 'fair' | 'expensive' | null
+  // the app's resulting grade: the less favorable of the two hints (spec §4)
+  grade?: 'cheap' | 'fair' | 'expensive' | null
+  now_normalized?: number | null
+  // year-end multiples left out of median / low / high (> 5× the others' median)
+  excluded_points?: { fy_end: string; value: number | null }[]
+  normalized?: boolean
+  warnings?: string[]
+  status?: 'ok' | 'withheld' | 'no_data' | string
+  // why it is withheld / empty, where the backend says
+  reason?: string | null
+}
+
+// One default-rulebook soft signal the app computed from filed statements
+// (spec §3/§6). fires: true = the rule holds, false = clear, null = not
+// checked (basis / warnings say why). Every key optional — read defensively.
+export interface RuleInput {
+  key?: string
+  label?: string
+  values?: unknown
+  threshold?: string | number | null
+  fires?: boolean | null
+  basis?: string | null
+  warnings?: string[]
+  // the values in words ("2026-09-30 +19.9%, 2026-06-30 +22.0%")
+  summary?: string | null
+}
+
+// The analysis payload's rule_inputs block: the rules plus where they came from.
+export interface RuleInputs {
+  kind?: string
+  rules?: RuleInput[]
+  as_of?: string | null
+  filed?: string | null
+  status?: string | null
+  warnings?: string[]
 }
 
 // A completed session that moved ≥ 2σ; stored notes are judged against all of them.
@@ -372,6 +459,15 @@ export interface ReportField {
   research_status?: 'complete' | 'partial' | 'failed' | null
   plan_triggers_met?: string[]
   plan_triggers_unknown?: string[]
+  // claude_stance only, prompt v6 — the payload may mirror these here too
+  verdict?: Verdict | null
+  value_grade?: ValueGrade | null
+  risk_grade?: RiskGrade | null
+  verdict_label?: string | null
+  trust?: Trust | null
+  format?: NoteFormat
+  owner_line?: string | null
+  owner_note?: string | null
 }
 
 export interface ReportView {
@@ -398,6 +494,7 @@ export interface SecurityInfo {
   why?: string[]
   // completed sessions since the first trade (null when the history is longer than asked for)
   sessions_listed?: number | null
+  listed_under_a_year?: boolean
   first_trade_date?: string | null
   sic?: string | null
   sic_description?: string | null
@@ -444,6 +541,12 @@ export interface Analysis {
   } | null
   ex_div: { today: boolean; amount: number | null; pending: boolean } | null
   claude_stance: ClaudeStance | null
+  valuation_range?: ValuationRange | null
+  rule_inputs?: RuleInputs | RuleInput[] | null
+  // < 252 completed sessions since the first trade (spec §3 new-listing cap);
+  // is_new_listing stays the < 21-session price-history flag
+  listed_under_a_year?: boolean
+  sessions_listed?: number | null
   research_flags?: ResearchFlags
   big_move_sessions?: BigMoveSession[]
   headlines: Headline[] | null

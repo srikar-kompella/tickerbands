@@ -102,6 +102,14 @@ export const isBank = (a: Analysis): boolean =>
   !isFund(a) && (securityKind(a) === 'bank' || !!a.security?.is_bank)
 export const isNewListing = (a: Analysis): boolean =>
   !!a.is_new_listing || securityKind(a) === 'new_listing' || !!a.security?.new_listing
+/** Fewer than 252 completed sessions (spec §3). An older backend without the
+ *  field: a < 21-session listing is certainly under a year. */
+export const listedUnderAYear = (a: Analysis): boolean =>
+  typeof a.listed_under_a_year === 'boolean' ? a.listed_under_a_year
+    : typeof a.security?.listed_under_a_year === 'boolean' ? a.security.listed_under_a_year
+      : isNewListing(a)
+/** The new-listing verdict cap applies to stocks and banks, not funds. */
+export const newListingCapped = (a: Analysis): boolean => listedUnderAYear(a) && !isFund(a)
 
 // report fields whose display is a sentence for the section's notes, not a row
 const NOTE_FIELDS = ['bank_note']

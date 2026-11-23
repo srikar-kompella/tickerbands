@@ -367,7 +367,10 @@ def pick_stance(rows: list[dict]) -> tuple[dict | None, list[str]]:
         (the key was deleted or left as the template placeholder)
     """
     def bad_stance(r: dict) -> str | None:
-        return _unreadable(r).get("stance")
+        # a v6 note's stance is derived from its verdict: an unreadable
+        # verdict is an unreadable stance
+        u = _unreadable(r)
+        return u.get("stance") or (u.get("verdict") if not r.get("stance") else None)
 
     at = next((i for i, r in enumerate(rows) if r.get("stance")), None)
     newer = rows if at is None else rows[:at]
@@ -484,7 +487,10 @@ def stance_flags(stance: dict | None, bars: list[dict] | None = None,
         out.append(f"research incomplete (research_status: {m['research_status']}) — "
                    "the stance rests on an unfinished news check")
 
-    if word in NEEDS_CONDITIONS:
+    v6 = is_v6(stance)
+    if v6:
+        out.extend(verdict_flags(stance))
+    elif word in NEEDS_CONDITIONS:
         missing = [k for k in ("upgrade_if", "downgrade_if") if not m.get(k)]
         if missing:
             out.append(f"{word} with no conditions — treat as no stance "
@@ -524,7 +530,9 @@ def stance_flags(stance: dict | None, bars: list[dict] | None = None,
                            f"{bar_date} session close ${refs[0]:,.2f} — the note was not "
                            "computed at the report price")
 
-    if is_v5(stance):
+    if v6:
+        pass                      # required fields: verdict_flags (v6 list)
+    elif is_v5(stance):
         missing = [k for k in V5_REQUIRED if m.get(k) in (None, "") and k not in unread]
         if missing:
             out.append(f"missing required field(s): {', '.join(missing)} — the note "
@@ -551,3 +559,372 @@ def stance_conditions(stance: dict | None) -> dict[str, Any]:
             "research_status": m.get("research_status"),
             "plan_triggers_met": list(m.get("plan_triggers_met") or []),
             "plan_triggers_unknown": list(m.get("plan_triggers_unknown") or [])}
+
+
+# ─── prompt v6: the verdict (docs/VERDICT_SPEC.md) ─────────────────────────────
+
+VERDICT_STEPS = ("attractive", "fair", "stretched", "avoid")     # best → worst
+BASELINE = {"cheap": "attractive", "fair": "fair", "expensive": "stretched"}
+# the legacy stance a v6 verdict stands for (§7; the parser derives it)
+VERDICT_TO_STANCE = {"attractive": "buy", "fair": "hold", "stretched": "trim",
+                     "avoid": "sell", "unrated": "watch"}
+VERDICT_WORD = {"attractive": "Attractive", "fair": "Fair", "stretched": "Stretched",
+                "avoid": "Avoid", "unrated": "Unrated"}
+VALUE_WORD = {"cheap": "Cheap", "fair": "Fair", "expensive": "Expensive",
+              "paused": "Value paused"}
+RISK_WORD = {"clean": "Clean", "watch": "Watch", "red_flag": "Red flag"}
+# §5 — what the verdict means for this user: (owns it, does not own it)
+OWNER_LINES = {"attractive": ("Room to add", "Candidate to buy"),
+               "fair": ("Hold", "Wait"),
+               "stretched": ("Consider trimming", "Pass"),
+               "avoid": ("Consider exiting", "Pass"),
+               "unrated": ("Do not act on it", "Do not act on it")}
+# §9 — the trust label beside each note's internal status
+TRUST = {OK: "current", STALE: "out_of_date", INVALID: "dont_use", SUPERSEDED: "replaced"}
+TRUST_LABEL = {"current": "Current", "out_of_date": "Out of date", "dont_use": "Don't use",
+               "replaced": "Replaced"}
+# required in a v6 note (§7); upgrade_if / downgrade_if / review_by unless unrated
+V6_REQUIRED = ("verdict", "value_grade", "risk_grade", "value_basis",
+               "research_status", "price_used", "stance_confidence")
+V6_CONDITIONS = ("upgrade_if", "downgrade_if", "review_by")
+# words in value_basis that say why the grade departs from the app's
+# arithmetic (§4) — departure words only; a two-step departure (cheap where
+# the app's grade is expensive, or the reverse) is flagged whatever it says
+_BASIS_REASON = re.compile(
+    r"normali[sz]|one[- ]time|non[- ]recurring|peer|instead of|rather than|depart|override",
+    re.I)
+GRADE_ORDER = ("cheap", "fair", "expensive")        # most → least favorable
+# soft-signal rule keys (§3): the session starts each soft_signals entry with
+# one in brackets, e.g. "[ni_over_fcf] …"
+_RULE_KEY = re.compile(r"^\s*\[([a-z0-9_]+)\]")
+
+
+def is_v6(row: dict | None) -> bool:
+    """Written from prompt v6 or later: `prompt_version` ≥ 6, or the note
+    carries `verdict`, `value_grade` or `risk_grade` (readable or not)."""
+    m = _meta(row)
+    try:
+        if int(m.get("prompt_version") or 0) >= 6:
+            return True
+    except (TypeError, ValueError):
+        pass
+    unread = _unreadable(row)
+    return any(k in m or k in unread for k in ("verdict", "value_grade", "risk_grade"))
+
+
+def _items(m: dict, key: str) -> list[str]:
+    v = m.get(key)
+    return [str(x) for x in v] if isinstance(v, (list, tuple)) else []
+
+
+def capped(row: dict | None) -> bool:
+    """§3 new-listing cap: a stock or bank listed under a year
+    (`listed_under_a_year`, < 252 completed sessions; `is_new_listing`
+    when the row predates that key) with no public quarter filed yet
+    (`public_quarter_filed` not True). Funds have no cap."""
+    r = row or {}
+    listed = r.get("listed_under_a_year")
+    if listed is None:
+        listed = r.get("is_new_listing")
+    if not listed or r.get("security_kind") == "fund":
+        return False
+    return r.get("public_quarter_filed") is not True
+
+
+def _expected(meta: dict | None, is_new_listing: bool = False) -> tuple[str, str]:
+    """(expected verdict, the inputs it follows from) — §4, in this order,
+    first match wins:
+      1. research_status failed and no hard flag → unrated
+      2. any hard flag → avoid (even when research failed or value is paused)
+      3. three or more soft signals → avoid
+      4. value_grade paused, missing or unreadable → unrated (no baseline)
+      5. baseline from value_grade (cheap → attractive, fair → fair,
+         expensive → stretched); two soft signals → one step worse
+      6. new-listing cap (`is_new_listing` here = the cap applies, see
+         `capped`): nothing better than fair
+    Watch items never change it."""
+    m = meta if isinstance(meta, dict) else {}
+    hard, soft = len(_items(m, "hard_flags")), len(_items(m, "soft_signals"))
+    vg = m.get("value_grade")
+    why = (f"value_grade {vg or 'missing'}, {hard} hard flag(s), {soft} soft signal(s)"
+           + (", listed under a year" if is_new_listing else ""))
+    if m.get("research_status") == "failed" and not hard:
+        return "unrated", "research_status failed and no hard flag"
+    if hard:
+        return "avoid", why
+    if soft >= 3:
+        return "avoid", why
+    if vg not in BASELINE:
+        return "unrated", why
+    v = BASELINE[vg]
+    if soft == 2:
+        v = VERDICT_STEPS[min(VERDICT_STEPS.index(v) + 1, len(VERDICT_STEPS) - 1)]
+    if is_new_listing and v == "attractive":
+        v = "fair"
+    return v, why
+
+
+def expected_verdict(meta: dict | None, is_new_listing: bool = False) -> str:
+    """The verdict the rulebook gives (docs/VERDICT_SPEC.md §4) from the
+    note's research_meta: value_grade, the counts of hard_flags and
+    soft_signals, research_status, and the new-listing cap."""
+    return _expected(meta, is_new_listing)[0]
+
+
+def expected_risk(meta: dict | None) -> str:
+    """§8: any hard flag → red_flag; 3+ soft → red_flag; 2 soft → watch;
+    0–1 soft with one or more watch items → watch; else clean."""
+    m = meta if isinstance(meta, dict) else {}
+    hard, soft = len(_items(m, "hard_flags")), len(_items(m, "soft_signals"))
+    if hard or soft >= 3:
+        return "red_flag"
+    if soft == 2 or _items(m, "watch_items"):
+        return "watch"
+    return "clean"
+
+
+def _accepted_verdicts(meta: dict, is_new_listing: bool) -> set[str]:
+    v = _expected(meta, is_new_listing)[0]
+    out = {v}
+    # "too little clean data → unrated" (a required search not run, a cause
+    # still missing) is the session's call the app cannot re-derive: accepted
+    # when research is incomplete (research_status partial) — never over a
+    # hard flag or 3+ soft signals (§4 order: those give avoid first)
+    if (meta.get("research_status") == "partial" and v != "avoid"):
+        out.add("unrated")
+    return out
+
+
+def _note_prefix_flags(m: dict) -> list[str]:
+    """§4: an unrated verdict_note starts "research incomplete" only when
+    research is incomplete, and "value paused" when the value grade is
+    paused."""
+    if m.get("verdict") != "unrated":
+        return []
+    note = str(m.get("verdict_note") or "").strip().lower()
+    incomplete = m.get("research_status") in ("partial", "failed")
+    out = []
+    if note.startswith("research incomplete") and not incomplete:
+        out.append("verdict_note starts \"research incomplete\" but research_status is "
+                   f"{m.get('research_status') or 'missing'} — say why it is unrated instead")
+    if (m.get("value_grade") == "paused" and not incomplete
+            and not note.startswith("value paused")):
+        out.append("unrated with value_grade paused — verdict_note should start "
+                   "\"value paused\" and say which input is missing")
+    return out
+
+
+def verdict_flags(row: dict | None) -> list[str]:
+    """The v6 checks (§8) for the shown note: verdict vs the rulebook,
+    risk_grade vs the lists, value_grade vs the app's valuation range
+    (`valuation_range` attached by the composer), soft signals vs the app's
+    `rule_inputs` when attached, required fields, and the conditions every
+    verdict but unrated needs. The new-listing cap follows `capped(row)`
+    (`listed_under_a_year`, `security_kind`, `public_quarter_filed`)."""
+    if not is_v6(row):
+        return []
+    r = row or {}
+    m, unread = _meta(r), _unreadable(r)
+    out: list[str] = []
+    verdict = m.get("verdict")
+    new = capped(r)
+
+    missing = [k for k in V6_REQUIRED if m.get(k) in (None, "") and k not in unread]
+    if missing:
+        out.append(f"missing required field(s): {', '.join(missing)} — the note does not "
+                   "follow prompt v6")
+    if verdict and verdict != "unrated":
+        cond = [k for k in V6_CONDITIONS if not m.get(k) and k not in unread]
+        if cond:
+            out.append(f"{verdict} with no conditions — every verdict except unrated needs "
+                       f"upgrade_if, downgrade_if and review_by (missing: {', '.join(cond)})")
+
+    legacy = VERDICT_TO_STANCE.get(verdict)
+    if (legacy and r.get("stance") and not m.get("stance_derived")
+            and str(r["stance"]).lower() != legacy):
+        out.append(f"the note writes stance {r['stance']} beside verdict {verdict} (which "
+                   f"stands for {legacy}) — v6 notes write the verdict only")
+    if verdict and "value_grade" not in unread:
+        exp, why = _expected(m, new)
+        if verdict not in _accepted_verdicts(m, new):
+            out.append(f"verdict does not follow the rulebook: expected {exp} from {why} "
+                       f"— the note says {verdict}")
+    rg = m.get("risk_grade")
+    if rg:
+        exp_r = expected_risk(m)
+        if rg != exp_r:
+            n_h, n_s = len(_items(m, "hard_flags")), len(_items(m, "soft_signals"))
+            n_w = len(_items(m, "watch_items"))
+            out.append(f"risk_grade does not match the lists: expected {exp_r} from {n_h} hard "
+                       f"flag(s), {n_s} soft signal(s), {n_w} watch item(s) — the note says {rg}")
+    out.extend(_note_prefix_flags(m))
+
+    if isinstance(r.get("valuation_range"), dict):
+        out.extend(value_grade_flags(r, r["valuation_range"]))
+    if isinstance(r.get("rule_inputs"), dict):
+        out.extend(rule_input_flags(r, r["rule_inputs"]))
+    return out
+
+
+def combined_grade(grade_hint: str | None, normalized_grade_hint: str | None) -> str | None:
+    """§4: the less favorable of the reported and the normalized grade
+    (cheap + fair → fair; fair + expensive → expensive; cheap + expensive →
+    expensive); the reported grade alone without normalization."""
+    gs = [g for g in (grade_hint, normalized_grade_hint) if g in GRADE_ORDER]
+    if not gs:
+        return None
+    return max(gs, key=GRADE_ORDER.index)
+
+
+def value_grade_flags(row: dict | None, valuation_range: dict | None) -> list[str]:
+    """§4/§6/§8: a v6 `value_grade` should equal the app's
+    `valuation_range.grade` (the less favorable of `grade_hint` and
+    `normalized_grade_hint`). A different grade is flagged unless
+    `value_basis` gives a departure reason (normalized, one-time,
+    non-recurring, peer, instead of, rather than, depart, override); a
+    two-step departure (cheap vs expensive) is flagged whatever it says.
+    Nothing to check when the range has no grade (fewer than three points,
+    withheld) or the note's grade is paused."""
+    if not is_v6(row) or not isinstance(valuation_range, dict):
+        return []
+    m = _meta(row)
+    vr = valuation_range
+    vg = m.get("value_grade")
+    hint, n_hint = vr.get("grade_hint"), vr.get("normalized_grade_hint")
+    grade = vr.get("grade") or combined_grade(hint, n_hint)
+    if not vg or vg not in GRADE_ORDER or not grade or vg == grade:
+        return []
+    two_step = abs(GRADE_ORDER.index(vg) - GRADE_ORDER.index(grade)) == 2
+    if not two_step and _BASIS_REASON.search(str(m.get("value_basis") or "")):
+        return []
+    nums = ""
+    if vr.get("now") is not None and vr.get("median") is not None:
+        nums = (f": {vr.get('label') or vr.get('measure')} now {vr['now']} vs five-year "
+                f"median {vr['median']}, high {vr.get('high')}")
+        if n_hint and vr.get("now_normalized") is not None:
+            nums += f"; on the five-year average {vr['now_normalized']}"
+    hints = f"grade {grade}" + (f" (reported {hint}, normalized {n_hint})" if n_hint else "")
+    if two_step:
+        return [f"value_grade {vg} is two steps from the app's valuation range ({hints}"
+                f"{nums}) — a two-step departure is not allowed"]
+    return [f"value_grade {vg} differs from the app's valuation range ({hints}"
+            f"{nums}) and value_basis gives no departure reason"]
+
+
+def soft_signal_keys(meta: dict | None) -> set[str]:
+    """The rule keys the session wrote in brackets at the start of its
+    soft_signals entries ("[ni_over_fcf] …")."""
+    m = meta if isinstance(meta, dict) else {}
+    out = set()
+    for s in _items(m, "soft_signals"):
+        mt = _RULE_KEY.match(s)
+        if mt:
+            out.add(mt.group(1).lower())
+    return out
+
+
+def rule_input_flags(row: dict | None, rule_inputs: dict | None) -> list[str]:
+    """§8: a soft_signals entry whose [key] the app computes as not met
+    (`fires: false`), or no entry for a key the app computes as met
+    (`fires: true`) → "soft signal X does not match the app's arithmetic".
+    `fires: null` is never checked. Skipped when the statements behind
+    `rule_inputs` were filed after the note was written (`filed` later than
+    the note's date) — the note could not have seen them — and when the
+    filed quarters are one behind the latest results (`behind_release`: the
+    newest quarter is only in the earnings release, which the session read
+    and the arithmetic has not)."""
+    if not is_v6(row) or not isinstance(rule_inputs, dict):
+        return []
+    rules = [r for r in rule_inputs.get("rules") or [] if isinstance(r, dict) and r.get("key")]
+    if not rules:
+        return []
+    filed = str(rule_inputs.get("filed") or "")[:10]
+    note_day = str((row or {}).get("created_ts") or "")[:10]
+    if filed and note_day and filed > note_day:
+        return []
+    if rule_inputs.get("behind_release"):
+        return []
+    m = _meta(row)
+    if _unreadable(row).get("soft_signals"):
+        return []
+    written = soft_signal_keys(m)
+    out = []
+    for r in rules:
+        k, fires = str(r["key"]), r.get("fires")
+        vals = r.get("summary") or ""
+        if fires is False and k in written:
+            out.append(f"soft signal {k} does not match the app's arithmetic: the app computes "
+                       f"it as not met ({r.get('threshold') or ''}"
+                       f"{'; ' + vals if vals else ''})")
+        elif fires is True and k not in written:
+            out.append(f"soft signal {k} does not match the app's arithmetic: the app computes "
+                       f"it as met ({r.get('threshold') or ''}{'; ' + vals if vals else ''}) "
+                       f"and soft_signals has no [{k}] entry")
+    return out
+
+
+def verdict_label(row: dict | None) -> str | None:
+    """`Stretched (Expensive · Watch)` — §1. None when the note has no
+    readable verdict; a missing grade is left out of the brackets."""
+    m = _meta(row)
+    v = m.get("verdict")
+    if v not in VERDICT_WORD:
+        return None
+    parts = [w for w in (VALUE_WORD.get(m.get("value_grade")),
+                         RISK_WORD.get(m.get("risk_grade"))) if w]
+    return VERDICT_WORD[v] + (f" ({' · '.join(parts)})" if parts else "")
+
+
+def _owned_for_line(row: dict | None, owned: bool | None) -> bool | None:
+    if isinstance(owned, bool):
+        return owned
+    acct = (row or {}).get("account_owned")
+    if isinstance(acct, bool):
+        return acct
+    o = _meta(row).get("owned")
+    return {"yes": True, "no": False}.get(o)
+
+
+def owner_line(row: dict | None, owned: bool | None = None) -> str | None:
+    """What the verdict means for this user (§5), derived by the app.
+    `owned`: True / False, or None → the account's view (`account_owned`,
+    linked share classes count), else the note's `owned`, else both lines.
+    The derived line only — the note's `owner_note` (the user's own rules)
+    travels as its own field and is printed once, after this line."""
+    v = _meta(row).get("verdict")
+    if v not in OWNER_LINES:
+        return None
+    own, not_own = OWNER_LINES[v]
+    o = _owned_for_line(row, owned)
+    if o is True:
+        return f"You own it: {own.lower()}"
+    if o is False:
+        return f"Not owned: {not_own.lower()}"
+    return f"If you own it: {own.lower()} · if not: {not_own.lower()}"
+
+
+def trust(status: str | None) -> str | None:
+    """§9: OK → current, STALE → out_of_date, INVALID → dont_use,
+    SUPERSEDED → replaced; None (not judged) → None."""
+    return TRUST.get(status) if status else None
+
+
+def verdict_fields(row: dict | None, owned: bool | None = None) -> dict[str, Any]:
+    """The verdict keys the payload carries beside the legacy stance
+    (claude_stance, Watchlist rows): `format` "v6" with the verdict, grades,
+    label, lists and owner line; "earlier" (with nothing else) for a note
+    from before v6."""
+    if not row:
+        return {}
+    if not is_v6(row):
+        return {"format": "earlier"}
+    m = _meta(row)
+    return {"format": "v6",
+            "verdict": m.get("verdict"), "value_grade": m.get("value_grade"),
+            "risk_grade": m.get("risk_grade"), "verdict_label": verdict_label(row),
+            "value_basis": m.get("value_basis"), "verdict_note": m.get("verdict_note"),
+            "hard_flags": _items(m, "hard_flags"), "soft_signals": _items(m, "soft_signals"),
+            "watch_items": _items(m, "watch_items"),
+            "owner_line": owner_line(row, owned), "owner_note": m.get("owner_note"),
+            "expected_verdict": expected_verdict(m, capped(row)),
+            "expected_risk": expected_risk(m)}

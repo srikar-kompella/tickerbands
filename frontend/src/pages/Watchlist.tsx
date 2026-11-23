@@ -12,10 +12,71 @@ import { fmtDate, fmtNum, fmtPct, plColor } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { Badge, Button, Card, EmptyState, Modal, Skeleton } from '@/components/ui'
 import { useExtendedHours, useProgressiveScreener, useWatchlistMutations } from '@/hooks'
+import {
+  EARLIER_TIP, EarlierStance, TrustWord, VerdictPill, asTrust, ownerParts, ownerText, readVerdict,
+  verdictSortRank,
+} from '@/components/verdict'
 import type { ScreenerRow } from '@/types'
 
+/** The verdict cell: pill + checks badge, then value · risk and trust in small text. */
+function VerdictCell({ r }: { r: ScreenerRow }) {
+  const v = readVerdict(r)
+  const trust = asTrust(r.trust)
+  const owned = r.stance_owned === 'yes' ? true : r.stance_owned === 'no' ? false : null
+  const owner = ownerText(ownerParts(v.verdict, owned, r.owner_line, r.owner_note))
+  const when = r.stance_ts ? fmtDate(r.stance_ts) : ''
+  const tip = [
+    v.verdict ? v.label : '',
+    owner,
+    !v.verdict && r.stance_label === 'AVOID'
+      ? 'Sell on a name not owned (or ownership unknown) means avoid' : '',
+    when ? `Note from ${when} — open the ticker for the reasoning` : '',
+  ].filter(Boolean).join('\n')
+  const warnings = r.stance_warnings ?? []
+  if (!v.verdict && !r.stance) {
+    return (
+      <span className="text-faint" title="No Claude research note with a verdict yet">—</span>
+    )
+  }
+  return (
+    <div className="flex flex-col items-end gap-0.5" title={tip}>
+      <span className="inline-flex items-center gap-1">
+        {v.verdict
+          ? <VerdictPill verdict={v.verdict} className="text-[11px]" />
+          : <EarlierStance cs={r} word={r.stance_label ?? r.stance!.toUpperCase()} hint={false} />}
+        {/* the same warnings as the analysis header's re-check badge */}
+        {warnings.length > 0 && (
+          <Badge tone="warn" className="text-[11px]"
+            title={`${warnings.join('\n')}\n\nValue-grade checks (against the valuation range) appear on the analysis page — this list has no valuation range, so the count there can be higher.`}>
+            ⚠ {warnings.length}
+          </Badge>
+        )}
+      </span>
+      {(() => {
+        // second line: Value · Risk (or the earlier-format hint), then trust
+        const lead = v.verdict ? v.axes.split(' · ').filter(Boolean) : ['earlier format']
+        if (!lead.length && !trust) return null
+        return (
+          // each word group stays whole; the line wraps only at the " · "
+          // separators, so "Expensive · Red flag · ⚠ Out of date" cannot widen the table
+          <span className="max-w-40 text-right text-[11px] leading-tight text-faint"
+            title={v.verdict ? undefined : EARLIER_TIP}>
+            {lead.map((w, i) => (
+              <span key={`${i}-${w}`}>
+                {i > 0 && ' · '}<span className="whitespace-nowrap">{w}</span>
+              </span>
+            ))}
+            {lead.length > 0 && trust && ' · '}
+            <TrustWord trust={trust} className="whitespace-nowrap" />
+          </span>
+        )
+      })()}
+    </div>
+  )
+}
+
 type SortKey = 'attention' | 'symbol' | 'day_pct' | 'band_half_pct'
-  | 'implied_vs_band' | 'days_to_earnings' | 'last_score'
+  | 'implied_vs_band' | 'days_to_earnings' | 'last_score' | 'verdict'
 
 const HEADERS: { key: SortKey; label: string; title: string }[] = [
   { key: 'symbol', label: 'Symbol', title: 'Ticker' },
@@ -111,6 +172,11 @@ export default function Watchlist({ onAnalyze }: { onAnalyze: (s: string) => voi
     }
     copy.sort((a, b) => {
       if (sortKey === 'symbol') return a.symbol.localeCompare(b.symbol)
+      // best → worst (Attractive … Avoid, Unrated, earlier-format notes mapped
+      // by their old stance, then no note); ties keep symbol order
+      if (sortKey === 'verdict') {
+        return verdictSortRank(a) - verdictSortRank(b) || a.symbol.localeCompare(b.symbol)
+      }
       const va = a[sortKey], vb = b[sortKey]
       if (va == null && vb == null) return 0
       if (va == null) return 1
@@ -268,7 +334,12 @@ export default function Watchlist({ onAnalyze }: { onAnalyze: (s: string) => voi
                     {h.label}{sortKey === h.key && (asc ? ' ↑' : ' ↓')}
                   </th>
                 ))}
-                <th className="w-36 pb-2 text-right font-medium" title="Latest Claude research stance (from discussions)">Claude</th>
+                <th className="w-40 cursor-pointer whitespace-nowrap pb-2 text-right font-medium hover:text-muted"
+                  title="Latest research verdict — Value · Risk and whether the note is current; hover a row for what it means for you. Click to sort best → worst."
+                  aria-sort={sortKey === 'verdict' ? (asc ? 'ascending' : 'descending') : undefined}
+                  onClick={() => clickHeader('verdict')}>
+                  Verdict{sortKey === 'verdict' && (asc ? ' ↑' : ' ↓')}
+                </th>
                 <th className="w-16 pb-2 text-right font-medium">
                   <button className="hover:text-muted" title="Reset to attention order"
                     onClick={() => setSortKey('attention')}>⚡</button>
@@ -347,29 +418,8 @@ export default function Watchlist({ onAnalyze }: { onAnalyze: (s: string) => voi
                             </span>
                           : <span className="text-faint">—</span>}
                       </td>
-                      <td className="py-2 text-right">
-                        <span className="inline-flex items-center justify-end gap-1">
-                          <span title={r.stance_ts
-                            ? `Claude's stance from ${fmtDate(r.stance_ts)}`
-                              + (r.stance_label === 'AVOID' ? ' — sell on a name not owned (or ownership unknown) means avoid' : '')
-                              + ' — open the ticker for reasoning'
-                            : 'No Claude discussion with a stance yet'}>
-                            {r.stance ? (
-                              <Badge tone={r.stance === 'buy' ? 'up'
-                                : r.stance === 'sell' || r.stance === 'trim' ? 'down' : 'accent'}
-                                className="text-[11px]">
-                                {r.stance_label ?? r.stance.toUpperCase()}
-                              </Badge>
-                            ) : <span className="text-faint">—</span>}
-                          </span>
-                          {/* the same warnings as the analysis header's re-check badge */}
-                          {(r.stance_warnings?.length ?? 0) > 0 && (
-                            <Badge tone="warn" className="text-[11px]"
-                              title={r.stance_warnings!.join('\n')}>
-                              ⚠ {r.stance_warnings!.length}
-                            </Badge>
-                          )}
-                        </span>
+                      <td className="py-1.5 text-right">
+                        <VerdictCell r={r} />
                       </td>
                       <td className="py-2 text-right">
                         <button onClick={() => setEditing(editing === r.symbol ? null : r.symbol)}

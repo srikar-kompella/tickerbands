@@ -324,6 +324,17 @@ def _one_statement_source(key: str, fn, symbol: str, force: bool,
         or (w["source"] == "cache" and (w["data"] or {}).get("available")
             and str(w["data"].get("source") or "").startswith("SEC")
             and "preferred_found" not in (w["data"].get("balance") or {}))
+        # cached before the fiscal-year share counts valuation_range needs
+        # (2026-11-22 verdict format)
+        or (w["source"] == "cache" and (w["data"] or {}).get("available")
+            and (w["data"].get("annual") or [])
+            and not any("shares_diluted" in a for a in w["data"]["annual"]
+                        if isinstance(a, dict)))
+        # an SEC copy cached before the soft-signal quarters (rule_inputs)
+        # and the combined share-count tags were carried (verdict round 2)
+        or (w["source"] == "cache" and (w["data"] or {}).get("available")
+            and str(w["data"].get("source") or "").startswith("SEC")
+            and w["data"].get("rule_format") != 3)
         or (cov["covers_latest"] is False
             and ((last_earnings and fetched and fetched <= last_earnings[:10])
                  or (w.get("age_seconds") or 0) > 6 * 3600)))
@@ -948,6 +959,12 @@ def analyze(symbol: str, force: bool = False, now: dt.datetime | None = None,
             claude_stance["account_owned"] = bool(pos_data.get("owned")
                                                   or pos_data.get("linked"))
         claude_stance["label"] = research_quality.stance_label(claude_stance)
+        # the new-listing cap of the v6 rulebook (docs/VERDICT_SPEC.md §3):
+        # stocks and banks listed under a year, until a public quarter is filed
+        claude_stance["is_new_listing"] = bool(security.get("is_new_listing"))
+        claude_stance["listed_under_a_year"] = security.get("listed_under_a_year")
+        claude_stance["public_quarter_filed"] = security.get("public_quarter_filed")
+        claude_stance["security_kind"] = security.get("kind")
     # every completed ≥2σ session in the bars (plus the report's own last
     # session): notes are judged against all of them, so a failed news check
     # does not read as fine again after one ordinary day
@@ -963,11 +980,27 @@ def analyze(symbol: str, force: bool = False, now: dt.datetime | None = None,
     # trigger met…) join the same warnings the header badge and report read
     flags["stance"] = (orphan_stance_flags + flags["stance"]
                        + research_quality.stance_flags(claude_stance, bars, now_ny.date()))
+    # each note's status (OK / STALE / INVALID / SUPERSEDED) and its trust
+    # label (docs/VERDICT_SPEC.md §9) for the shown stance and news check
+    note_status = {n.get("id"): s for n, s in zip(
+        notes, research_quality.prior_note_status(notes, move, basis, big_sessions))}
+    if claude_stance:
+        st = note_status.get(claude_stance.get("id")) or {}
+        claude_stance["status"] = st.get("status")
+        claude_stance["status_reason"] = st.get("reason") or None
+        claude_stance["trust"] = research_quality.trust(st.get("status"))
+        # the verdict (prompt v6) beside the legacy stance; "earlier" format
+        # for a note from before v6
+        claude_stance.update(research_quality.verdict_fields(claude_stance))
     if claude_stance:
         # the stance's own news fields were only needed for the check above
         claude_stance = {k: v for k, v in claude_stance.items()
                          if k not in ("news_view", "news_note")}
     claude_news = _public_news(news_row)
+    if claude_news is not None:
+        # the trust label of the note the news check comes from (spec §9)
+        claude_news["trust"] = research_quality.trust(
+            (note_status.get(news_row.get("id")) or {}).get("status"))
     reg_hits = news_relevance.regulatory_scan(headlines_view["all_relevant"], nwin["from"])
     # only the issuer's own reports (8-K, 10-Q, NT…) can be a move's cause —
     # not a Form 4 / 144, a 13G or a fund trust's 497
@@ -1002,6 +1035,30 @@ def analyze(symbol: str, force: bool = False, now: dt.datetime | None = None,
     mc_field = rv_view["fields"].get("market_cap") or {}
     # a withheld market cap (ADR, share counts far apart) prices nothing
     mcap_dollars = mc_field.get("value") if mc_field.get("status") == "ok" else None
+
+    # ── valuation_range: the main measure now vs its last five fiscal
+    # year-ends (docs/VERDICT_SPEC.md §6) — the research session grades value
+    # from it; the app checks a v6 value_grade against its grade_hint ──────
+    valuation = _valuation_range(symbol, security, rv_view, stmts, now_ny.date(), force)
+    report_view.add_valuation_fields(rv_view, valuation)
+    # ── rule_inputs: the app's arithmetic for the data-driven soft signals
+    # (docs/VERDICT_SPEC.md §6b) — inputs and hints; the session writes
+    # soft_signals and the app checks them against these ──────────────────
+    rules = _rule_inputs(symbol, security, stmts, div_payload, now_ny.date())
+    # the filed quarters are one behind when the latest results are only in
+    # the earnings release: a session that counted the release quarter is
+    # not contradicting the arithmetic, it is ahead of it
+    if isinstance(rules, dict) and smeta.get("lag") and (smeta.get("release") or {}).get("date"):
+        rules = {**rules, "behind_release": smeta["release"]["date"]}
+    report_view.add_rule_fields(rv_view, rules)
+    if claude_stance:
+        vflags = (research_quality.value_grade_flags(claude_stance, valuation)
+                  + research_quality.rule_input_flags(claude_stance, rules))
+        if vflags:
+            flags["stance"] = flags["stance"] + vflags
+            cs_f = rv_view["fields"].get("claude_stance")
+            if cs_f is not None:
+                cs_f["warnings"] = list(cs_f.get("warnings") or []) + vflags
     payload: dict[str, Any] = {
         "symbol": symbol,
         "generated_ts": dt.datetime.now().isoformat(timespec="seconds"),
@@ -1010,6 +1067,10 @@ def analyze(symbol: str, force: bool = False, now: dt.datetime | None = None,
         "security_kind": security["kind"],
         # < 21 completed sessions, whatever the kind (a new ETF is kind fund)
         "is_new_listing": bool(security.get("is_new_listing")),
+        # < 252 completed sessions since the first trade (the verdict cap,
+        # docs/VERDICT_SPEC.md §3); None when the listing date is unknown
+        "listed_under_a_year": security.get("listed_under_a_year"),
+        "sessions_listed": security.get("sessions_listed"),
         "security": {k: v for k, v in security.items() if k != "profile"},
         "quote": quote,
         "price_basis": basis,
@@ -1063,6 +1124,8 @@ def analyze(symbol: str, force: bool = False, now: dt.datetime | None = None,
             price, vendor, _trailing_dividends(div_payload, now_ny.date()), eps_chk,
             now_ny.date()),
         "value_lens": _value_lens_for(security, rv_view, mcap_dollars, stmts, smeta),
+        "valuation_range": valuation,
+        "rule_inputs": rules,
         "statements_meta": smeta,
         "ex_div": {"today": bool(basis.get("ex_div_amount")) or basis.get("ex_div_pending", False),
                    "amount": basis.get("ex_div_amount"),
@@ -1167,9 +1230,15 @@ def _security(symbol: str, quote: dict | None, history: list[dict], bars: list[d
     # a history shorter than what was asked for is the symbol's whole life:
     # its first bar is the first trading day
     whole_life = bool(history) and len(history) < 0.75 * config.HISTORY_DAYS
+    # listed under a year (< 252 completed sessions since the first trade,
+    # docs/VERDICT_SPEC.md §3): the short history when it is the whole life,
+    # else the long history (cached a day, never refetched on Refresh)
+    lh = _long_history(symbol, False) if history and not whole_life else None
+    lh_bars = (lh or {}).get("bars") if isinstance(lh, dict) and lh.get("available") else None
+    sec.update(report_view.listing_facts(
+        bars if whole_life else None, whole_life, lh_bars, LONG_HISTORY_YEARS,
+        market_clock.now_ny().date(), _latest_periodic_filing(filings_payload, stmts)))
     sec.update({
-        "sessions_listed": len(bars) if whole_life else None,
-        "first_trade_date": history[0]["date"] if whole_life else None,
         "sic": (filings_payload or {}).get("sic"),
         "sic_description": (filings_payload or {}).get("sic_description"),
         "asset_sub_type": (quote or {}).get("asset_sub_type"),
@@ -1180,6 +1249,25 @@ def _security(symbol: str, quote: dict | None, history: list[dict], bars: list[d
         "profile": profile,
     })
     return sec
+
+
+def _latest_periodic_filing(filings_payload: dict | None,
+                            stmts: dict | None) -> dict | None:
+    """{"form", "filed"} of the latest 10-Q / 10-K: from the filing list,
+    else from the statements' SEC label ("SEC filing (10-Q filed …)")."""
+    import re
+    best = None
+    for f in (filings_payload or {}).get("filings") or []:
+        form = str(f.get("form") or "").upper()
+        if form.startswith(("10-Q", "10-K")) and (best is None or f.get("date", "") > best["filed"]):
+            best = {"form": form, "filed": str(f.get("date") or "")[:10]}
+    if best:
+        return best
+    for lbl in ((stmts or {}).get("period_sources") or {}).values():
+        mt = re.search(r"\((10-[QK][^ ]*) filed (\d{4}-\d{2}-\d{2})\)", str(lbl))
+        if mt and (best is None or mt.group(2) > best["filed"]):
+            best = {"form": mt.group(1), "filed": mt.group(2)}
+    return best
 
 
 def _trailing_dividends(div_payload: dict | None, today: dt.date) -> dict | None:
@@ -1216,6 +1304,68 @@ def _value_lens_for(security: dict, rv_view: dict, mcap: float | None,
               "warnings": [f"enterprise value withheld — {pre}"]
               + [w for w in vl.get("warnings") or [] if not w.startswith("net cash position")]}
     return vl
+
+
+LONG_HISTORY_YEARS = 6        # five fiscal year-ends + a trailing year before the oldest
+
+
+def _long_history(symbol: str, force: bool) -> dict:
+    """~6 years of daily closes with splits and distributions (cached a day
+    as `history_5y:{SYMBOL}`). {"available": False, "error": …} when the
+    provider has none — valuation_range then says so."""
+    fn = registry.resolve("long_history")
+    if fn is None:
+        return {"available": False, "error": "no long-history provider configured"}
+    try:
+        w = _cached_with_backoff(f"history_5y:{symbol.upper()}", config.TTL["history2y"],
+                                 lambda: fn(symbol, LONG_HISTORY_YEARS), force=force,
+                                 backoff=PROFILE_RETRY_SECONDS)
+        d = w.get("data")
+        return d if isinstance(d, dict) else {"available": False, "error": "empty"}
+    except (ProviderError, TypeError) as e:
+        return {"available": False,
+                "error": f"{getattr(e, 'reason', type(e).__name__)}: "
+                         f"{getattr(e, 'detail', e)}"[:160]}
+
+
+def _valuation_range(symbol: str, security: dict, rv_view: dict, stmts: dict | None,
+                     today: dt.date, force: bool) -> dict | None:
+    """value_lens.build_valuation_range with its inputs: the report's own
+    fields (the measure now, at the report price), the statements' fiscal
+    years, and the long history — fetched only when it can be used (not for
+    an ADR / non-USD filer, whose range is withheld). Never raises."""
+    try:
+        kind = ("fund" if security.get("is_fund") else
+                "bank" if security.get("is_bank") else "stock")
+        ccy = str(security.get("financial_currency") or "USD").upper()
+        mc_why = (rv_view.get("raw") or {}).get("market_cap_withheld")
+        need = kind == "fund" or not (mc_why or ccy != "USD")
+        # cached a day; past closes do not change — not refetched on Refresh
+        lh = _long_history(symbol, False) if need else None
+        return value_lens.build_valuation_range(kind, rv_view.get("fields") or {}, stmts, lh,
+                                                mc_why, ccy, today)
+    except Exception as e:  # noqa: BLE001 — a context block must not fail the page
+        return {"measure": None, "label": None, "now": None, "now_basis": None,
+                "points": [], "median": None, "low": None, "high": None,
+                "grade_hint": None, "normalized": False, "now_normalized": None,
+                "normalized_grade_hint": None, "grade": None, "status": "no_data",
+                "warnings": [f"valuation range not computed: {type(e).__name__}: {e}"[:200]]}
+
+
+def _rule_inputs(symbol: str, security: dict, stmts: dict | None,
+                 div_payload: dict | None, today: dt.date) -> dict | None:
+    """value_lens.build_rule_inputs with its inputs: the filed quarters
+    (stocks / banks) or the distribution history (funds). Never raises."""
+    try:
+        kind = ("fund" if security.get("is_fund") else
+                "bank" if security.get("is_bank") else "stock")
+        return value_lens.build_rule_inputs(
+            kind, stmts, (div_payload or {}).get("events") or [], today,
+            sessions_listed=security.get("sessions_listed"),
+            currency=str(security.get("financial_currency") or "USD").upper())
+    except Exception as e:  # noqa: BLE001 — a context block must not fail the page
+        return {"kind": None, "rules": [], "as_of": None, "filed": None, "status": "no_data",
+                "warnings": [f"rule inputs not computed: {type(e).__name__}: {e}"[:200]]}
 
 
 def _value_lens_with_freshness(mcap: float | None, stmts: dict | None,

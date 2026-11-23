@@ -249,15 +249,17 @@ def test_stance_flow_end_to_end(client, tmp_db, tmp_discussions):
     assert client.get("/api/analysis/XOM").json()["claude_stance"] is None
 
 
-def test_prompt_v5_stance_contract(client):
+def test_prompt_v6_verdict_contract(client):
+    # v6: the verdict (docs/VERDICT_SPEC.md) replaces stance / stance_note
     p = client.get("/api/analysis/AAPL/prompt").json()["prompt"]
-    assert "stance:" in p and "stance_horizon:" in p and "stance_note:" in p
+    assert "verdict:" in p and "stance_horizon:" in p and "verdict_note:" in p
+    assert "stance:" not in p and "stance_note:" not in p
     assert "not a short-term direction call" in p
-    # v5: no "omit it" escape — an unclear picture is a watch with conditions,
-    # unfinished research is a watch labeled as such
+    # no "omit it" escape; unfinished research is unrated, labeled as such
     assert "or omit" not in p
-    assert 'stance_note starts with "research incomplete"' in p
-    assert "at least one upgrade_if and one downgrade_if" in p
+    assert 'An unrated `verdict_note` starts "research incomplete" when the research is ' \
+           'incomplete' in p
+    assert "at least one `upgrade_if` and one `downgrade_if`" in p
     assert "upgrade_if:" in p and "downgrade_if:" in p and "review_by:" in p
 
 

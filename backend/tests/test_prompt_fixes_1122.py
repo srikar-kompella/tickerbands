@@ -49,6 +49,8 @@ def _guards(p):
     assert all(n.startswith(("never a price direction", "never invent one")) for n in nevers), nevers
     text = p[p.index("## Your task, in order"):p.index("<examples>")]
     assert "?" not in text
+    # "Wait" is an options row (spec §5), not a pause: only its row labels are exempt
+    text = text.replace("Buy / Wait / Pass", "").replace("Hold / Wait", "")
     left = re.sub(r"(?i)(do not|does not|never|stops to) (ask|wait)\w*|asked the user "
                   r"nothing|in place of asking", "", text)
     assert not re.search(r"(?i)\b(ask|wait|confirm with|check with|clarif)\w*", left), \
@@ -131,7 +133,7 @@ def test_fund_variant(base):
     assert ("(the distribution per share, the return-of-capital share, NAV erosion against "
             "the index, the fee, the tracking gap)") in s3
     # step 4: the SPY-based net figure is not the fund's own doing
-    s4 = _step(p, "4. Analyze", "5. Lay out")
+    s4 = _step(p, "4. Analyze", "5. Set the verdict")
     assert "measured against SPY, not against the fund's own index" in s4
     assert "do not read the SPY-based net figure as the fund's own doing" in s4
     assert "how much of each large move was the company's own" not in s4
@@ -182,7 +184,7 @@ def test_bank_variant(base):
     s3 = _step(p, "3. Set and check", "4. Analyze")
     assert ("(price to tangible book, net interest margin, nonperforming loans, a capital "
             "ratio, deposits)") in s3
-    s4 = _step(p, "4. Analyze", "5. Lay out")
+    s4 = _step(p, "4. Analyze", "5. Set the verdict")
     assert "Set aside its cash-flow, enterprise-value and acquisition rows" in s4
     _guards(p)
 
@@ -216,7 +218,7 @@ def test_new_listing_variant(base):
             "   - 2026-11-20 (Fri): the Day move row in <snapshot>\n") in s1
     assert ('move_cause "found" when each has its cause; research_status "partial" and '
             'move_cause "not_found" when one does not') in s1
-    s4 = _step(p, "4. Analyze", "5. Lay out")
+    s4 = _step(p, "4. Analyze", "5. Set the verdict")
     assert "no move needs a story" not in s4
     assert "For each session listed in step 1, give the competing explanations" in s4
     # pre-IPO balance sheet and share-count caveats
@@ -230,7 +232,7 @@ def test_new_listing_with_no_large_move_says_the_test_could_not_run(base):
     a = _new_listing(base)
     a["recent_sessions"] = [{**x, "change_pct": 1.2} for x in a["recent_sessions"]]
     a["price_basis"] = {**a["price_basis"], "day_move_pct": 1.2}
-    s4 = _step(_prompt(a), "4. Analyze", "5. Lay out")
+    s4 = _step(_prompt(a), "4. Analyze", "5. Set the verdict")
     assert ("The app could not test any session against 2σ (the price history is too short) "
             "and step 1 lists no move of 5% or more.") in s4
 
@@ -349,7 +351,7 @@ def test_near_miss_is_listed_and_recorded_without_touching_move_cause(base):
     assert ("A near miss does not change move_cause or research_status, which follow the 2σ "
             "sessions only; one whose cause you did not find goes under `## Unknowns` with the "
             "searches you ran.") in s1
-    s4 = _step(p, "4. Analyze", "5. Lay out")
+    s4 = _step(p, "4. Analyze", "5. Set the verdict")
     assert "Do the same for each near miss listed there." in s4
     out = p[p.index("## Output contract"):]
     assert "(near misses, market-wide moves and older sessions do not count here)" in out
@@ -438,7 +440,7 @@ def test_window_wording_matches_the_code(tmp_db, monkeypatch):
                                 "last_note": "2026-11-05"}
     s1 = _step1(_prompt(a))
     assert ("Window: 2026-11-05 → 2026-11-21 (16 days back, 12 trading sessions) — since the last research note on this "
-            "ticker that still stands (OK or STALE in <prior_notes>), at most 30 days back, or "
+            "ticker that still stands (Current or Out of date in <prior_notes>), at most 30 days back, or "
             "the last 5 trading sessions, whichever is longer. Here it starts at the note of "
             "2026-11-05.") in s1
     # longer than 5 sessions: one sweep for the last 5, one per calendar week before
@@ -459,9 +461,9 @@ def test_incremental_run_when_an_ok_note_is_under_24_hours_old(tmp_db, monkeypat
     _fresh_note()
     a = _analyze(monkeypatch, rf.nvda_providers(), rf.NVDA_NOW, "NVDA")
     p = _prompt(a)
-    assert "STATUS: OK" in _block(p, "prior_notes")
+    assert "trust: Current" in _block(p, "prior_notes")
     s1 = _step1(p)
-    assert ("This is an incremental run: the note of 2026-11-21T09:00 in <prior_notes> is OK "
+    assert ("This is an incremental run: the note of 2026-11-21T09:00 in <prior_notes> is Current "
             "and less than 24 hours old") in s1
     assert "the short list below, since 2026-11-21T09:00" in s1
     assert '("as of 2026-11-21, earlier note")' in s1

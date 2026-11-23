@@ -210,6 +210,17 @@ def fetch_dividends(symbol: str) -> dict[str, Any]:
             "as_of": _ny_today().isoformat()}
 
 
+def fetch_history_long(symbol: str, years: int = 6) -> dict[str, Any]:
+    """Same shape as yfinance.fetch_history_long: closes, splits (none) and
+    the mock distribution stream."""
+    bars = [{"date": b["date"], "close": b["close"]}
+            for b in fetch_history(symbol, int(years * 252))]
+    return {"available": True, "bars": bars, "splits": [],
+            "dividends": fetch_dividends(symbol)["events"], "source": "mock",
+            "first_date": bars[0]["date"] if bars else None,
+            "as_of": _ny_today().isoformat()}
+
+
 def fetch_eps_ttm(symbol: str) -> dict[str, Any]:
     """Matches fetch_fundamentals' eps_ttm so mock mode never self-diverges."""
     return {"eps_ttm": round(1 + _seed(symbol, "eps") * 12, 2),
@@ -223,7 +234,9 @@ def fetch_statements(symbol: str) -> dict[str, Any]:
     ann = [{"revenue": base * (1 - 0.06 * i), "net_income": ni * (1 - 0.08 * i),
             "ebit": ni * 1.3 * (1 - 0.08 * i), "eff_tax_rate": 0.21,
             "fcf": fcf * (1 - 0.07 * i),
-            "acquisitions": -base * 0.01 * _seed(symbol, f"acq{i}")}
+            "acquisitions": -base * 0.01 * _seed(symbol, f"acq{i}"),
+            # undated mock years: valuation_range leaves them out (no_data)
+            "shares_diluted": None, "shares_filed": None, "tangible_book": None}
            for i in range(5)]
     q_end = _ny_today() - dt.timedelta(days=40)
     quarters = [{"end": (q_end - dt.timedelta(days=91 * i)).isoformat(),

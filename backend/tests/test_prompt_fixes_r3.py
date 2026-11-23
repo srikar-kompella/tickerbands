@@ -202,7 +202,7 @@ def test_prompt_labels_a_market_move_and_does_not_ask_for_its_cause(base):
             "research_status.") in s1
     assert "- Fri 2026-11-20: the Day move row above; SPY −12.00%; net −1.20% — market-wide " \
            "move" in snap
-    s4 = _step(p, "4. Analyze", "5. Lay out")
+    s4 = _step(p, "4. Analyze", "5. Set the verdict")
     assert "No session in the window still needs a cause" in s4
     assert "(near misses, market-wide moves and older sessions do not count here)" in out
     _guards(p)
@@ -226,8 +226,8 @@ def test_prior_note_with_na_reads_ok_for_a_market_move(base):
                                      "news_window": "2026-11-16..2026-11-21"})
     notes = _block(_prompt({**base, "recent_sessions": _market_rows(base["recent_sessions"])}),
                    "prior_notes")
-    assert "STATUS: OK" in notes
-    assert "STATUS: INVALID" in _block(_prompt(base), "prior_notes")
+    assert "trust: Current" in notes
+    assert "trust: Don't use" in _block(_prompt(base), "prior_notes")
 
 
 # ── 3 & 4. research_status, pages that refuse to open, thin coverage ─────────
@@ -251,15 +251,17 @@ def test_research_status_covers_a_page_that_refused_to_open(base):
     _guards(p)
 
 
-def test_thin_coverage_may_keep_the_stance_with_a_reason_and_the_app_rule_stays(base):
-    s6 = _step(_prompt(base), "6. Give one stance", "7. Check your work")
-    assert ("If research_status is failed, or partial because a required search was not run, "
-            "the stance is watch instead") in s6
+def test_thin_coverage_may_keep_the_verdict_with_a_reason_and_the_app_rule_stays(base):
+    # v6: the verdict takes the place of the stance; unrated takes the place of watch
+    s5 = _step(_prompt(base), "5. Set the verdict", "6. Lay out the options")
+    assert ("(1) research_status \"failed\" or a required search not run (a hard flag could "
+            "be missing), with no hard flag → unrated") in s5
+    assert "(4) value grade paused, or too little clean data → unrated" in s5
     assert ("When every required search ran and only a listed session's cause is still not "
             "found, research_status stays \"partial\" and move_cause \"not_found\", but the "
-            "stance may stay the one your analysis supports (hold or buy, for example) where "
-            "stance_note starts with \"research incomplete\" and gives the reason the missing "
-            "cause does not change the thesis; without such a reason it is watch.") in s6
+            "steps still apply where `verdict_note` starts with \"research incomplete\" and "
+            "gives the reason the missing cause changes neither grade; without such a reason "
+            "it is unrated.") in s5
     # the app side is unchanged: partial is INVALID and flagged on the stance
     n = _note("2026-11-21T09:00:00", prompt_version=5, research_status="partial",
               move_cause="not_found")
@@ -319,10 +321,10 @@ def test_future_dated_conditions_are_pending_without_a_search(base):
 def test_length_budget_and_the_shorter_incremental_note(base, monkeypatch):
     out = _out(_prompt(base))
     assert "Aim for about 1,100 words excluding tables and stay under 1,300" in out
-    assert "500 words" not in out
+    assert "700 words" not in out
     _fresh_note()
     inc = _out(_prompt(_analyze(monkeypatch, rf.nvda_providers(), rf.NVDA_NOW, "NVDA")))
-    assert ("On this incremental run aim for about 500 words and do not restate the earlier "
+    assert ("On this incremental run aim for about 700 words and do not restate the earlier "
             "note: point to it for anything unchanged.") in inc
 
 
@@ -360,19 +362,19 @@ def test_capped_window_says_30_days_back(base):
 
 def test_invalid_sentence_only_with_an_invalid_note(tmp_db, monkeypatch):
     p0 = _prompt(_analyze(monkeypatch, rf.nvda_providers(), rf.NVDA_NOW, "NVDA"))
-    assert "A note marked INVALID" not in p0
+    assert "A note marked Don't use" not in p0
     _fresh_note()                                    # an OK note
     s4 = _step(_prompt(_analyze(monkeypatch, rf.nvda_providers(), rf.NVDA_NOW, "NVDA")),
-               "4. Analyze", "5. Lay out")
-    assert "Carry a fact forward from an OK or STALE note" in s4
-    assert "A note marked INVALID" not in s4
+               "4. Analyze", "5. Set the verdict")
+    assert "Carry a fact forward from a Current or Out of date note" in s4
+    assert "A note marked Don't use" not in s4
     rf.add_discussion("NVDA", "2026-11-20T21:00:00", "Unfinished",
                       research_meta={"prompt_version": 5, "research_status": "partial",
                                      "move_cause": "not_found",
                                      "news_window": "2026-11-16..2026-11-20"})
     s4 = _step(_prompt(_analyze(monkeypatch, rf.nvda_providers(), rf.NVDA_NOW, "NVDA")),
-               "4. Analyze", "5. Lay out")
-    assert "A note marked INVALID is not a basis for anything" in s4
+               "4. Analyze", "5. Set the verdict")
+    assert "A note marked Don't use is not a basis for anything" in s4
 
 
 # ── 12. a fund's EDGAR search names the trust ────────────────────────────────

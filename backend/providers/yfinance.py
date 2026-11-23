@@ -53,6 +53,38 @@ def fetch_history(symbol: str, days: int = 130) -> list[dict[str, Any]]:
     return out
 
 
+def fetch_history_long(symbol: str, years: int = 6) -> dict[str, Any]:
+    """About `years` of daily closes with the split and distribution events
+    in the same series (valuation_range: prices at the last five fiscal
+    year-ends and trailing-12-month distribution rates). Closes are
+    split-adjusted, not dividend-adjusted (auto_adjust=False); distributions
+    are split-adjusted the same way. Compact: date + close only."""
+    yf = _yf()
+    import datetime as _dt
+    start = (_dt.date.today() - _dt.timedelta(days=int(years * 365.25) + 10)).isoformat()
+    try:
+        df = yf.Ticker(symbol).history(start=start, auto_adjust=False, actions=True)
+    except Exception as e:
+        raise ProviderError("unavailable", f"yfinance long history: {e}")
+    if df is None or df.empty:
+        raise ProviderError("no_data", f"no long history for {symbol}")
+    bars, splits, divs = [], [], []
+    for ts, row in df.iterrows():
+        d = ts.date().isoformat()
+        c = row.get("Close")
+        if c is not None and c == c and float(c) > 0:
+            bars.append({"date": d, "close": round(float(c), 4)})
+        s = row.get("Stock Splits")
+        if s is not None and s == s and float(s) > 0:
+            splits.append({"date": d, "ratio": float(s)})
+        v = row.get("Dividends")
+        if v is not None and v == v and float(v) > 0:
+            divs.append({"date": d, "amount": round(float(v), 6)})
+    return {"available": True, "bars": bars, "splits": splits, "dividends": divs,
+            "source": "yfinance", "first_date": bars[0]["date"] if bars else None,
+            "as_of": _dt.date.today().isoformat()}
+
+
 def fetch_quote(symbol: str) -> dict[str, Any]:
     """Quote synthesized from recent daily bars (yfinance fast_info where
     available). No extended-hours fields — is_extended is always False here."""
@@ -284,11 +316,32 @@ def fetch_statements(symbol: str) -> dict[str, Any]:
     a_ocf = _row(acf, *OCF) or []
     a_capex = _row(acf, *CAPEX) or []
     a_acq = _row(acf, "Purchase Of Business", "Net Business Purchase And Sale") or []
+    a_dil = _row(ais, "Diluted Average Shares") or []
+    # tangible book at each fiscal year-end (annual balance sheet, matched by
+    # date): equity − preferred − goodwill & intangibles (valuation_range)
+    tb_by_end: dict[str, float] = {}
+    try:
+        a_eq = _row(bs, "Stockholders Equity", "Common Stock Equity") or []
+        a_gwi = _row(bs, "Goodwill And Other Intangible Assets") or []
+        a_gw = _row(bs, "Goodwill") or []
+        a_pref = _row(bs, "Preferred Stock Equity", "Preferred Stock") or []
+        for j in range(len(bs.columns)):
+            eq_j, gwi_j = _at(a_eq, j), _at(a_gwi, j)
+            if gwi_j is None:
+                gwi_j = _at(a_gw, j)
+            if eq_j is not None and gwi_j is not None:
+                tb_by_end[_col_date(bs, j)] = eq_j - (_at(a_pref, j) or 0.0) - gwi_j
+    except Exception:
+        tb_by_end = {}
     annual = []
     for i in range(min(5, max(len(a_rev), len(a_ni)))):
         ocf_i, cap_i = _at(a_ocf, i), _at(a_capex, i)
         pre_i, tax_i = _at(a_pre, i), _at(a_tax, i)
         annual.append({
+            # Yahoo gives no filing date: valuation_range reconciles splits
+            # against today's share count instead
+            "shares_diluted": _at(a_dil, i), "shares_filed": None,
+            "tangible_book": tb_by_end.get(_col_date(ais, i)),
             "end": _col_date(ais, i),
             "revenue": _at(a_rev, i), "net_income": _at(a_ni, i), "ebit": _at(a_ebit, i),
             "eff_tax_rate": (tax_i / pre_i if pre_i not in (None, 0) and tax_i is not None else None),

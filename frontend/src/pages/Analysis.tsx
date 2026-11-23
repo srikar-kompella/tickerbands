@@ -15,13 +15,15 @@ import { DiscussionTimeline } from '@/components/discussions/DiscussionTimeline'
 import {
   AnalystPanel, ContextPanel, EarningsPanel, FundamentalsPanel, InsidersPanel,
   NewsPanel, OptionsPanel, OwnershipPanel, ShortInterestPanel, SocialPanel,
-  ValueLensPanel, isFund, isNewListing, panelStatus, type PanelKey,
+  ValueLensPanel, isFund, isNewListing, newListingCapped, panelStatus, type PanelKey,
 } from '@/components/analysis/Panels'
 import { fmtDate } from '@/lib/format'
 import { PremiumLensCard } from '@/components/analysis/PremiumLensCard'
 import { SetupScoreCard } from '@/components/analysis/SetupScoreCard'
 import { SnapshotHeader } from '@/components/analysis/SnapshotHeader'
 import { VolBandCard } from '@/components/analysis/VolBandCard'
+import { VerdictCard } from '@/components/analysis/VerdictCard'
+import { asTrust, discussionTrust } from '@/components/verdict'
 import { Button, Card, Disclosure, EmptyState, SkeletonCard } from '@/components/ui'
 import {
   useAnalysis, useDiscussions, useGlossary, useRefreshAnalysis,
@@ -95,17 +97,26 @@ function QuietSections({ items, notApplicable }: {
 function NewListingNote({ a, items, notApplicable }: {
   a: AnalysisData; items: QuietItem[]; notApplicable: string[]
 }) {
-  const n = a.security?.sessions_listed
+  const n = a.sessions_listed ?? a.security?.sessions_listed
   const first = a.security?.first_trade_date
   const when = n != null
     ? `Listed ${n} session${n === 1 ? '' : 's'} ago${first ? ` (first trade ${fmtDate(first)})` : ''}`
     : `Newly listed${first ? ` (first trade ${fmtDate(first)})` : ''}`
+  // two separate facts: < 21 sessions → no σ / beta yet (is_new_listing);
+  // < 252 sessions → the verdict cap for stocks and banks (listed_under_a_year)
+  const shortHistory = isNewListing(a)
+  const capped = newListingCapped(a)
+  const parts = [
+    shortHistory ? 'history too short for σ and beta; the 80% range, realized vol and beta start once enough sessions have traded' : '',
+    capped ? 'listed under a year — verdict capped at Fair until its first quarter of public results' : '',
+  ].filter(Boolean)
+    // the first part follows " — "; later ones start a sentence
+    .map((p, i) => (i ? p[0].toUpperCase() + p.slice(1) : p))
   return (
     <div role="note" className="mt-3 space-y-1.5 rounded-xl border border-accent/30 bg-accent/[0.06] px-4 py-2.5">
       <p className="text-[13px] text-text">
         <span className="font-medium">{when}</span>
-        <span className="text-muted"> — history too short for σ and beta; the 80% range,
-        realized vol and beta start once enough sessions have traded.</span>
+        {parts.length > 0 && <span className="text-muted"> — {parts.join('. ')}.</span>}
       </p>
       {!!items.length && (
         <QuietList items={items} label={
@@ -139,6 +150,12 @@ export default function Analysis({ symbol, setSymbol }: {
 
   const glossary = glossaryData?.entries ?? {}
   const watched = !!watchlist?.some((w) => w.symbol === symbol)
+  // trust of the note behind the verdict: the payload's own, else the
+  // timeline's judgment of the same note (same id)
+  const stanceNote = a?.claude_stance
+    ? discussions?.find((d) => d.id === a.claude_stance!.id) : undefined
+  const stanceTrust = asTrust(a?.claude_stance?.trust) ?? (stanceNote ? discussionTrust(stanceNote) : null)
+  const stanceTrustReason = a?.claude_stance?.status_reason ?? stanceNote?.status_reason ?? null
 
   // which sections have something to show; the rest are named once at the foot
   // A fund has no earnings, insiders, analyst coverage or statements: those
@@ -201,9 +218,24 @@ export default function Analysis({ symbol, setSymbol }: {
             watched={watched}
             onToggleWatch={() =>
               watched ? remove.mutate(a.symbol) : add.mutate({ symbol: a.symbol })}
+            stanceTrust={stanceTrust}
+            stanceTrustReason={stanceTrustReason}
           />
 
-          {newListing && <NewListingNote a={a} items={quiet} notApplicable={notApplicable} />}
+          {/* the empty sections fold into the note only for a days-old listing;
+              a listing under a year just gets the verdict-cap sentence */}
+          {(newListing || newListingCapped(a)) && (
+            <NewListingNote a={a} items={newListing ? quiet : []}
+              notApplicable={newListing ? notApplicable : []} />
+          )}
+
+          {/* the verdict, its two axes and what it means for you — near the top */}
+          {(a.claude_stance || a.valuation_range) && (
+            <div className="pt-4">
+              <VerdictCard a={a} g={glossary} trust={stanceTrust} trustReason={stanceTrustReason}
+                onAskClaude={() => setAskOpen(true)} />
+            </div>
+          )}
 
           {/* chart beside the at-a-glance rail; stacked when the content is narrow */}
           <div className="grid grid-cols-1 items-start gap-4 pt-4 @4xl:grid-cols-3">

@@ -7,10 +7,18 @@ import { fmtMoney, fmtPct, plColor } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { Badge, Button, Stat } from '@/components/ui'
 import { useExtendedHours } from '@/hooks'
-import type { Analysis, GlossaryEntry } from '@/types'
+import {
+  EarlierStance, TrustWord, VerdictPill, asTrust, ownerParts, ownerText, readVerdict, stanceOwned,
+  trustFromStatus,
+} from '@/components/verdict'
+import type { Analysis, GlossaryEntry, Trust } from '@/types'
 
-export function SnapshotHeader({ a, onRefresh, refreshing, onAskClaude, watched, onToggleWatch, glossary }: {
+export function SnapshotHeader({ a, onRefresh, refreshing, onAskClaude, watched, onToggleWatch, glossary,
+  stanceTrust, stanceTrustReason }: {
   a: Analysis
+  /** trust of the note behind the verdict, when the payload does not carry it (from the timeline) */
+  stanceTrust?: Trust | null
+  stanceTrustReason?: string | null
   onRefresh: () => void
   refreshing: boolean
   onAskClaude: () => void
@@ -40,10 +48,17 @@ export function SnapshotHeader({ a, onRefresh, refreshing, onAskClaude, watched,
   // (prompt v5: upgrade/downgrade conditions, review date, confidence) — the
   // same lines the report prints under the stance.
   const sf = rvf.claude_stance
-  const stanceTip = a.claude_stance ? [
-    a.claude_stance.stance_note ?? '',
-    a.claude_stance.created_ts.slice(0, 10)
-      + (a.claude_stance.drift_material ? ' — price has moved beyond the expected range since this call' : ''),
+  const cs = a.claude_stance
+  // prompt v6 verdict; an earlier-format note keeps its old stance word
+  const v = readVerdict(cs ? { ...sf, ...cs } : null)
+  const trust = asTrust(cs?.trust) ?? asTrust(sf?.trust) ?? trustFromStatus(cs?.status) ?? stanceTrust ?? null
+  const owner = ownerParts(v.verdict, stanceOwned(cs) ?? a.position?.owned ?? null, cs?.owner_line,
+    cs?.owner_note ?? sf?.owner_note)
+  const stanceTip = cs ? [
+    (v.verdict ? cs.verdict_note : null) ?? cs.stance_note ?? '',
+    ownerText(owner),
+    cs.created_ts.slice(0, 10)
+      + (cs.drift_material ? ' — price has moved beyond the expected range since this call' : ''),
     sf?.upgrade_if?.length ? `Upgrade if: ${sf.upgrade_if.join('; ')}` : '',
     sf?.downgrade_if?.length ? `Downgrade if: ${sf.downgrade_if.join('; ')}` : '',
     [sf?.review_by ? `review by ${sf.review_by}` : '', sf?.confidence ? `confidence ${sf.confidence}` : '']
@@ -186,19 +201,22 @@ export function SnapshotHeader({ a, onRefresh, refreshing, onAskClaude, watched,
         {/* Research stance: surfaced from the latest Claude discussion — the
             app never computes buy/sell/hold itself (signals can't call
             direction; a reasoned session judgment is a different animal). */}
-        <Stat label="claude stance" tip={glossary.research_stance}>
+        <Stat label={v.verdict || !cs ? 'verdict' : 'claude stance'} tip={glossary.verdict ?? glossary.research_stance}>
           {a.claude_stance ? (
             <span className="inline-flex flex-wrap items-center gap-1.5"
               title={stanceTip}>
-              <Badge tone={
-                a.claude_stance.stance === 'buy' ? 'up'
-                  : a.claude_stance.stance === 'sell' || a.claude_stance.stance === 'trim' ? 'down'
-                    : 'accent'}>
-                {/* sell on a name the user does not own means avoid (prompt v5);
-                    the backend decides — the note's `owned`, else the account */}
-                {a.claude_stance.label ?? a.claude_stance.stance.toUpperCase()}
-                {a.claude_stance.stance_horizon && ` · ${a.claude_stance.stance_horizon}`}
-              </Badge>
+              {v.verdict ? (
+                <>
+                  <VerdictPill verdict={v.verdict} />
+                  {v.axes && <span className="text-xs text-muted">({v.axes})</span>}
+                </>
+              ) : (
+                // sell on a name the user does not own means avoid (prompt v5);
+                // the backend decides — the note's `owned`, else the account
+                <EarlierStance cs={a.claude_stance}
+                  word={`${a.claude_stance.label ?? a.claude_stance.stance.toUpperCase()}${a.claude_stance.stance_horizon ? ` · ${a.claude_stance.stance_horizon}` : ''}`} />
+              )}
+              <TrustWord trust={trust} reason={cs?.status_reason ?? stanceTrustReason} />
               {(rvf.claude_stance?.warnings?.length ?? 0) > 0 && (
                 <Badge tone="warn" className="text-[11px]"
                   title={rvf.claude_stance!.warnings.join('\n')}>

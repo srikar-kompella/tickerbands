@@ -9,41 +9,49 @@ import remarkGfm from 'remark-gfm'
 import { fmtDateTime } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { Badge, Card, EmptyState } from '@/components/ui'
-import type { Discussion } from '@/types'
+import {
+  EARLIER_TIP, TRUST_WORD, VerdictPill, discussionTrust, discussionVerdictSource, readVerdict, trustMeaning,
+} from '@/components/verdict'
+import type { Discussion, Trust } from '@/types'
 
 // Can the note still be relied on? Same judgment the research prompt and the
-// report give each note (backend research_quality.prior_note_status).
-const STATUS_TAIL: Record<string, string> = {
-  STALE: 'it cannot reflect that move',
-  INVALID: 'do not build on this note',
-  SUPERSEDED: 'do not build on this note',
+// report give each note (backend research_quality.prior_note_status), shown
+// with the trust labels of docs/VERDICT_SPEC.md §9: Current / Out of date /
+// Don't use; a replaced note is folded away (toggle at the foot).
+const TRUST_TAIL: Record<Trust, string> = {
+  current: '',
+  out_of_date: 'it cannot reflect that — re-run research',
+  dont_use: 'do not build on this note',
+  replaced: 'do not build on this note',
 }
 
 function statusLine(d: Discussion): string | null {
-  if (!d.status || d.status === 'OK') return null
-  return `${d.status} — ${d.status_reason ?? 'no reason recorded'}; ${STATUS_TAIL[d.status]}`
+  const t = discussionTrust(d)
+  if (!t || t === 'current') return null
+  return `${TRUST_WORD[t]} — ${d.status_reason ?? 'no reason recorded'}; ${TRUST_TAIL[t]}`
 }
 
 function StatusChip({ d }: { d: Discussion }) {
   const asOf = d.status_as_of ? `Judged against the daily bars through ${d.status_as_of}.` : ''
-  if (!d.status) {
-    // not judged (no cached price history) — say so rather than imply OK
+  const t = discussionTrust(d)
+  if (!t) {
+    // not judged (no cached price history) — say so rather than imply Current
     return d.status_reason
       ? <Badge className="text-[11px]" title={d.status_reason}>unchecked</Badge>
       : null
   }
-  if (d.status === 'OK') {
+  if (t === 'current') {
     return (
       <Badge className="text-[11px]"
-        title={`No check failed: the research was complete and no ≥2σ session was left unexplained or has closed since. ${asOf}`}>
-        OK
+        title={`Current — ${trustMeaning(t)}: the research was complete and no ≥2σ session was left unexplained or has closed since. ${asOf}`}>
+        Current
       </Badge>
     )
   }
   return (
-    <Badge tone={d.status === 'STALE' ? 'warn' : 'down'} className="text-[11px]"
+    <Badge tone={t === 'out_of_date' ? 'warn' : t === 'replaced' ? 'neutral' : 'down'} className="text-[11px]"
       title={`${statusLine(d)}. ${asOf}`}>
-      ⚠ {d.status}
+      {t !== 'replaced' && '⚠ '}{TRUST_WORD[t]}
     </Badge>
   )
 }
@@ -51,6 +59,7 @@ function StatusChip({ d }: { d: Discussion }) {
 function DiscussionCard({ d, currentHash }: { d: Discussion; currentHash?: string }) {
   const [open, setOpen] = useState(false)
   const stale = !!currentHash && !!d.context_hash && d.context_hash !== currentHash
+  const trust = discussionTrust(d)
   return (
     <motion.div
       initial={{ opacity: 0, y: 6 }}
@@ -65,7 +74,20 @@ function DiscussionCard({ d, currentHash }: { d: Discussion; currentHash?: strin
                 <Badge tone="accent">{d.ticker}</Badge>
                 <span className="text-xs text-faint tnum">{fmtDateTime(d.created_ts)}</span>
                 <StatusChip d={d} />
-                {d.tags.map((t) => <Badge key={t} className="text-[11px]">{t}</Badge>)}
+                {(() => {
+                  // top-level verdict fields, else the parsed frontmatter
+                  const v = readVerdict(discussionVerdictSource(d))
+                  if (v.verdict) {
+                    return (
+                      <span className="inline-flex items-center gap-1">
+                        <VerdictPill verdict={v.verdict} className="text-[11px]" title={v.label} />
+                        {v.axes && <span className="text-[11px] text-muted">{v.axes}</span>}
+                      </span>
+                    )
+                  }
+                  return <span className="text-[11px] text-faint" title={EARLIER_TIP}>earlier format</span>
+                })()}
+                {d.tags.map((t, i) => <Badge key={`${i}-${t}`} className="text-[11px]">{t}</Badge>)}
                 {stale && (
                   <Badge tone="warn" className="text-[11px]"
                     title="The analysis snapshot has changed since this discussion">
@@ -92,9 +114,9 @@ function DiscussionCard({ d, currentHash }: { d: Discussion; currentHash?: strin
               {statusLine(d) && (
                 <p className={cn('mt-1 text-[11px] leading-snug',
                   !open && 'truncate',
-                  d.status === 'STALE' ? 'text-warn' : 'text-down')}
+                  trust === 'out_of_date' ? 'text-warn' : trust === 'replaced' ? 'text-muted' : 'text-down')}
                   title={open ? undefined : statusLine(d) ?? undefined}>
-                  ⚠ {open ? statusLine(d) : `${d.status} — ${d.status_reason ?? 'no reason recorded'}`}
+                  ⚠ {open ? statusLine(d) : `${TRUST_WORD[trust!]} — ${d.status_reason ?? 'no reason recorded'}`}
                 </p>
               )}
             </div>
@@ -130,6 +152,9 @@ export function DiscussionTimeline({ discussions, currentHash, emptyAction }: {
   currentHash?: string
   emptyAction?: React.ReactNode
 }) {
+  const [showReplaced, setShowReplaced] = useState(false)
+  const replaced = discussions.filter((d) => discussionTrust(d) === 'replaced')
+  const shown = showReplaced ? discussions : discussions.filter((d) => discussionTrust(d) !== 'replaced')
   if (!discussions.length) {
     return (
       <EmptyState
@@ -143,10 +168,19 @@ export function DiscussionTimeline({ discussions, currentHash, emptyAction }: {
   return (
     <div className="space-y-2">
       <AnimatePresence>
-        {discussions.map((d) => (
+        {shown.map((d) => (
           <DiscussionCard key={d.id} d={d} currentHash={currentHash} />
         ))}
       </AnimatePresence>
+      {/* replaced notes stay reachable — folded, not dropped */}
+      {!!replaced.length && (
+        <button onClick={() => setShowReplaced((s) => !s)} aria-expanded={showReplaced}
+          className="flex items-center gap-1 pt-1 text-xs text-faint hover:text-muted"
+          title="Notes a later note replaced (listed in its supersedes) — kept for the record; do not build on them">
+          <ChevronDown className={cn('h-3 w-3 transition-transform', showReplaced && 'rotate-180')} />
+          {showReplaced ? 'Hide' : 'Show'} {replaced.length} replaced note{replaced.length === 1 ? '' : 's'}
+        </button>
+      )}
     </div>
   )
 }

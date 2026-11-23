@@ -90,9 +90,32 @@ PREFERRED_SHARES = ["PreferredStockSharesOutstanding", "PreferredStockSharesIssu
 # AssetsNet last filed for 2025-12-31 beside a 2026-09-30 balance sheet) —
 # the latest instant up to this many days before the balance-sheet date
 INTANGIBLES_MAX_AGE_DAYS = 370
+# lines only the soft-signal arithmetic reads (rule_quarters → rule_inputs,
+# docs/VERDICT_SPEC.md §6b); quarterly flows and quarter-end instants
+RULE_FLOW = {
+    "interest_expense": ["InterestExpense", "InterestExpenseNonoperating", "InterestExpenseDebt",
+                         "InterestAndDebtExpense", "InterestExpenseBorrowings"],
+    "d_and_a": ["DepreciationDepletionAndAmortization", "DepreciationAndAmortization",
+                "DepreciationAmortizationAndAccretionNet", "Depreciation"],
+    # banks: efficiency ratio = non-interest expense ÷ (net interest income +
+    # non-interest income)
+    "noninterest_expense": ["NoninterestExpense"],
+    "net_interest_income": ["InterestIncomeExpenseNet"],
+    "noninterest_income": ["NoninterestIncome"],
+}
+RULE_INSTANT = {
+    "receivables": ["AccountsReceivableNetCurrent", "ReceivablesNetCurrent",
+                    "AccountsNotesAndLoansReceivableNetCurrent"],
+    "inventory": ["InventoryNet", "InventoryNetOfAllowancesCustomerAdvancesAndProgressBillings"],
+    "deposits": ["Deposits"],                     # banks
+}
+RULE_QUARTERS = 9             # two quarters, the same two a year earlier, and TTM sums
 # share counts (unit "shares"): weighted-average counts are filed without a
-# share-class dimension, so they exist for multi-class companies too
-SHARES_DILUTED = ["WeightedAverageNumberOfDilutedSharesOutstanding"]
+# share-class dimension, so they exist for multi-class companies too.
+# Older years can sit under another tag (GOOGL 2020–21) — every candidate is
+# read and the facts combined per period (`_facts_combined`)
+SHARES_DILUTED = ["WeightedAverageNumberOfDilutedSharesOutstanding",
+                  "WeightedAverageNumberOfShareOutstandingBasicAndDiluted"]
 SHARES_BASIC = ["WeightedAverageNumberOfSharesOutstandingBasic"]
 # a filer with these lines is a deposit-taking bank (fallback when the SIC
 # code is not at hand)
@@ -136,6 +159,27 @@ def _facts(us: dict, tags: list[str], unit: str | None = None,
         if end > best_end:
             best_tag, best, best_end = tag, rows, end
     return best_tag, best
+
+
+def _facts_combined(us: dict, tags: list[str], unit: str | None = None,
+                    duration: bool = True) -> list[dict]:
+    """Every candidate tag's facts, combined per period: the first tag in
+    the list that has a period wins it (latest filing within a tag), so a
+    company that moved tags keeps its older years (share counts)."""
+    out: dict[tuple, dict] = {}
+    for tag in tags:
+        units = ((us.get(tag) or {}).get("units") or {})
+        rows = units.get(unit) if unit else (units.get("USD") or [])
+        per: dict[tuple, dict] = {}
+        for r in rows or []:
+            if ("start" in r) != duration or r.get("val") is None:
+                continue
+            k = (r.get("start"), r["end"])
+            if k not in per or r.get("filed", "") > per[k].get("filed", ""):
+                per[k] = r
+        for k, r in per.items():
+            out.setdefault(k, r)
+    return list(out.values())
 
 
 def _find(rows: list[dict], end: dt.date, lo: int, hi: int,
@@ -371,6 +415,38 @@ def normalize(facts: dict) -> dict[str, Any]:
         _, ps_rows = _facts(us, PREFERRED_SHARES, "shares", duration=False)
         pref_shares = _instant_at(ps_rows, bal_date)[0] if ps_rows else None
 
+    # per fiscal year (valuation_range, docs/VERDICT_SPEC.md §6): the
+    # fiscal-year weighted-average diluted share count with the date it was
+    # filed (a count filed before a later stock split is not restated for
+    # it), and the tangible book at the year-end (equity − preferred −
+    # goodwill & intangibles; None when a component cannot be dated to it)
+    dil_rows = _facts_combined(us, SHARES_DILUTED, "shares")
+    pref_any = bool(inst.get("preferred_equity"))
+    for a in annual:
+        e = _d(a["end"])
+        f = _find(dil_rows, e, 350, 380, tol=3) if dil_rows else None
+        a["shares_diluted"] = float(f["val"]) if f else None
+        a["shares_filed"] = f.get("filed") if f else None
+        if f is None and flows.get("eps_diluted") and a.get("net_income"):
+            # no undimensioned count (GOOGL 2020–21 filed counts per share
+            # class only): net income ÷ diluted EPS, both as filed that year
+            ef = _find(flows["eps_diluted"], e, 350, 380, tol=3)
+            if ef and float(ef["val"]) > 0 and a["net_income"] > 0:
+                a["shares_diluted"] = a["net_income"] / float(ef["val"])
+                a["shares_filed"] = ef.get("filed")
+                a["shares_derived"] = "net income ÷ diluted EPS"
+        eq_e = _instant_at(inst["equity"], e)[0] if inst.get("equity") else None
+        gwi_e = _instant_within(inst["goodwill_intangibles"], e)[0] \
+            if inst.get("goodwill_intangibles") else None
+        if gwi_e is None and (inst.get("goodwill") or inst.get("intangibles")):
+            g_e = _instant_within(inst["goodwill"], e)[0] if inst.get("goodwill") else None
+            i_e = _instant_within(inst["intangibles"], e)[0] if inst.get("intangibles") else None
+            gwi_e = (g_e or 0.0) + (i_e or 0.0) if g_e is not None or i_e is not None else None
+        # no preferred line within a year of the year-end → none outstanding
+        pref_e = (_instant_within(inst["preferred_equity"], e)[0] if pref_any else None) or 0.0
+        a["tangible_book"] = (eq_e - pref_e - gwi_e
+                              if eq_e is not None and gwi_e is not None else None)
+
     # weighted-average share counts for the latest income-statement quarter
     # (the 3-month fact; a 10-K's Q4 has none, then the fiscal-year average)
     shares: dict[str, Any] = {}
@@ -393,8 +469,13 @@ def normalize(facts: dict) -> dict[str, Any]:
         return bool(latest and ref and (ref - _d(latest)).days <= 400)
     bank_like = recent(BANK_TAGS[0]) and (recent(BANK_TAGS[1]) or recent(BANK_TAGS[2]))
 
+    rule_quarters = _rule_quarters(us, flows, inst, inc_end, cf_end)
+
     return {
         "available": bool(inc_end or cf_end),
+        "rule_quarters": rule_quarters,
+        # format marker: a cached copy without it is refetched once (composer)
+        "rule_format": 3,
         "ttm": ttm, "quarters": quarters, "annual": annual,
         "balance": {"total_debt": debt, "cash": cash_st, "cash_st": cash_st,
                     "cash_only": cash, "st_investments": st_inv,
@@ -421,6 +502,87 @@ def normalize(facts: dict) -> dict[str, Any]:
                    if filing else "SEC XBRL"),
         "as_of": dt.date.today().isoformat(),
     }
+
+
+def _rule_quarters(us: dict, flows: dict[str, list[dict]], inst: dict[str, list[dict]],
+                   inc_end: dt.date | None, cf_end: dt.date | None) -> list[dict]:
+    """Up to RULE_QUARTERS filed quarters, newest first, with what the
+    soft-signal arithmetic needs (docs/VERDICT_SPEC.md §6b): revenue,
+    operating / pretax / net income, tax, free cash flow (only through the
+    cash-flow statement's end), interest expense, D&A, the quarter's diluted
+    weighted-average share count (3-month fact only — a 10-K has none for
+    Q4), and quarter-end receivables, inventory, cash + short-term
+    investments and debt. Bank lines when filed. A line not filed → None."""
+    if not inc_end:
+        return []
+    rf = {k: _facts(us, c)[1] for k, c in RULE_FLOW.items()}
+    ri = {k: _facts(us, c, duration=False)[1] for k, c in RULE_INSTANT.items()}
+    dil = _facts_combined(us, SHARES_DILUTED, "shares")
+
+    def q(rows: list[dict] | None, e: dt.date) -> float | None:
+        return quarter_at(rows, e) if rows else None
+
+    def i(rows: list[dict] | None, e: dt.date) -> float | None:
+        return _instant_at(rows, e)[0] if rows else None
+
+    def debt_at(e: dt.date) -> float | None:
+        total = i(inst.get("debt_total"), e)
+        nonc, cur = i(inst.get("debt_noncurrent"), e), i(inst.get("debt_current"), e)
+        shortb = i(inst.get("short_borrowings"), e)
+        if total is not None:
+            long_part = total
+        elif nonc is not None or cur is not None:
+            long_part = (nonc or 0.0) + (cur or 0.0)
+        else:
+            return None
+        return long_part + (shortb or 0.0)
+
+    out = []
+    # quarter ends from net income (every filer files it each quarter; a
+    # bank's revenue tag can stop — JPM's Revenues ran only to FY2025), else
+    # revenue; only a run of quarterly ends (≤ 120 days apart) is used
+    ends: list[dt.date] = []
+    for rows in (flows.get("net_income"), flows.get("revenue")):
+        cand = _quarter_ends(rows or [])[:RULE_QUARTERS]
+        run = cand[:1]
+        for e in cand[1:]:
+            if (run[-1] - e).days > 120:
+                break
+            run.append(e)
+        if len(run) > len(ends) or (run and ends and run[0] > ends[0]):
+            ends = run
+    if len(ends) < 2:
+        return []
+    for e in ends:
+        ocf = q(flows.get("ocf"), e)
+        cap = q(flows.get("capex"), e)
+        cash = i(inst.get("cash"), e)
+        st = i(inst.get("st_investments"), e)
+        sh = _find(dil, e, 80, 100, tol=3) if dil else None
+        out.append({
+            "end": e.isoformat(),
+            "revenue": q(flows.get("revenue"), e),
+            "operating_income": q(flows.get("operating_income"), e),
+            "pretax_income": q(flows.get("pretax_income"), e),
+            "net_income": q(flows.get("net_income"), e),
+            "tax": q(flows.get("tax"), e),
+            "ocf": ocf,
+            "fcf": ((ocf - abs(cap)) if ocf is not None and cap is not None
+                    and cf_end and e <= cf_end else None),
+            "interest_expense": (abs(v) if (v := q(rf["interest_expense"], e)) is not None
+                                 else None),
+            "d_and_a": q(rf["d_and_a"], e),
+            "shares_diluted": float(sh["val"]) if sh else None,
+            "receivables": i(ri["receivables"], e),
+            "inventory": i(ri["inventory"], e),
+            "cash_st": (cash + (st or 0.0)) if cash is not None else None,
+            "debt": debt_at(e),
+            "noninterest_expense": q(rf["noninterest_expense"], e),
+            "net_interest_income": q(rf["net_interest_income"], e),
+            "noninterest_income": q(rf["noninterest_income"], e),
+            "deposits": i(ri["deposits"], e),
+        })
+    return out
 
 
 def fetch_statements(symbol: str) -> dict[str, Any]:

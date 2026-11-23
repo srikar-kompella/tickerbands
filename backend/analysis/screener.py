@@ -46,7 +46,12 @@ def _cached(section: str, symbol: str, fn: Callable | None, ttl_key: str, force:
 
 HELD_MAX_AGE_SECONDS = 24 * 3600
 _NO_STANCE = {"stance": None, "stance_ts": None, "stance_label": None,
-              "stance_owned": None, "stance_warnings": []}
+              "stance_owned": None, "stance_warnings": [],
+              # prompt v6 verdict (docs/VERDICT_SPEC.md); format "earlier"
+              # for a note from before v6, None with no note
+              "verdict": None, "verdict_label": None, "value_grade": None,
+              "risk_grade": None, "trust": None, "owner_line": None, "owner_note": None,
+              "format": None, "stance_status": None, "listed_under_a_year": None}
 
 
 def held_symbols() -> set[str] | None:
@@ -174,6 +179,13 @@ def _stance_columns(conn, symbol: str, basis: dict, bars: list[dict], now,
         return {**_NO_STANCE, "stance_warnings": orphan}
     if held is not None:
         st["account_owned"] = symbol in held or SHARE_CLASSES.get(symbol) in held
+    # the v6 new-listing cap (docs/VERDICT_SPEC.md §3): stocks and banks
+    # listed under a year (< 252 completed sessions), from what is cached —
+    # the analysis's long history, else a short history that is the whole
+    # life. Never fetched here. Funds have no cap.
+    st.update(_listing_cached(symbol, bars,
+                              bool(bars) and len(bars) < 0.75 * config.HISTORY_DAYS))
+    st["is_new_listing"] = bool(bars) and len(bars) < 21
     divs = cached_dividend_events(symbol)
     big = _market_marked(bars, divs, basis, news_relevance.big_sessions(
         None, basis, research_quality.big_move_sessions(bars, divs)))
@@ -182,10 +194,48 @@ def _stance_columns(conn, symbol: str, basis: dict, bars: list[dict], now,
     warnings = (news_relevance.research_flags(None, st, None, basis, sessions=big,
                                               explained=explained)["stance"]
                 + research_quality.stance_flags(st, bars, today))
+    status = next((s["status"] for r, s in zip(
+        rows, research_quality.prior_note_status(rows, None, basis, big))
+        if r.get("id") == st.get("id")), None)
+    if not bars and status == research_quality.OK:
+        status = None                      # not judged against any session
+    # verdict vs the rulebook, risk vs the lists, the cap — from the note
+    # alone. The value-grade check (vs valuation_range) and the soft-signal
+    # check (vs rule_inputs) need the analysis payload: they show there, not
+    # in this column.
+    vf = research_quality.verdict_fields(st)
     return {"stance": st["stance"], "stance_ts": st["created_ts"],
             "stance_label": research_quality.stance_label(st),
             "stance_owned": research_quality.stance_owned(st),
-            "stance_warnings": warnings}
+            "stance_warnings": warnings,
+            "verdict": vf.get("verdict"), "verdict_label": vf.get("verdict_label"),
+            "value_grade": vf.get("value_grade"), "risk_grade": vf.get("risk_grade"),
+            "owner_line": vf.get("owner_line"), "owner_note": vf.get("owner_note"),
+            "format": vf.get("format"),
+            "listed_under_a_year": st.get("listed_under_a_year"),
+            "stance_status": status, "trust": research_quality.trust(status)}
+
+
+def _listing_cached(symbol: str, bars: list[dict], whole_life: bool) -> dict[str, Any]:
+    """listed_under_a_year / security_kind / public_quarter_filed for the
+    cap, from cached rows only (`history_5y:`, `security_profile:`)."""
+    from analysis import report_view
+    sym = symbol.upper()
+
+    def row(key):
+        try:
+            r = _get_row(key)
+        except Exception:  # noqa: BLE001 — unknown, the cap is not claimed
+            return None
+        return r[0] if r and isinstance(r[0], dict) else None
+    lh = row(f"history_5y:{sym}") or {}
+    facts = report_view.listing_facts(bars if whole_life else None, whole_life,
+                                      lh.get("bars") if lh.get("available") else None, 6)
+    prof = row(f"security_profile:{sym}")
+    kind = report_view.classify_security(row(f"quote:{sym}"), None, True, prof)["kind"]
+    return {"listed_under_a_year": facts["listed_under_a_year"],
+            "public_quarter_filed": facts["public_quarter_filed"],
+            "security_kind": kind}
 
 
 def screen_symbol(symbol: str, providers: dict, force: bool = False,

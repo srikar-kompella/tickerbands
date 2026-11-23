@@ -133,7 +133,7 @@ def test_listed_session_without_a_row_is_named_instead_of_claiming_rows(base):
          "big_move_sessions": base["big_move_sessions"]
          + [{"session_date": "2026-10-29", "z": -2.5, "move_pct": -6.0}]}
     p = _prompt(a)
-    s1, s4 = _step1(p), _step(p, "4. Analyze", "5. Lay out")
+    s1, s4 = _step1(p), _step(p, "4. Analyze", "5. Set the verdict")
     assert "- 2026-10-29 (Thu): −6.00%, −2.50σ" in s1
     assert ("2026-10-29 has no row, so take its close and the S&P 500's move from a dated "
             "source.") in s1
@@ -294,7 +294,7 @@ def test_invalid_redo_is_limited_to_the_window_and_older_line_wording(base, monk
                         lambda *a, **k: [{"session_date": "2026-09-02", "z": -2.41,
                                           "move_pct": -3.1}])
     p = _prompt(base)
-    s1, s4 = _step1(p), _step(p, "4. Analyze", "5. Lay out")
+    s1, s4 = _step1(p), _step(p, "4. Analyze", "5. Set the verdict")
     assert ("redo its work for the sessions inside this window and list its created_ts in "
             "`supersedes`; its failed checks on sessions before the window are not redone "
             "here — step 1 lists them under older sessions still unexplained.") in s4

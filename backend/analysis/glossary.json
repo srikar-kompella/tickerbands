@@ -295,6 +295,41 @@
       "term": "Net Income vs FCF divergence",
       "plain": "An accounting smell-test that flags when reported Net Income exceeds Free Cash Flow by more than 30%.",
       "why": "Highlights potential earnings-quality concerns when accrual paper profits outpace actual cash entering the bank. It does NOT prove accounting manipulation — timing of inventory, receivables, or non-cash charges can legitimately cause temporary divergences."
+    },
+    "verdict": {
+      "term": "Verdict",
+      "plain": "One grade of the security — Attractive, Fair, Stretched, Avoid or Unrated — set by the research session from a fixed rulebook: the value grade sets the starting point, and risk items can only lower it.",
+      "why": "It describes the security, the same for every user; what it means for you (add, hold, trim, wait) is the separate line under it. It is a multi-month judgment, not a call on tomorrow's direction — price trend is never one of its rules."
+    },
+    "value_grade": {
+      "term": "Value grade",
+      "plain": "Cheap, Fair or Expensive: the main valuation measure (usually price to free cash flow) now against its own last five fiscal year-ends. Cheap = at least 15% below its five-year median; Expensive = above its five-year high or more than 1.5× the median.",
+      "why": "It compares the stock with its own history, not with a target price. When cash flow is far above its five-year average the app shows two grades — on the reported figure and on the average — and the research note says which it used. 'Value paused' means the measure cannot be computed reliably."
+    },
+    "risk_grade": {
+      "term": "Risk grade",
+      "plain": "Clean, Watch or Red flag, from the risk items the research found: any hard flag or three soft signals = Red flag; two soft signals, or open watch items, = Watch.",
+      "why": "Risk can only pull the verdict down: a red flag sets Avoid, two soft signals drop it one step. Unconfirmed items show as Watch but never change the verdict."
+    },
+    "hard_flags": {
+      "term": "Hard flag",
+      "plain": "A confirmed finding or event, such as a restatement, an auditor leaving, a going-concern warning, a default, or a confirmed regulator action.",
+      "why": "Any one sets the verdict to Avoid, whatever the valuation — these are the events that break the numbers everything else rests on."
+    },
+    "soft_signals": {
+      "term": "Soft signal",
+      "plain": "A confirmed fact about the business from the rulebook — revenue down two quarters, margins falling, debt rising, a dividend cut — confirmed by a filing, the company, or two periods of data.",
+      "why": "One is shown only; two drop the verdict one step; three or more set Avoid. Each must hold for two quarters (or five sessions of market data) so one noisy period cannot move the verdict."
+    },
+    "watch_items": {
+      "term": "Watch-only item",
+      "plain": "Something unconfirmed or still open: press reports from unnamed sources, an open investigation, a routine class action, an upcoming lock-up expiry.",
+      "why": "Worth knowing, but it never changes the verdict — an investigation is not a finding. If it is confirmed, it moves to a hard flag in the next note; if it is dropped, it is removed."
+    },
+    "trust": {
+      "term": "Trust label",
+      "plain": "How far you can rely on a research note now: Current (fine to rely on), Out of date (something happened since it was written — re-run research), or Don't use (the research failed or missed a large move). A note replaced by a later one is hidden from lists.",
+      "why": "A note ages: a big move or a new filing after it was written can make its verdict stale. The label is checked by the app every time you open the ticker, so an old note never passes as current."
     }
   }
 }

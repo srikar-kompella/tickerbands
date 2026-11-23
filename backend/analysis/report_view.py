@@ -320,7 +320,7 @@ _SCHEDULE_WORD = {12: "monthly", 4: "quarterly", 2: "semi-annual", 1: "annual"}
 
 # ─── field groups (the UI renders a report generically, group by group) ────────
 
-GROUPS = ("price", "fundamentals", "fund", "bank", "options", "context",
+GROUPS = ("price", "fundamentals", "fund", "bank", "valuation", "rules", "options", "context",
           "position", "news", "research")
 _GROUP_OF = {
     **{k: "price" for k in ("price", "after_hours", "day_move", "day_move_sigma", "band_next")},
@@ -338,6 +338,8 @@ _GROUP_OF = {
                                "position_weight")},
     **{k: "news" for k in ("news_sentiment", "headlines", "regulatory", "move_cause")},
     **{k: "research" for k in ("claude_news", "claude_stance")},
+    **{k: "valuation" for k in ("valuation_now", "valuation_points", "valuation_range")},
+    "rule_inputs": "rules",
 }
 
 # ─── what kind of security is this ─────────────────────────────────────────────
@@ -425,6 +427,51 @@ def classify_security(quote: dict | None, n_sessions: int | None,
     kind = "fund" if is_fund else "bank" if is_bank else "new_listing" if new else "stock"
     return {"kind": kind, "is_fund": is_fund, "is_bank": is_bank, "new_listing": new,
             "is_new_listing": new, "why": why}
+
+
+LISTED_YEAR_SESSIONS = 252    # fewer completed sessions since the first trade → listed under a year
+
+
+def listing_facts(history: list[dict] | None, whole_life: bool,
+                  long_bars: list[dict] | None, long_years: float | None,
+                  today: dt.date | None = None,
+                  public_filing: dict | None = None) -> dict[str, Any]:
+    """docs/VERDICT_SPEC.md §3 — {"sessions_listed", "first_trade_date",
+    "listed_under_a_year", "public_quarter_filed"}.
+
+    The first trade is the first bar of a history shorter than what was
+    asked for: the short daily history when `whole_life` (`history` = its
+    completed bars), else the long history (`long_bars`, `long_years`
+    asked) when its first bar is more than 30 days after the start asked
+    for (an in-progress bar of today is not counted). Unknown →
+    sessions_listed None and listed_under_a_year None (never claimed) — a
+    long history that covers what was asked for is False. `public_filing` =
+    {"form", "filed"} of the latest filed 10-Q / 10-K: public_quarter_filed
+    True when filed after the first trade."""
+    from analysis import vol_bands
+    td = (today or dt.date.today()).isoformat()
+    first = sessions = None
+    under: bool | None = None
+    if whole_life and history:
+        first, sessions = str(history[0]["date"])[:10], len(history)
+    elif long_bars:
+        start = (dt.date.fromisoformat(td) - dt.timedelta(days=int((long_years or 6) * 365.25)))
+        lb_first = str(long_bars[0]["date"])[:10]
+        if dt.date.fromisoformat(lb_first) > start + dt.timedelta(days=30):
+            first = lb_first
+            sessions = len(vol_bands.completed_bars(long_bars))
+        else:
+            under = False
+    if sessions is not None:
+        under = sessions < LISTED_YEAR_SESSIONS
+    pq = None
+    if first and isinstance(public_filing, dict):
+        form = str(public_filing.get("form") or "").upper()
+        filed = str(public_filing.get("filed") or "")[:10]
+        if form.startswith(("10-Q", "10-K")) and filed:
+            pq = filed > first
+    return {"sessions_listed": sessions, "first_trade_date": first,
+            "listed_under_a_year": under, "public_quarter_filed": pq}
 
 
 # ─── the builder ───────────────────────────────────────────────────────────────
@@ -1242,14 +1289,25 @@ def build(inp: dict[str, Any]) -> dict[str, Any]:
                "written by the research session; not computed",
                warnings=flags.get("news") or []))
     cs = inp.get("claude_stance")
-    add(_field("claude_stance", "Research stance", cs and cs.get("stance"),
-               (f"{research_quality.stance_label(cs)} · {cs.get('stance_horizon') or ''} — "
-                f"{cs.get('stance_note') or ''}" if cs else "—"),
+    vfields = research_quality.verdict_fields(cs) if cs else {}
+    if vfields.get("format") == "v6" and vfields.get("verdict_label"):
+        # prompt v6: the verdict is the headline (docs/VERDICT_SPEC.md §1)
+        cs_label = "Research verdict"
+        cs_display = (f"{vfields['verdict_label']} — {vfields.get('verdict_note') or ''}"
+                      .rstrip(" —"))
+    else:
+        cs_label = "Research stance"
+        cs_display = (f"{research_quality.stance_label(cs)} · {cs.get('stance_horizon') or ''} — "
+                      f"{cs.get('stance_note') or ''}" if cs else "—")
+    add(_field("claude_stance", cs_label, cs and cs.get("stance"), cs_display,
                "stored research discussion", cs and cs.get("created_ts"),
                "reasoned judgment, dated", "written by the research session; not computed",
                warnings=flags.get("stance") or [],
                # what would change it (prompt v5) — shown under the stance
-               **research_quality.stance_conditions(cs)))
+               **research_quality.stance_conditions(cs),
+               # the verdict keys (v6) / format "earlier", and the note's trust
+               **vfields, trust=(cs or {}).get("trust"),
+               note_status=(cs or {}).get("status")))
 
     # social (sample size = tagged messages)
     so = inp.get("social") or {}
@@ -1429,6 +1487,108 @@ def build(inp: dict[str, Any]) -> dict[str, Any]:
     return {"symbol": sym, "fields": fields, "raw": raw,
             "security_kind": kind, "groups": list(GROUPS),
             "generated_ny": now.isoformat(timespec="minutes")}
+
+
+# ─── valuation range (docs/VERDICT_SPEC.md §6) ─────────────────────────────────
+
+def _vr_fmt(measure: str | None, v: float | None) -> str:
+    if v is None:
+        return "—"
+    if measure == "distribution_rate":
+        return pct(v, 2)
+    return ratio(v, 2 if measure == "p_tbv" else 1)
+
+
+def add_valuation_fields(view: dict[str, Any], vr: dict[str, Any] | None) -> None:
+    """Three report fields in group "valuation" from the payload's
+    `valuation_range`: `valuation_now` (the measure now), `valuation_points`
+    (the year-end points, compact; `items` = the points) and
+    `valuation_range` (median / low / high and the grade hint, with the
+    warnings). Nothing is added when there is no range at all."""
+    if not vr or not vr.get("measure"):
+        return
+    fields = view.setdefault("fields", {})
+    m, label = vr["measure"], vr.get("label") or vr["measure"]
+    status = vr.get("status") or "no_data"
+    now = vr.get("now")
+    now_disp = _vr_fmt(m, now)
+    if vr.get("normalized") and vr.get("now_normalized") is not None:
+        now_disp += f" ({_vr_fmt(m, vr['now_normalized'])} on the average — normalized)"
+    withheld = status == "withheld"
+    f_now = _field("valuation_now", f"{label} — now", None if withheld else now,
+                   now_disp if now is not None and not withheld else "—",
+                   "report fields at the report price", None, vr.get("now_basis") or "",
+                   "the report's own figure", status="withheld" if withheld else "ok",
+                   measure=m, normalized=bool(vr.get("normalized")),
+                   now_normalized=vr.get("now_normalized"))
+    pts = vr.get("points") or []
+    f_pts = _field("valuation_points", f"{label} — fiscal year-ends",
+                   len(pts) if pts and not withheld else None,
+                   " · ".join(f"{p['fy_end']} {_vr_fmt(m, p.get('value'))}" for p in pts)
+                   if pts and not withheld else "—",
+                   "long price history + filed fiscal years", pts[0]["fy_end"] if pts else None,
+                   vr.get("points_basis") or "", "newest first, up to five",
+                   status="withheld" if withheld else "ok", items=pts)
+    rng_ok = status == "ok" and vr.get("median") is not None
+    f_rng = _field("valuation_range", f"{label} — five-year range",
+                   vr.get("median") if rng_ok else None,
+                   (f"median {_vr_fmt(m, vr['median'])} · low {_vr_fmt(m, vr.get('low'))} · "
+                    f"high {_vr_fmt(m, vr.get('high'))}"
+                    + (f" · grade on the reported figure {vr['grade_hint']}"
+                       if vr.get("grade_hint") else "")
+                    + (f" · on the five-year average {vr['normalized_grade_hint']}"
+                       if vr.get("normalized_grade_hint") else "")
+                    + (f" · grade {vr['grade']} (the less favorable)"
+                       if vr.get("normalized_grade_hint") and vr.get("grade") else "")
+                    if rng_ok else "—"),
+                   "TickerBands", None, vr.get("points_basis") or "",
+                   ("cheap ≥ 15% above the median; expensive below the low or under "
+                    "two-thirds of the median (a yield: higher is cheaper)"
+                    if m == "distribution_rate" else
+                    "cheap ≤ 85% of the median; expensive above the high or > 1.5× the median"),
+                   warnings=vr.get("warnings") or [],
+                   status="ok" if rng_ok else ("withheld" if withheld else "no_data"),
+                   grade_hint=vr.get("grade_hint"),
+                   normalized_grade_hint=vr.get("normalized_grade_hint"),
+                   grade=vr.get("grade"), direction=vr.get("direction"),
+                   excluded_points=vr.get("excluded_points") or [],
+                   low=vr.get("low"), high=vr.get("high"),
+                   median=vr.get("median"))
+    for f in (f_now, f_pts, f_rng):
+        f["group"] = "valuation"
+        fields[f["key"]] = f
+
+
+def add_rule_fields(view: dict[str, Any], ri: dict[str, Any] | None) -> None:
+    """One compact report field `rule_inputs` in group "rules" from the
+    payload's `rule_inputs` (docs/VERDICT_SPEC.md §6b): the computed soft
+    signals that are met / not met / not computable, one line each in
+    `items`. Nothing is added when there are no rules."""
+    if not ri or not ri.get("rules"):
+        return
+    rules = ri["rules"]
+    met = [r["key"] for r in rules if r.get("fires") is True]
+    word = {True: "met", False: "not met", None: "not computed"}
+    items = [{"key": r["key"], "label": r.get("label"), "fires": r.get("fires"),
+              "summary": r.get("summary") or "", "threshold": r.get("threshold") or "",
+              "warnings": r.get("warnings") or []} for r in rules]
+    disp = ("met: " + ", ".join(met)) if met else "none met"
+    n_null = sum(1 for r in rules if r.get("fires") is None)
+    if n_null:
+        disp += f" · {n_null} not computed"
+    f = _field("rule_inputs", "Soft-signal arithmetic", len(met), disp,
+               ri.get("rules") and (rules[0].get("basis") or "TickerBands"), ri.get("as_of"),
+               "the last two filed quarters" if ri.get("kind") != "fund" else
+               "distribution history",
+               "the app's arithmetic for each data-driven soft signal; the research note "
+               "writes soft_signals",
+               warnings=list(ri.get("warnings") or [])
+               + [f"{r['key']}: {word[r.get('fires')]} — {'; '.join(r.get('warnings') or [])}"
+                  for r in rules if r.get("warnings")],
+               status="ok" if ri.get("status") == "ok" else "no_data",
+               items=items, filed=ri.get("filed"))
+    f["group"] = "rules"
+    view.setdefault("fields", {})[f["key"]] = f
 
 
 # ─── consistency checks ────────────────────────────────────────────────────────

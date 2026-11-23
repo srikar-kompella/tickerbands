@@ -1,4 +1,5 @@
 export * from './analysis'
+import type { NoteFormat, ResearchMeta, Trust, ValueGrade, Verdict, RiskGrade } from './analysis'
 
 export interface WatchItem {
   symbol: string
@@ -30,6 +31,18 @@ export interface Discussion {
   status?: NoteStatus | null
   status_reason?: string | null
   status_as_of?: string | null      // last daily bar it was judged against
+  // the UI label for `status` (docs/VERDICT_SPEC.md §9); absent on an older backend
+  trust?: Trust | null
+  // prompt v6 notes carry the verdict; read defensively
+  verdict?: Verdict | null
+  value_grade?: ValueGrade | null
+  risk_grade?: RiskGrade | null
+  verdict_label?: string | null
+  format?: NoteFormat
+  stance?: string | null
+  prompt_version?: number | null
+  // the parsed frontmatter — the verdict keys live here on an older backend
+  research_meta?: ResearchMeta & Record<string, unknown>
 }
 
 export type NoteStatus = 'OK' | 'STALE' | 'INVALID' | 'SUPERSEDED'
@@ -54,6 +67,15 @@ export interface ScreenerRow {
   stance_owned?: 'yes' | 'no' | null
   // the same warnings the analysis header's re-check badge lists
   stance_warnings?: string[]
+  // prompt v6 verdict beside the legacy stance (docs/VERDICT_SPEC.md); all optional
+  verdict?: Verdict | null
+  verdict_label?: string | null
+  value_grade?: ValueGrade | null
+  risk_grade?: RiskGrade | null
+  trust?: Trust | null
+  owner_line?: string | null
+  owner_note?: string | null
+  format?: NoteFormat
   note: string
   tags: string[]
 }

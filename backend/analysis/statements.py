@@ -63,6 +63,51 @@ def _newer_quarter(a: str, b: str) -> bool:
         return a > b
 
 
+# per-year figures another source may fill when the chosen fiscal-year series
+# lacks them (TWLO: the SEC series has no capex line after 2022; GOOGL: no
+# diluted count filed for 2020–21 under the tag read) — valuation_range
+FILLABLE_ANNUAL = ("fcf", "shares_diluted", "tangible_book")
+
+
+def _fill_annual(annual: list[dict], others: list[dict]) -> list[dict]:
+    """The chosen fiscal-year series, with a missing `fcf` / `shares_diluted`
+    / `tangible_book` taken from another source's year ending within 20
+    days of it. Each filled key is named in the year's `filled_from`; a
+    share count from a source without a filing date carries none."""
+    import datetime as _dt
+    if not annual or not others:
+        return annual
+    out = []
+    for a in annual:
+        a = dict(a)
+        try:
+            end = _dt.date.fromisoformat(str(a.get("end") or "")[:10])
+        except ValueError:
+            out.append(a)
+            continue
+        for k in FILLABLE_ANNUAL:
+            if a.get(k) is not None:
+                continue
+            for s in others:
+                match = None
+                for b in s.get("annual") or []:
+                    try:
+                        e2 = _dt.date.fromisoformat(str(b.get("end") or "")[:10])
+                    except ValueError:
+                        continue
+                    if abs((e2 - end).days) <= 20 and b.get(k) is not None:
+                        match = b
+                        break
+                if match:
+                    a[k] = match[k]
+                    if k == "shares_diluted":
+                        a["shares_filed"] = match.get("shares_filed")
+                    a.setdefault("filled_from", {})[k] = s.get("source") or "other source"
+                    break
+        out.append(a)
+    return out
+
+
 def merge(sources: list[dict | None]) -> dict[str, Any] | None:
     """sources in priority order (SEC first). → merged statements dict with
     `periods`, `period_sources` and per-statement `chosen` provenance."""
@@ -108,9 +153,16 @@ def merge(sources: list[dict | None]) -> dict[str, Any] | None:
                        and s.get("annual") and _complete(s, "income")), None) \
         or (inc if inc and inc.get("annual") else None) \
         or next((s for s in cands if s.get("annual")), None)
-    annual = (annual_src or {}).get("annual") or []
+    annual = _fill_annual((annual_src or {}).get("annual") or [],
+                          [s for s in cands if s is not annual_src])
     ends = [p for p in periods.values() if p]
+    # the filed quarters the soft-signal arithmetic reads (rule_inputs,
+    # docs/VERDICT_SPEC.md §6b) — the SEC's own, never another feed's
+    sec_src = next((s for s in cands if (s.get("source") or "").startswith("SEC")
+                    and s.get("rule_quarters")), None)
     return {
+        "rule_quarters": list((sec_src or {}).get("rule_quarters") or []),
+        "rule_filing": (sec_src or {}).get("filing"),
         "available": True,
         "ttm": ttm, "quarters": quarters, "annual": annual,
         "annual_source": _label(annual_src, "income") if annual_src else None,

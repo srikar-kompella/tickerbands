@@ -171,7 +171,7 @@ def test_snapshot_lists_recent_sessions_and_the_task_uses_them(tmp_db, monkeypat
     assert "- Thu 2026-11-19: $145.98, −4.60% (−0.97σ); SPY −0.90%; net " in snap
     assert ("Each row under Recent sessions in <snapshot> gives that session's close, SPY's "
             "move and the net figure — take them from there rather than searching.") in p
-    step4 = p[p.index("4. Analyze"):p.index("5. Lay out the options")]
+    step4 = p[p.index("4. Analyze"):p.index("5. Set the verdict")]
     assert "Use the net figure in <snapshot> Recent sessions" in step4
 
 

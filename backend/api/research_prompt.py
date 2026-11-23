@@ -1,5 +1,15 @@
 """
-api/research_prompt.py — the research-discussion prompt, version 5.
+api/research_prompt.py — the research-discussion prompt, version 6.
+
+v6 (Nov 2026): the headline is an ownership-independent verdict
+(docs/VERDICT_SPEC.md) — attractive / fair / stretched / avoid / unrated with
+a value grade and a risk grade — set by the session from a fixed rulebook the
+prompt carries (step 5: value grade from `valuation_range`, risk items sorted
+hard / soft / watch-only, the kind's default rules, fixed steps to the
+verdict). The stance and stance_note are gone; the user's own rules go in
+`owner_note` and never change the verdict; the options rows say whether the
+verdict supports each; <prior_notes> shows each note's verdict (or its
+earlier-format stance) and its trust label. The v5 notes below still hold.
 
 The "Ask Claude" button copies this text into any agent session; the session
 researches, analyzes and writes one markdown file the watcher ingests
@@ -94,12 +104,93 @@ from analysis.news_relevance import BIG_MOVE_SIGMA, signed
 from analysis.report_view import big_money
 from discussions_svc.parser import list_discussions
 
-PROMPT_VERSION = 5
+PROMPT_VERSION = 6
 PRIOR_NOTES_SHOWN = 5
 BODY_HEADINGS = ("## TL;DR", "## What happened", "## Evidence & sources",
                  "## Triggers, checked", "## What the numbers say",
-                 "## Your options", "## Stance & what would change it",
+                 "## Your options", "## Verdict & what would change it",
                  "## Unknowns")
+
+# ─── verdict vocabulary (docs/VERDICT_SPEC.md §1, §9) ─────────────────────────
+VERDICTS = {"attractive": "Attractive", "fair": "Fair", "stretched": "Stretched",
+            "avoid": "Avoid", "unrated": "Unrated"}
+VALUE_GRADES = {"cheap": "Cheap", "fair": "Fair", "expensive": "Expensive",
+                "paused": "Value paused"}
+RISK_GRADES = {"clean": "Clean", "watch": "Watch", "red_flag": "Red flag"}
+TRUST_LABELS = {"current": "Current", "out_of_date": "Out of date",
+                "dont_use": "Don't use", "replaced": "replaced"}
+_STATUS_TRUST = {"OK": "current", "STALE": "out_of_date", "INVALID": "dont_use",
+                 "SUPERSEDED": "replaced"}
+# valuation_range.measure → its unit and the fundamentals row that already
+# states the same figure (so "now" is stated once)
+_MEASURE_ROW = {"p_fcf": "p_fcf", "pe": "pe_ttm", "p_tbv": "p_tbv"}
+MIN_RANGE_POINTS = 3     # fewer fiscal year-ends → grade against named peers
+
+# Default rulebook (spec §2–§3): the universal hard list, each kind's own
+# additions, and each kind's soft signals. Only the kind's own lists are
+# printed — a fund session has no use for receivables, a bank none for NAV.
+HARD_COMMON = ("restatement or non-reliance (8-K item 4.02) · auditor resignation or "
+               "dismissal (8-K item 4.01) · late-filing notice (NT 10-Q / NT 10-K) · "
+               "going-concern warning · delisting notice (8-K item 3.01) · a Wells notice · "
+               "charges or a complaint filed by a regulator · a regulator's consent order · "
+               "debt default or bankruptcy")
+HARD_KIND = {"fund": " · the fund's closure, liquidation or merger · distribution "
+                     "suspended · a change of strategy or index",
+             "bank": " · capital below \"well capitalized\" · dividend suspended",
+             "stock": " · for a REIT, a dividend cut"}
+# Each soft signal carries its rule key (spec §3): the session starts each
+# `soft_signals` entry with it in square brackets, and the app's `rule_inputs`
+# use the same keys.
+SOFT_KIND = {
+    "stock": ("over the last two reported quarters (a quarter reported only in the latest "
+              "earnings release counts as reported), holding in both unless stated: "
+              "`revenue_decline` revenue down year on year · `op_margin_decline` operating "
+              "margin down more than 3 points year on year · `fcf_negative` free cash flow "
+              "negative (skipped when revenue grows more than 25% year on year) · "
+              "`receivables_vs_revenue` receivables growth year on year more than 20 points "
+              "above revenue growth · `inventory_vs_revenue` the same for inventory · "
+              "`ni_over_fcf` GAAP net income, less flagged one-time gains and tax benefits, "
+              "more than 25% above free cash flow · `net_debt_ebitda` net debt above 3× "
+              "trailing EBITDA and higher than a year earlier · `interest_coverage` operating "
+              "income ÷ interest expense (trailing four quarters) below 3× · `dilution` "
+              "diluted share count up more than 5% year on year (not in the first four "
+              "quarters after a listing) · `guidance_cut` or `dividend_cut` announced in the "
+              "last two quarters · `exec_exit` abrupt CEO or CFO exit, counting for 12 months "
+              "or until a permanent successor is named · `insider_selling` three or more "
+              "insiders selling outside 10b5-1 plans within 90 days; for a REIT add: "
+              "`payout_ffo` payout above 100% of FFO/AFFO for two quarters · `occupancy` "
+              "occupancy falling · `reit_leverage` net debt above 7× EBITDA"),
+    "fund": ("`distribution_cut` latest distribution more than 10% below the 3-month average "
+             "(monthly payers) or the average of the last four payments (quarterly and other "
+             "payers) · "
+             "`roc_nav` distributions mostly return of capital for two quarters while NAV "
+             "falls (not alone — some funds do this by design) · `nav_vs_index` NAV total "
+             "return trailing its index by more than 3 points on the latest published "
+             "12-month figure · `fee_increase` · `assets_decline` assets down more than 30% · "
+             "`nav_discount` price persistently off NAV by more than 2% (an ETF) or 10% (a "
+             "closed-end fund)"),
+    "bank": ("`npl_rise` nonperforming loans up more than 50% year on year and above 1% of "
+             "loans · `charge_offs` net charge-offs rising two quarters · `capital_ratio` core "
+             "capital ratio down more than 1 point · `deposit_decline` deposits down more than "
+             "5% in a quarter · `nim_decline` net interest margin down two quarters · "
+             "`efficiency_ratio` non-interest expense ÷ revenue above 70% · "
+             "`cre_concentration` commercial real estate loans above 3× capital; as for a "
+             "stock, over the last two reported quarters: `revenue_decline` revenue down year "
+             "on year in both · `dilution` diluted share count up more than 5% year on year "
+             "(not in the first four quarters after a listing)"),
+}
+VALUE_MEASURE = {
+    "stock": "price to free cash flow; where free cash flow is negative or distorted, "
+             "EV/EBIT or P/E; where those are negative too (a loss-making company), price to "
+             "sales",
+    "fund": "the distribution rate against its own history (for a broad index fund, the "
+            "index's valuation)",
+    "bank": "price to tangible book value",
+}
+# peer grading (spec §4): with too little own history, and for a loss-maker
+# whose price to sales has no history
+PEER_RULE = ("against named peers (name each, with its figure and source): cheap = at least "
+             "25% below the peer median, expensive = at least 25% above it, fair otherwise")
 
 FUND_KEYS = ("market_cap", "pe_ttm", "eps_ttm", "p_fcf", "fcf_ttm", "ev", "net_cash",
              "revenue_growth", "revenue_growth_q", "gross_margin", "operating_margin",
@@ -238,6 +329,190 @@ def kind_words(a: dict) -> str:
     return "a newly listed " + _KIND_NOUN[base]
 
 
+def _num(v) -> float | None:
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    return f if f == f and f not in (float("inf"), float("-inf")) else None
+
+
+GRADE_ORDER = ("cheap", "fair", "expensive")      # most → least favorable
+
+
+def less_favorable(*grades: str | None) -> str | None:
+    """The less favorable of the grades given (None ignored): of cheap and
+    fair, fair; of fair and expensive, expensive."""
+    gs = [g for g in grades if g in GRADE_ORDER]
+    return max(gs, key=GRADE_ORDER.index) if gs else None
+
+
+def listed_under_a_year(a: dict) -> bool:
+    """Fewer than 252 sessions since the first trade (payload
+    `listed_under_a_year`, spec §3), which sets the new-listing cap; without
+    that key, `is_new_listing`."""
+    v = a.get("listed_under_a_year")
+    if isinstance(v, bool):
+        return v
+    return is_new_listing(a)
+
+
+def valuation_range(a: dict) -> dict | None:
+    """The payload's `valuation_range` (spec §6, set by the composer), read
+    defensively: None when absent or not a mapping; numbers that do not read
+    are dropped, points without a date or value are skipped, at most five
+    fiscal year-ends are kept (newest first, as given)."""
+    vr = a.get("valuation_range")
+    if not isinstance(vr, dict):
+        return None
+    pts = []
+    for p in vr.get("points") or []:
+        if isinstance(p, dict) and p.get("fy_end") and _num(p.get("value")) is not None:
+            pts.append({"fy_end": str(p["fy_end"])[:10], "value": _num(p["value"])})
+    status = str(vr.get("status") or "").strip().lower()
+    hint = str(vr.get("grade_hint") or "").strip().lower()
+    n_hint = str(vr.get("normalized_grade_hint") or "").strip().lower()
+    measure = str(vr.get("measure") or "").strip().lower()
+    hint = hint if hint in GRADE_ORDER else None
+    n_hint = n_hint if n_hint in GRADE_ORDER else None
+    # the app's resulting grade (spec §4: the less favorable of the two when
+    # it states two); derived from the hints when the payload leaves it out
+    grade = str(vr.get("grade") or "").strip().lower()
+    if grade not in GRADE_ORDER:
+        grade = less_favorable(hint, n_hint)
+    return {"measure": measure, "grade": grade,
+            "label": str(vr.get("label") or measure.replace("_", " ") or "valuation"),
+            "now": _num(vr.get("now")), "now_basis": str(vr.get("now_basis") or ""),
+            "points": pts[:5], "median": _num(vr.get("median")),
+            "low": _num(vr.get("low")), "high": _num(vr.get("high")),
+            "grade_hint": hint,
+            "normalized": bool(vr.get("normalized")),
+            "normalized_grade_hint": n_hint,
+            "now_normalized": _num(vr.get("now_normalized")),
+            "warnings": [str(w) for w in vr.get("warnings") or [] if str(w).strip()],
+            "status": status if status in ("ok", "withheld", "no_data") else
+            ("ok" if pts else "no_data")}
+
+
+def range_usable(vr: dict | None) -> bool:
+    """An own-history range the session can grade against: status ok, a
+    current value and at least MIN_RANGE_POINTS fiscal year-ends."""
+    return bool(vr and vr["status"] == "ok" and vr["now"] is not None
+                and len(vr["points"]) >= MIN_RANGE_POINTS)
+
+
+def _rule_val(v) -> str:
+    """One value of a rule check as text: numbers to one decimal (whole
+    numbers as they are), a {period/label: value} mapping as "period value"."""
+    if isinstance(v, bool):
+        return "yes" if v else "no"
+    if isinstance(v, dict):
+        # {"period": "2026-09-30", "fcf": 7e8, "ratio": 1.57} → "2026-09-30: fcf $700.0M, ratio 1.57"
+        per = str(v.get("period") or v.get("end") or "").strip()[:10]
+        rest = ", ".join(f"{k.replace('_', ' ')} {_rule_val(x)}" for k, x in v.items()
+                         if k not in ("period", "end") and x is not None and x != ""
+                         and not isinstance(x, (dict, list, tuple)))
+        return f"{per}: {rest}" if per and rest else per or rest
+    n = _num(v)
+    if n is not None and not isinstance(v, str):
+        if abs(n) >= 1e5:
+            return big_money(n)
+        return f"{n:.0f}" if n == int(n) else f"{n:.2f}" if abs(n) < 10 else f"{n:.1f}"
+    return str(v).strip()
+
+
+def rule_inputs(a: dict) -> list[dict]:
+    """The payload's `rule_inputs` (spec §6, set by the composer): the app's
+    arithmetic for the soft-signal rules it can compute from filed statements,
+    read defensively — entries without a key are skipped; `fires` is True,
+    False or None (not computed); values, threshold, basis and warnings are
+    reduced to short text."""
+    out = []
+    raw = a.get("rule_inputs")
+    if isinstance(raw, dict):            # {"rules": [...], "filed", "as_of", "status", …}
+        raw = raw.get("rules")
+    for r in raw if isinstance(raw, (list, tuple)) else []:
+        if not isinstance(r, dict):
+            continue
+        key = str(r.get("key") or "").strip()
+        if not key or not re.fullmatch(r"[a-z0-9_]+", key):
+            continue
+        vals = r.get("values")
+        if isinstance(r.get("summary"), str) and r["summary"].strip():
+            vals = [r["summary"].strip()]          # the app's own wording of the values
+        elif isinstance(vals, (list, tuple)):
+            vals = [_rule_val(v) for v in vals if v is not None and _rule_val(v)]
+        elif vals is None or vals == "":
+            vals = []
+        else:
+            vals = [_rule_val(vals)]
+        f = r.get("fires")
+        thr = r.get("threshold")
+        out.append({"key": key, "label": str(r.get("label") or "").strip(),
+                    "values": [v for v in vals if v],
+                    "threshold": "" if thr is None else _rule_val(thr),
+                    "fires": f if isinstance(f, bool) else None,
+                    "basis": str(r.get("basis") or "").strip(),
+                    "warnings": [str(w).strip() for w in
+                                 (r.get("warnings") if isinstance(r.get("warnings"), (list, tuple))
+                                  else [r.get("warnings")] if r.get("warnings") else [])
+                                 if str(w or "").strip()]})
+    return out
+
+
+def _rule_lines(rules: list[dict]) -> list[str]:
+    """<snapshot> "Rule checks", grouped by result: one line per rule that
+    fires (its values and warnings); the rules that do not fire on one line
+    (a warning in brackets after its key); the rules not computed on one line
+    per shared reason. The thresholds are step 5c's and the source is the
+    header's, so neither is repeated per rule."""
+    fired, no = [], []
+    open_: dict[str, list[str]] = {}      # reason → keys, so a shared reason is stated once
+    for r in rules:
+        k, warn = r["key"], "; ".join(r["warnings"])
+        if r["fires"] is None:
+            open_.setdefault(warn, []).append(k)
+        elif r["fires"] is False:
+            no.append(k + (f" ({warn})" if warn else ""))
+        else:
+            fired.append(f"- fires: [{k}]" + (" " + ", ".join(r["values"]) if r["values"] else "")
+                         + (f" — {warn}" if warn else ""))
+    lines = fired + (["- does not fire: " + ", ".join(no)] if no else [])
+    for why, keys in open_.items():
+        lines.append("- not computed" + (f" ({why})" if why else "") + ": " + ", ".join(keys))
+    return lines
+
+
+def _vfmt(v: float | None, measure: str) -> str:
+    if v is None:
+        return "—"
+    return f"{v:.1f}%" if measure == "distribution_rate" else f"{v:.1f}x"
+
+
+def trust_of(st: dict) -> str:
+    """The trust label key of one note status (spec §9): the status row's own
+    `trust` when it carries a known one, else mapped from OK / STALE /
+    INVALID / SUPERSEDED."""
+    t = str((st or {}).get("trust") or "").strip().lower()
+    return t if t in TRUST_LABELS else _STATUS_TRUST.get(str((st or {}).get("status")), "current")
+
+
+def _note_field(d: dict, key: str) -> str:
+    rm = d.get("research_meta")
+    rm = rm if isinstance(rm, dict) else {}
+    return str(d.get(key) or rm.get(key) or "").strip().lower()
+
+
+def note_verdict(d: dict) -> str | None:
+    """'verdict: Stretched (Fair · Watch)' for a v6 note; None when the note
+    carries no readable verdict (an earlier-format note)."""
+    v = _note_field(d, "verdict")
+    if v not in VERDICTS:
+        return None
+    vg, rg = VALUE_GRADES.get(_note_field(d, "value_grade")), RISK_GRADES.get(_note_field(d, "risk_grade"))
+    return f"verdict: {VERDICTS[v]}" + (f" ({vg} · {rg})" if vg and rg else "")
+
+
 def _mentions_export_rules(a: dict) -> bool:
     """True when the snapshot's own news rows mention export rules — only
     then is "export controls" one of the legal searches. As a fixed item it
@@ -293,7 +568,10 @@ def _stale_sections(a: dict) -> list[str]:
     return out
 
 
-def _lens_rows(vl: dict | None) -> list[str]:
+_NI_FLAG_RE = re.compile(r"net income materially exceeds free cash flow", re.I)
+
+
+def _lens_rows(vl: dict | None, skip_ni: bool = False) -> list[str]:
     """Value-lens metrics that are not already a fundamentals row, formatted
     like the report ($127.0B, 23.8x); metrics without a value are left out."""
     if not vl:
@@ -325,7 +603,8 @@ def _lens_rows(vl: dict | None) -> list[str]:
         rows.append(f"- Acquisitions ({basis('acquisitions_total').replace(' ($M)', '')}): "
                     f"{big_money(val('acquisitions_total') * 1e6)}")
     rows += [f"- Reading: {r}" for r in vl.get("readings") or []]
-    rows += [f"- Flag: {w}" for w in vl.get("warnings") or [] if _fixed_code(w) is None]
+    rows += [f"- Flag: {w}" for w in vl.get("warnings") or [] if _fixed_code(w) is None
+             and not (skip_ni and _NI_FLAG_RE.search(w))]
     return rows
 
 
@@ -479,12 +758,61 @@ def _data_blocks(a: dict, keep: set[str] | None = None,
                         + "; ".join(f"{q['end']} {big_money(q['fcf'])}"
                                     for q in fq)
                         + (f" ({fq[0]['source']})" if fq[0].get("source") else ""))
-    lens = _lens_rows(a.get("value_lens"))
+    # the app's soft-signal arithmetic (spec §6b): a computed ni_over_fcf
+    # replaces the value lens's own net-income-vs-FCF flag (stated once)
+    rules = rule_inputs(a)
+    lens = _lens_rows(a.get("value_lens"), skip_ni=any(
+        r["key"] == "ni_over_fcf" and r["fires"] is not None for r in rules))
     if lens:
-        snap += ["", "Value lens — statement-derived comparisons; weigh them in step 4"
+        snap += ["", "Value lens — statement-derived comparisons"
                      + (" [C3]" if lag else "")] + lens
     if lag:
         used.add("C3")
+    # the measure now and at the last fiscal year-ends (spec §6), graded in
+    # step 5; absent → named in "Not available", and step 5 falls back to peers
+    vr = valuation_range(a)
+    if vr and (vr["now"] is not None or vr["points"] or vr["status"] == "withheld"):
+        m = vr["measure"]
+        snap += ["", f"Valuation vs own history — {vr['label']}"]
+        if vr["status"] == "withheld":
+            snap.append("- withheld by the app" + (": " + "; ".join(vr["warnings"])
+                                                  if vr["warnings"] else ""))
+        else:
+            same = shown(_MEASURE_ROW.get(m, ""))
+            if (same and vr["now"] is not None and _num(same.get("value")) is not None
+                    and round(_num(same["value"]), 1) == round(vr["now"], 1)):
+                now_txt = f"now: the {same['label']} row above"      # stated once
+            else:
+                # C1 already says every price-dependent figure uses the report price
+                nb = re.sub(r"^report price;\s*", "", vr["now_basis"])
+                now_txt = (f"now {_vfmt(vr['now'], m)}" + (f" ({nb})" if nb else ""))
+            snap.append(f"- {now_txt}; year-ends, newest first: "
+                        + (", ".join(f"{p['fy_end']} {_vfmt(p['value'], m)}"
+                                     for p in vr["points"]) or "none"))
+            if vr["median"] is not None:
+                snap.append(f"- median {_vfmt(vr['median'], m)}, low {_vfmt(vr['low'], m)}, "
+                            f"high {_vfmt(vr['high'], m)}; app grade"
+                            + (f"s: {vr['grade_hint'] or 'none'} on the reported figure, "
+                               f"{vr['normalized_grade_hint']} on the five-year average"
+                               + (f" ({_vfmt(vr['now_normalized'], m)})"
+                                  if vr["now_normalized"] is not None else "")
+                               + f" → {vr['grade'] or 'none'}"
+                               + (" (the less favorable)" if vr["grade"] == less_favorable(
+                                   vr["grade_hint"], vr["normalized_grade_hint"]) else "")
+                               if vr["normalized_grade_hint"] else
+                               f": {vr['grade'] or 'none'}"))
+            if vr["warnings"]:
+                snap.append("- " + "; ".join(vr["warnings"]))
+    else:
+        missing.append("Valuation vs own history")
+    # the app's arithmetic for the soft-signal rules (spec §3, §6), checked in
+    # step 5c; absent → step 5c checks every rule from research
+    if rules:
+        ri = a.get("rule_inputs") if isinstance(a.get("rule_inputs"), dict) else {}
+        filed = str(ri.get("filed") or "")[:10]
+        snap += ["", "Rule checks — app arithmetic, "
+                     + (f"filings through {filed}" if re.fullmatch(r"\d{4}-\d{2}-\d{2}", filed)
+                        else "filed statements")] + _rule_lines(rules)
     ctx = rows(CONTEXT_KEYS)
     if ctx:
         snap += ["", "Market context"] + ctx
@@ -680,6 +1008,8 @@ def _data_blocks(a: dict, keep: set[str] | None = None,
              "filings_forms": forms,
              "filings_cut": bool(filings) and len(groups) > FILINGS_SHOWN,
              "filings_since": filings_since,
+             "valuation": vr,
+             "rules": rules,
              "earn_tag": (F.get("earnings_next") or {}).get("tag")}
     return cav, snap, facts
 
@@ -708,8 +1038,10 @@ def _prior_notes(sym: str, a: dict) -> tuple[list[str], dict[str, Any]]:
                  "older": [], "fresh": None})
     args = (notes, a.get("move"), a.get("price_basis"), _big_list(a))
     status = research_quality.prior_note_status(*args)
-    lines = ["Each note is true only as of its date. STATUS says whether it can still "
-             "be relied on."]
+    lines = ["Each note is true only as of its date. Its trust label says whether it can "
+             "still be relied on: Current; Out of date (something happened after it was "
+             "written — re-check before relying on it); Don't use (its research failed or "
+             "missed a large move); replaced (a later note replaced it)."]
     # ≥2σ sessions before the window that no sound note explains: those since
     # the newest sound note (a capped window), and those an INVALID note
     # failed on — named in step 1, a one-line cause each, optional
@@ -733,15 +1065,19 @@ def _prior_notes(sym: str, a: dict) -> tuple[list[str], dict[str, Any]]:
     for d, st in list(zip(notes, status))[:PRIOR_NOTES_SHOWN]:
         tags = f" [{', '.join(d['tags'])}]" if d.get("tags") else ""
         unread = (d.get("research_meta") or {}).get("unreadable") or {}
-        stance = (f"stance: {d['stance']}" if d.get("stance") else
-                  f"stance unreadable ('{unread['stance']}')" if unread.get("stance") else
-                  "no stance")
-        if research_quality.stance_label(d) == "AVOID":
-            stance += (" (avoid — not owned)" if research_quality.stance_owned(d) == "no"
-                       else " (avoid — ownership unknown when written)")
+        # a v6 note shows its verdict; an earlier one its stance, labelled so
+        stance = note_verdict(d)
+        if stance is None:
+            stance = (f"earlier-format stance: {d['stance']}" if d.get("stance") else
+                      f"stance unreadable ('{unread['stance']}')" if unread.get("stance") else
+                      "no verdict")
+            if research_quality.stance_label(d) == "AVOID":
+                stance += (" (avoid — not owned)" if research_quality.stance_owned(d) == "no"
+                           else " (avoid — ownership unknown when written)")
         lines.append(f"- {str(d.get('created_ts'))[:19]} · {stance} · "
-                     f"\"{d.get('summary') or '(no summary)'}\"{tags} · STATUS: {st['status']}"
-                     + (f" — {st['reason']}" if st["reason"] else ""))
+                     f"\"{d.get('summary') or '(no summary)'}\"{tags} · trust: "
+                     f"{TRUST_LABELS[trust_of(st)]}"
+                     + (f" — {st['reason']}" if st.get("reason") else ""))
         if st["status"] == research_quality.SUPERSEDED:
             info["superseded"] = True
         if st["status"] == research_quality.INVALID:
@@ -947,10 +1283,19 @@ def frontmatter_template(sym: str, created_ts: str, context_hash: str,
         'plan_triggers_met: ["<a step 3 trigger that is met, with the evidence>"]',
         'plan_triggers_unknown: ["<a step 3 trigger you could not check>"]',
         'decision: "<buy|sell|trim|hold|pass>"',
-        'stance: "<buy|sell|hold|trim|watch>"',
+        'verdict: "<attractive|fair|stretched|avoid|unrated>"',
+        'value_grade: "<cheap|fair|expensive|paused>"',
+        'risk_grade: "<clean|watch|red_flag>"',
+        'value_basis: "<the measure, the numbers and the comparison used>"',
+        'verdict_note: "<one line of reasoning behind the verdict>"',
+        'hard_flags: ["<confirmed finding or event, with its source and date>"]',
+        'soft_signals: ["<[rule key] rulebook signal, with its two periods or its filing, '
+        'source and date>"]',
+        'watch_items: ["<unconfirmed or still-open item, with its source and date>"]',
+        'owner_note: "<what the user\'s own rules imply, and whether they override the '
+        'default meaning of the verdict>"',
         'stance_horizon: "<for example 3-6mo>"',
         'stance_confidence: "<low|medium|high>"',
-        'stance_note: "<one line of reasoning behind the stance>"',
         'upgrade_if: ["<dated, checkable condition>"]',
         'downgrade_if: ["<dated, checkable condition>"]',
         'review_by: "<YYYY-MM-DD>"',
@@ -962,16 +1307,53 @@ def frontmatter_template(sym: str, created_ts: str, context_hash: str,
     ])
 
 
+VERDICT_STEPS = ("attractive", "fair", "stretched", "avoid")
+_BASELINE = {"cheap": "attractive", "fair": "fair", "expensive": "stretched"}
+
+
+def expected_verdict(value_grade: str, n_hard: int, n_soft: int, research_status: str = "complete",
+                     new_listing_cap: bool = False) -> str:
+    """The fixed steps of spec §4, as step 5d of the prompt states them —
+    used by the tests to hold the examples to the rulebook. Order (spec §4):
+    failed research with no hard flag → unrated; any hard flag → avoid (even
+    with failed research or a paused value); 3+ soft → avoid; paused →
+    unrated; baseline and the two-soft step; the new-listing cap."""
+    if research_status == "failed" and not n_hard:
+        return "unrated"
+    if n_hard:
+        return "avoid"
+    if n_soft >= 3:
+        return "avoid"
+    if value_grade not in _BASELINE:
+        return "unrated"
+    v = _BASELINE[value_grade]
+    if n_soft == 2:
+        v = VERDICT_STEPS[VERDICT_STEPS.index(v) + 1]
+    if new_listing_cap and VERDICT_STEPS.index(v) < VERDICT_STEPS.index("fair"):
+        v = "fair"
+    return v
+
+
+def expected_risk(n_hard: int, n_soft: int, n_watch: int) -> str:
+    """risk_grade from the lists (spec §8): 0–1 soft with watch items → watch."""
+    if n_hard or n_soft >= 3:
+        return "red_flag"
+    if n_soft == 2 or n_watch:
+        return "watch"
+    return "clean"
+
+
 # Filled examples. The tickers, companies, dates and every number are
 # invented (no real security, no real holdings) — they show the form, not a
-# view. The first is an owned name with one of its triggers met; the second is
-# a name the user does not own, with the negative stance;
-# the third (EXAMPLE_FAILED, below) is a session that could not research.
+# view. The first is an owned name where two soft signals drop a fair value
+# grade one step (and a trigger is met); the second is a name the user does
+# not own, where a watch-only item leaves the verdict at fair; the third
+# (EXAMPLE_FAILED, below) is a session that could not research — unrated.
 EXAMPLE = """---
 ticker: "ZZZT"
 created_ts: 2031-02-03T10:15:00
-prompt_version: 5
-summary: "Fictional example — the leverage trigger is MET; the recall is the reported cause (two sources); hold with dated conditions"
+prompt_version: 6
+summary: "Fictional example — Stretched (Fair · Watch): two soft signals drop a fair valuation one step; the leverage trigger is MET"
 tags: ["product-recall", "trigger-check"]
 research_status: "complete"
 news_window: "2031-01-27..2031-02-03"
@@ -981,56 +1363,67 @@ move_cause: "found"
 sources_count: 7
 price_used: 12.34
 owned: "yes"
-proposed_triggers: ["trim if net debt is above 2.5x EBITDA", "exit if the recall cost is above $5M", "add if the Q1 release (due 2031-05-05) shows net debt back under 2.0x EBITDA"]
-plan_triggers_met: ["net debt above 2.5x EBITDA — 2.8x in the Q4 release (2031-01-29)"]
+proposed_triggers: ["trim if net debt is above 3x EBITDA", "exit if the recall cost is above $5M", "add if the Q1 release (due 2031-05-05) shows net debt back under 2.5x EBITDA"]
+plan_triggers_met: ["net debt above 3x EBITDA — 3.4x in the Q4 release (2031-01-29)"]
 plan_triggers_unknown: ["recall cost above $5M — not disclosed yet"]
-stance: "hold"
+verdict: "stretched"
+value_grade: "fair"
+risk_grade: "watch"
+value_basis: "P/FCF 14.0x at $12.34 (TTM through 2030-12-31) against its own last five fiscal year-ends: median 15.5x, low 11.0x, high 21.0x — about 10% below the median, short of the 15% that makes it cheap, so fair, as the app's grade says"
+verdict_note: "Fair value, but two confirmed soft signals (margin and leverage, each over two quarters) drop it one step to stretched; the recall is confirmed and funded from cash, so it adds no rulebook item"
+soft_signals: ["[op_margin_decline] operating margin down more than 3 points year on year in both of the last two quarters — Q3 2030 −3.4 points, Q4 2030 −4.1 points (10-Q filed 2030-11-05; Q4 release 2031-01-29)", "[net_debt_ebitda] net debt 3.4x trailing EBITDA at Q4 2030, above 3x and up from 2.6x a year earlier (Q4 release 2031-01-29; 10-K filed 2030-02-20)"]
+owner_note: "Your rule — trim above 3x net debt to EBITDA — tests the same thing as the default leverage rule and is met at 3.4x: trim, as the verdict's default meaning says; nothing in your notes overrides it"
 stance_horizon: "3-6mo"
 stance_confidence: "medium"
-stance_note: "Leverage trigger met, but I hold rather than trim: the Q4 release guides net debt back under 2.5x by Q1 and the recall is funded from cash; a miss in the Q1 release turns this into a trim"
-upgrade_if: ["by 2031-05-05: the Q1 release shows net debt back under 2.5x EBITDA"]
-downgrade_if: ["by 2031-03-15: an 8-K or the 10-K puts the recall cost above $5M", "any restatement of FY2030 results"]
+upgrade_if: ["by 2031-05-05: the Q1 release shows net debt back under 3x EBITDA, leaving one soft signal"]
+downgrade_if: ["by 2031-03-15: an 8-K or the 10-K puts the recall cost above $5M", "any restatement of FY2030 results (a hard flag)"]
 review_by: "2031-05-06"
 supersedes: ["2031-01-28T09:00:00"]
 context_hash: sha256:0000fictional0000
 ---
 ## TL;DR
-The leverage trigger is MET: net debt rose to 2.8x EBITDA, above the 2.5x trim line (Q4 release, 2031-01-29). The 2031-01-30 drop has a reported cause — a recall of two product lines (8-K item 8.01; Example Wire). I hold with dated conditions; the add trigger is PENDING until the Q1 release (due 2031-05-05) and the recall cost is not verified yet."""
+Stretched (Fair · Watch). The leverage trigger is MET: net debt rose to 3.4x EBITDA (Q4 release, 2031-01-29), and with operating margin down two quarters running that makes two soft signals, which drop a fair valuation one step. The 2031-01-30 drop has a reported cause — a recall of two product lines (8-K item 8.01; Example Wire); the add trigger is PENDING until the Q1 release (due 2031-05-05)."""
 
 EXAMPLE_NOT_OWNED = """---
 ticker: "ZZQX"
 created_ts: 2031-03-10T14:40:00
-prompt_version: 5
-summary: "Fictional example — not owned; avoid at this price, with three entry triggers set and none met"
-tags: ["entry-criteria", "refinancing"]
+prompt_version: 6
+summary: "Fictional example — not owned; Fair (Fair · Watch): an unconfirmed press report is a watch item and does not lower the verdict"
+tags: ["entry-criteria", "unconfirmed-report"]
 research_status: "complete"
 news_window: "2031-03-03..2031-03-10"
 news_view: "neutral"
-news_note: "Mar 3–10: the 10-K (filed 2031-03-05) is the only company item; searched SEC, DOJ, class actions: nothing found"
+news_note: "Mar 3–10: the 10-K (filed 2031-03-05) is the only company item; one unconfirmed press report (Example Wire, 2031-03-07); searched SEC, DOJ, class actions: nothing found"
 move_cause: "na"
 sources_count: 5
 price_used: 48.10
 owned: "no"
-proposed_triggers: ["buy if valuation falls to 12x trailing free cash flow or less (about $40.00 a share)", "buy if the 2032 notes are refinanced below 7%", "off the list if revenue shrinks for two straight quarters"]
-stance: "sell"
+proposed_triggers: ["buy if valuation falls to 12x trailing free cash flow or less (about $36.00 a share)", "buy if the 2032 notes are refinanced below 7%", "off the list if revenue shrinks for two straight quarters"]
+verdict: "fair"
+value_grade: "fair"
+risk_grade: "watch"
+value_basis: "P/FCF 16.0x at $48.10 against its own five-year median 18.5x (low 12.0x, high 24.0x) — about 14% below the median, short of the 15% that makes it cheap, so fair"
+verdict_note: "Fair value and no confirmed rulebook item; the reported SEC look at revenue timing rests on unnamed sources and no filing, so it is a watch item and does not lower the verdict"
+watch_items: ["press report citing unnamed sources that the SEC is examining revenue timing (Example Wire, 2031-03-07) — not confirmed by the company or any filing"]
 stance_horizon: "6-12mo"
 stance_confidence: "low"
-stance_note: "Avoid at this price: 16x free cash flow with $900M of notes due in 2032 and no refinancing announced"
+upgrade_if: ["by 2031-06-10: P/FCF at or below 15.7x on the latest filed statements (cheap against its own median)"]
+downgrade_if: ["the company or the SEC confirms charges or a Wells notice (a hard flag)", "by 2031-05-15: the Q1 10-Q shows revenue down year on year for a second quarter (a soft signal)"]
 review_by: "2031-06-10"
 context_hash: sha256:1111fictional1111
 ---
 ## TL;DR
-You do not own this and I would not buy it at $48.10 (stance: sell, which for a name you do not own means avoid). No session in the window moved 2σ or more, so there is no move to explain. I set three entry triggers that would change this; none is met yet."""
+Fair (Fair · Watch): you do not own this, and the verdict's default meaning is Wait. The one risk item is a press report from unnamed sources (Example Wire, 2031-03-07), which is watch-only and leaves the verdict where the valuation puts it. No session in the window moved 2σ or more, and none of my three entry triggers is met."""
 
 # What a session with no web search tool writes: research_status "failed",
-# the stance forced to watch, stance_note starting "research incomplete".
+# the verdict unrated, verdict_note starting "research incomplete".
 # Sessions with no search tool used to copy the confident form of the two
 # examples above, because there was no other form to copy.
 EXAMPLE_FAILED = """---
 ticker: "ZZKM"
 created_ts: 2031-04-14T16:45:00
-prompt_version: 5
-summary: "Fictional example — no web search tool in this session, so the news check was not done; watch until it is"
+prompt_version: 6
+summary: "Fictional example — no web search tool in this session, so the news check was not done; unrated until it is"
 tags: ["research-incomplete"]
 research_status: "failed"
 news_window: "2031-04-07..2031-04-14"
@@ -1042,21 +1435,162 @@ price_used: 27.60
 owned: "no"
 proposed_triggers: ["buy if price to free cash flow is at or below 15x on the latest filed statements", "off the list if the completed searches find a restatement or a subpoena"]
 plan_triggers_unknown: ["both triggers — not checked, the step 1 searches were not run"]
-stance: "watch"
+verdict: "unrated"
+value_grade: "fair"
+risk_grade: "watch"
+value_basis: "P/FCF 17.2x at $27.60 against its own five-year median 18.0x (snapshot) — fair on the app's arithmetic; not checked against the filings"
+verdict_note: "research incomplete — no search tool, so no risk item could be confirmed or ruled out; redo step 1 before acting"
+watch_items: ["the step 1 searches were not run (no web search tool in this session, 2031-04-14), so hard and soft items are unknown"]
 stance_horizon: "1-3mo"
 stance_confidence: "low"
-stance_note: "research incomplete — no search tool, so nothing here rests on a news check; redo step 1 before acting"
-upgrade_if: ["by 2031-04-21: the step 1 searches are run with a search tool and find no regulatory or legal item"]
-downgrade_if: ["by 2031-04-21: the completed searches find a restatement, a subpoena or a securities class action"]
+upgrade_if: ["by 2031-04-21: the step 1 searches are run with a search tool, which lets the verdict be rated"]
 review_by: "2031-04-21"
 context_hash: sha256:2222fictional2222
 ---
 ## TL;DR
-I had no web search tool in this session, so the news check was not done and nothing below rests on one. The stance is watch until the step 1 searches are run; the figures are the snapshot's own."""
+I had no web search tool in this session, so the news check was not done and nothing below rests on one. The verdict is Unrated until the step 1 searches are run; the figures are the snapshot's own."""
+
+
+def verdict_step(a: dict, fx: dict) -> list[str]:
+    """Step 5 — the verdict from the fixed rulebook (docs/VERDICT_SPEC.md
+    §2–§4): (a) value grade, (b) risk items in three kinds with the
+    data-quality gate, (c) this kind's default rules only, (d) the fixed
+    steps, (e) the user's rules → owner_note. Ownership plays no part."""
+    kind = base_kind(a)
+    vr = fx.get("valuation")
+    # the new-listing cap: a stock or bank listed under a year (spec §3);
+    # funds have none
+    cap = listed_under_a_year(a) and kind != "fund"
+    fund = kind == "fund"
+    # peers: a fund's distribution rate reads the other way round, like its
+    # own-history grades below
+    peers = ("against named peers from your research (name each, with its figure and "
+             "source): " + ("cheap = a rate at least 25% above the peer median, expensive "
+                            "= at least 25% below it, fair otherwise" if fund else
+                            "cheap = at least 25% below the peer median, expensive = at "
+                            "least 25% above it, fair otherwise"))
+    if range_usable(vr):
+        src = ("<snapshot> gives it under Valuation vs own history, with the app's grade; "
+               "where yours departs from it, `value_basis` says why (one-time items, "
+               "peers).")
+    elif vr and vr["status"] == "withheld":
+        src = ("The app withheld its own-history range (see <snapshot>): where the reason "
+               "is an unreconciled share count or currency, value_grade is paused; "
+               f"otherwise grade {peers}, and say so in `value_basis`.")
+    elif cap:
+        src = (f"This is a new listing with too little history of its own: grade {peers}, "
+               "and say so in `value_basis`.")
+    else:
+        src = ("<snapshot> has no usable range of its own history, so grade "
+               f"{peers}, and say so in `value_basis`.")
+    grades = ("A distribution rate reads the other way round (a higher rate is a lower "
+              "price), so on its own history: cheap = now at least 15% above its five-year "
+              "median; expensive = below its five-year low or under two-thirds of the "
+              "median; fair = in between." if fund else
+              "On its own history: cheap = now at least 15% below its five-year median; "
+              "expensive = above its five-year high or more than 1.5× the median; fair = in "
+              "between.")
+    loss = ("" if kind != "stock" else
+            " A loss-making company (price to free cash flow and P/E both negative) is "
+            "graded on price to sales: against its own history where <snapshot> gives it, "
+            + ("else against named peers, as above." if peers in src else f"else {peers}."))
+    two = ("" if fund else
+           " When <snapshot> shows two app grades (one on the reported figure, one on the "
+           "five-year average — stated when current profit or cash flow is more than double "
+           "that average), take the less favorable of the two; depart from it only with a "
+           "stated reason in `value_basis`.")
+    paused = ("Paused is only for data problems: the measure cannot be computed reliably "
+              + ("(inputs withheld)." if fund else
+                 "(inputs withheld, or share count or currency unreconciled, as with some "
+                 "ADRs) — negative earnings are not one."))
+    word = {"stock": "a stock", "fund": "a fund", "bank": "a bank"}[kind]
+    lev = (" — and, for a leveraged or inverse fund, a standing item about holding "
+           "period" if fund else "")
+    sponsor = (" lawsuits or regulator matters about the fund's sponsor rather than the "
+               "fund itself," if fund else "")
+    newl = (" As a new listing, a lock-up expiry within 30 days and the first earnings "
+            "date are watch items." if cap else "")
+    key_eg = {"stock": "ni_over_fcf", "fund": "distribution_cut", "bank": "npl_rise"}[kind]
+    if fx.get("rules"):
+        check = (" <snapshot> Rule checks gives the app's arithmetic for the rules it could "
+                 "compute: follow it where it says fires or does not fire, unless a filed "
+                 "figure shows it wrong (then say so, with that figure); check the rest — "
+                 "those not computed and every rule it does not list — from your research.")
+    else:
+        check = (" The app sent no rule checks, so check each rule from the filings and the "
+                 "latest " + ("issuer data." if fund else "release."))
+    return [
+        "5. Set the verdict: one grade of the security from the rulebook below, the "
+        "same for every user whatever they own — it describes the security, not the "
+        "user's position, and the user's own rules do not change it. It is a "
+        "multi-month judgment, not a short-term direction call. Work through a–e in "
+        "order.",
+        f"   a. Value grade. Main measure: {VALUE_MEASURE[kind]}. {src} {grades} {paused}"
+        f"{loss}{two} `value_basis` states the measure, the numbers and the "
+        "comparison.",
+        "   b. Risk items. Sort every risk item you found into one of three kinds, each "
+        "written with its source and date: hard (`hard_flags`) — a confirmed finding or "
+        f"event: {HARD_COMMON}{HARD_KIND[kind]}; a regulatory or legal item is hard only "
+        "with charges or a complaint filed by a regulator, a consent order, a Wells notice "
+        "or the company's own filing confirming the finding; soft (`soft_signals`) — a "
+        "fact from the list in c, confirmed by a filing, the company or two periods of "
+        "data, naming the two periods or the filing; watch-only (`watch_items`) — "
+        "unconfirmed or still open: press reports from unnamed sources, an item whose only "
+        "sources could not be opened (written \"not verified\": it may sit here, not in "
+        "the other two lists), open investigations, subpoenas, civil investigative "
+        "demands, requests for testimony and inquiries (even confirmed ones — an "
+        "investigation is not a finding), routine class actions after a price drop,"
+        f"{sponsor} a filing later than the company's usual timing but inside its deadline, "
+        f"an upcoming lock-up expiry or similar calendar risk{lev}. Unconfirmed reports "
+        "and open investigations are watch-only: they cannot lower the verdict and do not "
+        "count toward a red flag. A rule cannot fire on a figure the snapshot withholds or "
+        "flags, a vendor figure that contradicts the filings, profit that includes "
+        "one-time gains or tax benefits (use the adjusted figure and say so), or fewer than "
+        "four quarters of history. A soft signal from financial data must hold for two "
+        "consecutive quarters; from market data, five sessions.",
+        f"   c. Default rules for {word} — soft signals, each with its rule key: "
+        f"{SOFT_KIND[kind]}.{newl} Start each `soft_signals` entry with its rule key in "
+        f"square brackets, for example \"[{key_eg}] …\".{check} Where the user's notes "
+        "give a rule for the same thing, theirs is the one reported in `owner_note`; the "
+        "default still drives the verdict.",
+        "   d. The fixed steps, in this order, the first that applies: (1) research_status "
+        "\"failed\" or a required search not run (a hard flag could be missing), with no "
+        "hard flag → unrated; (2) any hard flag → avoid, even when the research failed or "
+        "the value grade is paused; (3) three or more soft signals → avoid; (4) value "
+        "grade paused, or too little clean data → unrated; (5) the baseline from the value grade — cheap → "
+        "attractive, fair → fair, expensive → stretched (best to worst: attractive, fair, "
+        "stretched, avoid) — and exactly two soft signals → one step below it"
+        + ("; (6) last, as a listing under a year old, no better than fair until one "
+           "quarter of results as a public company is filed." if cap else ".")
+        + " An unrated `verdict_note` starts \"research incomplete\" when the research is "
+        "incomplete and \"value paused\" when the value grade is paused. When every "
+        "required search ran and only a listed session's cause is still not found, "
+        "research_status stays \"partial\" and move_cause \"not_found\", but the steps "
+        "still apply where `verdict_note` starts with \"research incomplete\" and gives "
+        "the reason the missing cause changes neither grade; without such a reason it is "
+        "unrated. The app still marks that note incomplete, so a later run looks for the "
+        "cause again. `risk_grade`: red_flag with any hard flag or three or more soft "
+        "signals; watch with two soft signals, or with one or none and at least one watch "
+        "item; clean otherwise. Then `verdict_note` (one line of reasoning), "
+        "`stance_confidence`, `stance_horizon`, a `review_by` date for every verdict and, "
+        "for every verdict except unrated, at least one `upgrade_if` and one "
+        "`downgrade_if`, each dated and checkable — a number, a filing or an event, "
+        "never a price direction: a verdict with no conditions cannot be told apart from "
+        "none, and the app marks it expired after review_by. An unrated verdict's "
+        "`upgrade_if` says what would let it be rated; its `downgrade_if` may be left out.",
+        "   e. The user's rules. If their notes hold rules that bear on this security or "
+        "this account, write `owner_note`: one line saying what those rules imply and "
+        "whether they override the default meaning of the verdict (step 6) — for "
+        "example \"your rule — trim above 10% of the account — is not met: hold\". If "
+        "the user has already stated a decision in this conversation "
+        "(buy / sell / trim / hold / pass), record it in `decision` — the app captures "
+        "the price at that moment and tracks how the call aged. Record only what they "
+        "stated; never invent one, and do not ask for one.",
+    ]
 
 
 def build_claude_prompt(a: dict) -> str:
-    """Assemble prompt v5 for one analysis payload (composer.analyze)."""
+    """Assemble prompt v6 for one analysis payload (composer.analyze)."""
     sym = a["symbol"]
     now = dt.datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
     nwin = a.get("news_window") or {}
@@ -1115,16 +1649,11 @@ def build_claude_prompt(a: dict) -> str:
     no_row = sorted(d for d in keep
                     if d not in recent_dates and d != basis.get("session_date"))
 
-    # the triggers the session sets (step 3), the options rows (step 5) and
-    # the stance words (step 6) all follow ownership
+    # the triggers the session sets (step 3) and the options rows (step 6)
+    # follow ownership; the verdict (step 5) does not
     trig_owned = "exit, trim and add triggers for a holder"
     trig_not_owned = ("entry triggers that would make it a buy, and what would take "
                       "it off the list")
-    stance_owned = ("hold, buy (= add), trim or sell — watch only when research is "
-                    "incomplete")
-    stance_not_owned = ("buy, watch or sell. For a name the user does not own, sell "
-                        "means avoid: you would not own it at this price and risk, and "
-                        "the app tracks it as a call that the stock will lag the market")
     if fx["owned"] or fx["linked"]:
         own_line = ("The user owns this (see <snapshot>), so the rows are Hold / Add / "
                     "Trim / Exit." if fx["owned"] else
@@ -1132,34 +1661,23 @@ def build_claude_prompt(a: dict) -> str:
                     "the same company — treat it as owned, so the rows are Hold / Add / "
                     "Trim / Exit.")
         trig = trig_owned
-        stance_words = (f"The user owns this, so the stance is {stance_owned}."
-                        if fx["owned"] else
-                        f"The user holds {fx['linked'].get('symbol')}, another share "
-                        f"class — treat it as owned, so the stance is {stance_owned}.")
     elif fx["owned"] is False:
-        own_line = "The user does not own this, so the rows are Buy / Watch / Pass."
+        own_line = "The user does not own this, so the rows are Buy / Wait / Pass."
         trig = trig_not_owned
-        stance_words = f"The user does not own this, so the stance is {stance_not_owned}."
     else:
         own_line = ("The app has no position data. Do not ask whether the user owns "
                     "it: unless they already said so (in this conversation or in instructions "
                     "you were given), give both "
                     "sets of rows — if owned: Hold / Add / Trim / Exit; if not owned: "
-                    "Buy / Watch / Pass.")
+                    "Buy / Wait / Pass — and leave the `owned` key out (if they said they "
+                    "own it, write `owned: \"yes\"`; if they said they do not, "
+                    "`owned: \"no\"`).")
         trig = ("since ownership is unknown, cover both cases: at least one exit or "
                 "trim trigger for a holder and at least one entry trigger for a buyer")
-        stance_words = ("Ownership is unknown, so unless the user already said (in this "
-                        "conversation or in instructions you were given), write the stance for someone deciding whether to "
-                        "own it at this price: buy, watch or sell, where sell means avoid "
-                        "(you would not own it at this price and risk; the app tracks it "
-                        "as a call that the stock will lag the market). Leave the `owned` "
-                        "key out. If the user did say they own it, the stance is "
-                        f"{stance_owned}, with `owned: \"yes\"`; if they said they do "
-                        "not, add `owned: \"no\"`.")
 
     # the window, in words that match news_relevance.news_window
-    win_rule = ("since the last research note on this ticker that still stands (OK or "
-                f"STALE in <prior_notes>), at most {news_relevance.MAX_WINDOW_DAYS} days "
+    win_rule = ("since the last research note on this ticker that still stands (Current or "
+                f"Out of date in <prior_notes>), at most {news_relevance.MAX_WINDOW_DAYS} days "
                 "back, or the last 5 trading sessions, whichever is longer.")
     if nwin.get("capped"):
         win_rule += (f" The last such note ({nwin.get('last_note')}) is older than that, so "
@@ -1170,10 +1688,10 @@ def build_claude_prompt(a: dict) -> str:
     if fresh:
         incremental = (
             f" This is an incremental run: the note of {fresh['created_ts']} in "
-            "<prior_notes> is OK and less than 24 hours old, and its news check covered "
+            "<prior_notes> is Current and less than 24 hours old, and its news check covered "
             "this window. Research only what is new since it was written — the short "
             f"list below, since {fresh['created_ts']} — and re-open one of its sources "
-            "only where a figure decides your stance. Carry its other findings forward "
+            "only where a figure decides your verdict. Carry its other findings forward "
             f"with their dates (\"as of {fresh['date']}, earlier note\") instead of "
             "redoing them, and set `news_window` to the period you covered.")
 
@@ -1293,7 +1811,9 @@ def build_claude_prompt(a: dict) -> str:
                   + (", export controls" if _mentions_export_rules(a) else "")
                   + combine
                   + "; and search for enforcement actions by the company's main regulator "
-                  "by name (the agency that licenses or polices its line of business) — "
+                  "by name (the agency that licenses or polices its line of business; where "
+                  "none is obvious, the consumer and competition regulator — the FTC in the "
+                  "US) — "
                   "actions against the company, not its own legal-process pages, and do "
                   "not count a law firm's \"investigation\" notice as a filed case"
                   + ("; a matter opened before the window that is still live counts, "
@@ -1313,7 +1833,10 @@ def build_claude_prompt(a: dict) -> str:
                   "return against that index over the window (where NAV or index returns "
                   "for those days are out of reach, compare the fund's price change with "
                   "the price change of an ETF that tracks that index over the same days, "
-                  "and say the comparison is price-based), the premium or discount to NAV, "
+                  "and say the comparison is price-based; if no other ETF tracks it, "
+                  "compare over the period the issuer publishes, and say so), the latest "
+                  "published 12-month NAV return against the index, the premium or "
+                  "discount to NAV, "
                   "and how much of the fund sits in its 10 largest holdings"
                   + (" — a fund this new has little record, so say how many sessions it "
                      "has traded" if is_new else "") + ".")
@@ -1448,7 +1971,8 @@ def build_claude_prompt(a: dict) -> str:
         step4.insert(2, "The net figure in <snapshot> Recent sessions is measured against "
                         "SPY, not against the fund's own index: say from your research "
                         "(search e) how the fund moved against its index on each large "
-                        "move, and do not read the SPY-based net figure as the fund's own "
+                        "move (or over the period the issuer publishes, where that is all "
+                        "there is), and do not read the SPY-based net figure as the fund's own "
                         "doing." if is_fund else
                         "Use the net figure in <snapshot> Recent sessions to "
                         "say how much of each large move was the company's own and how "
@@ -1469,18 +1993,20 @@ def build_claude_prompt(a: dict) -> str:
         step4.append("Check each open condition listed in <prior_notes> and say whether "
                      "it has been met (or is PENDING until a future date).")
     if ninfo["any"]:
-        step4.append("Carry a fact forward from an OK or STALE note only after "
+        step4.append("Carry a fact forward from a Current or Out of date note only after "
                      "re-checking it, or date it (\"as of Nov 13\").")
     if ninfo["invalid"]:
         step4.append("A note marked "
-                     "INVALID is not a basis for anything: redo its work for the sessions "
+                     "Don't use is not a basis for anything: redo its work for the sessions "
                      "inside this window and list its created_ts in `supersedes`; its failed "
                      "checks on sessions before the window are not redone here"
                      + (" — step 1 lists them under older sessions still unexplained."
                         if older else "."))
     if ninfo["superseded"]:
-        step4.append("A note marked SUPERSEDED was already replaced by a later one: "
+        step4.append("A note marked replaced was already replaced by a later one: "
                      "build nothing on it and leave it out of `supersedes`.")
+
+    step5 = verdict_step(a, fx)
 
     lines = [
         f"# Research discussion: {sym}",
@@ -1528,8 +2054,8 @@ def build_claude_prompt(a: dict) -> str:
         "this conversation or in instructions you were given, but do not wait for "
         "more. If your working folder holds the user's own notes or rules (for "
         "example a CLAUDE.md or a notes file), read them first: they count as "
-        "instructions you were given, and their rules and triggers apply in steps 3 "
-        "and 5. A project file your tool loaded into this session by itself (for "
+        "instructions you were given: their rules and triggers are checked in step 3 "
+        "and reported in `owner_note` (step 5) and the options (step 6). A project file your tool loaded into this session by itself (for "
         "example a CLAUDE.md from another folder) counts as the user's notes only when "
         "it is about the user's own investing (rules, plans, positions); otherwise "
         "ignore it. Notes that count bring along a file in the same folder that those "
@@ -1540,7 +2066,7 @@ def build_claude_prompt(a: dict) -> str:
         "or an event is applied in the narrowest reading that is checkable, and you "
         "say which reading you used; positions, weights and prices come from "
         "<snapshot>, not from the notes, which may be out of date. Two sessions "
-        "given the same notes should reach the same verdict on every rule.",
+        "given the same notes should reach the same result on every rule.",
         "",
         f"1. Research first, before any analysis. Window: {w_from} → {w_to}{span} — "
         f"{win_rule} Same-day headlines are not enough: a session that checked only "
@@ -1638,7 +2164,9 @@ def build_claude_prompt(a: dict) -> str:
             "   Already explained: " + ", ".join(s["session_date"] for s in settled)
             + (" moved" if len(settled) == 1 else " each moved")
             + " 2σ or more and an earlier note in <prior_notes> states the cause — "
-            "re-check that cause before you carry it forward.")
+            "re-check that cause before you carry it forward; once re-checked, "
+            + ("it counts" if len(settled) == 1 else "they count")
+            + " as found for `move_cause`.")
     if near:
         lines += [
             f"   Near misses — sessions in this window between "
@@ -1693,8 +2221,10 @@ def build_claude_prompt(a: dict) -> str:
         f"you do not ask for it: set 2–4 checkable triggers yourself ({trig}), "
         f"each a number ({trig_numbers}), a filing or an "
         "event, never a price direction — a valuation level counts as a number even "
-        "though it moves with the price (give the share price it corresponds to), "
-        "and a bare price target does not "
+        "though it moves with the price (give the share price it corresponds to"
+        + ("; the share count is market cap ÷ price, both in <snapshot>" if not is_fund else "")
+        + "), and a bare price target does not; a trigger that needs a figure <snapshot> "
+        "lacks says where that figure is published "
         "(frontmatter `proposed_triggers`, which holds only the triggers you set). If "
         "the user already stated triggers in "
         "this conversation or in instructions you were given, check those as well, "
@@ -1710,40 +2240,24 @@ def build_claude_prompt(a: dict) -> str:
         "Mark each trigger MET, NOT MET, PENDING or UNKNOWN, with the evidence (MET → "
         "`plan_triggers_met`, UNKNOWN → `plan_triggers_unknown`; a PENDING trigger "
         "stays in `proposed_triggers` with its due date). Any MET trigger "
-        "goes in the first line of the TL;DR, and the stance follows it or "
-        "stance_note says why not.",
+        "goes in the first line of the TL;DR. Triggers, yours and the user's, feed "
+        "`upgrade_if`, `downgrade_if`, `owner_note` and the options; they do not set "
+        "the verdict, which follows the rulebook in step 5.",
         " ".join(step4),
-        f"5. Lay out the options in a table. {own_line} For each row: shares and "
-        "dollars at the report price where a trade is involved, what must be true "
-        "for it to be the right choice, the main risk, and — only where the user's "
-        "account rules are already available to you (this conversation or "
-        "instructions you were given) — whether one blocks it; do not ask for them. "
-        "Where the size of a trade is not known, use an illustrative size (for "
+        *step5,
+        f"6. Lay out the options in a table. {own_line} The app prints the verdict's "
+        "default meaning for the user — Attractive: Add / Buy; Fair: Hold / Wait; "
+        "Stretched: Trim / Pass; Avoid: Exit / Pass (owned / not owned); Unrated: do not "
+        "act on it. Columns for each row: \"verdict supports it\" (yes or no, from that "
+        "default meaning; for an unrated verdict every row reads \"the verdict gives no "
+        "guidance\"); \"your rules\" — only where the user's notes or account rules are "
+        "already available to you (this conversation or instructions you were given) — "
+        "whether those rules call for the row, block it or are silent, so a hold the "
+        "user's rules call for is shown as theirs and not as unsupported; shares and "
+        "dollars at the report price where a trade is involved; what must be true for it "
+        "to be the right choice; the main risk. Without such rules, leave the \"your "
+        "rules\" column out; do not ask for them. Where the size of a trade is not known, use an illustrative size (for "
         "example 10 shares), label it illustrative, and do not ask for one.",
-        "6. Give one stance: your reasoned multi-month judgment from the whole "
-        "picture — "
-        + ("the income it pays, its strategy and cost, risk, news" if is_fund else
-           "valuation, thesis, risk, news")
-        + " — not a short-term direction call. "
-        f"{stance_words} If research_status is failed, or partial because a required "
-        "search was not run, the stance is watch instead and stance_note starts with "
-        "\"research incomplete\". When every required search ran and only a listed "
-        "session's cause is still not found, research_status stays \"partial\" and "
-        "move_cause \"not_found\", but the stance may stay the one your analysis "
-        "supports (hold or buy, for example) where stance_note starts with \"research "
-        "incomplete\" and gives the reason the missing cause does not change the thesis; "
-        "without such a reason it is watch. The app still marks that note incomplete, "
-        "so a later run looks for the cause again. A hold "
-        "or watch needs at least one upgrade_if and one downgrade_if condition, each "
-        "dated and checkable — a number, a filing or an event, never a price direction — "
-        "because a stance with no conditions cannot be told apart from no stance, "
-        "and the app flags it that way. Every stance carries stance_confidence and "
-        "a review_by date; the app marks it expired after that date and shows the "
-        "latest stance beside the ticker until a newer discussion replaces it.",
-        "   If the user has already stated a decision in this conversation (buy / "
-        "sell / trim / hold / pass), record it in `decision` — the app captures the "
-        "price at that moment and tracks how the call aged. Record only what they "
-        "stated; never invent one, and do not ask for one.",
         "7. Check your work before writing:",
         "   - you asked the user nothing and stopped nowhere, and every assumption "
         "you made in place of asking is stated in the note;",
@@ -1759,12 +2273,17 @@ def build_claude_prompt(a: dict) -> str:
         "and its quote is copied from that page — except a row for a page that refused "
         "to open, which keeps its link marked \"(could not open)\", has no quote and "
         "reads \"not verified\";",
-        "   - nothing from an INVALID or SUPERSEDED note is carried forward;",
+        "   - nothing from a Don't use or replaced note is carried forward;",
+        "   - `verdict` follows the fixed steps of 5d from `value_grade` and the counts "
+        "of `hard_flags` and `soft_signals`, and `risk_grade` matches the three lists;",
+        "   - no unconfirmed report or open investigation sits in `hard_flags` or "
+        "`soft_signals`, and each soft signal names its two periods or its filing, and "
+        "starts with its rule key in square brackets;",
         "   - every text value in the frontmatter is in double quotes, and "
         "`sources_count` and `price_used` are numbers without quotes;",
         "   - no <…> placeholder is left, and optional keys you did not use are deleted.",
         "8. Write the file, following the output contract. Then end your reply with "
-        "the TL;DR, the stance and the file path, and stop — no closing question and "
+        "the TL;DR, the verdict and the file path, and stop — no closing question and "
         "no offer of further work.",
         "",
         "## Output contract",
@@ -1781,11 +2300,13 @@ def build_claude_prompt(a: dict) -> str:
         "so leave this prompt, the tagged blocks and raw JSON out of it. Aim for "
         "about 1,100 words excluding tables and stay under 1,300: a longer note is "
         "skimmed, and the reader misses the part that matters."
-        + (" On this incremental run aim for about 500 words and do not restate the "
+        + (" On this incremental run aim for about 700 words and do not restate the "
            "earlier note: point to it for anything unchanged." if fresh else "")
         + " Body headings, in this order:",
         "",
-        "1. `## TL;DR` — 2–3 sentences; a MET trigger comes first.",
+        "1. `## TL;DR` — 2–3 sentences; first the verdict as the app shows it, `Verdict "
+        "(Value · Risk)` (for example Stretched (Fair · Watch)), then any MET trigger, "
+        "then — where the user's rules lead elsewhere — what `owner_note` says.",
         "2. `## What happened` — the window in date order; name sessions by date.",
         "3. `## Evidence & sources` — a table: claim | source | published | quote | "
         "link. The quote is a short verbatim phrase from the source (under 20 "
@@ -1798,9 +2319,11 @@ def build_claude_prompt(a: dict) -> str:
         "PENDING / UNKNOWN with the evidence.",
         "5. `## What the numbers say` — the reasoning core: reconciled figures and "
         "what they mean.",
-        "6. `## Your options` — the table from step 5.",
-        "7. `## Stance & what would change it` — the stance, your confidence, the "
-        "upgrade and downgrade conditions, the review date.",
+        "6. `## Your options` — the table from step 6.",
+        "7. `## Verdict & what would change it` — the value grade with its basis, the "
+        "hard, soft and watch-only items, the steps from baseline to verdict, the "
+        "user's rules where they apply, your confidence, the upgrade and downgrade "
+        "conditions, the review date.",
         "8. `## Unknowns` — what you could not verify and what would settle it, and "
         "each assumption you made in place of asking.",
         "",
@@ -1829,17 +2352,23 @@ def build_claude_prompt(a: dict) -> str:
         "overall tone of news about this security in the window — "
         + ("fund or issuer" if is_fund else "company") + " news, not the market's "
         "moves. `move_cause` is \"found\" "
-        "when every session step 1 lists as still needing a cause has one, "
-        "\"not_found\" when one does not, and \"na\" only when step 1 lists no such "
+        "when every session step 1 lists as still needing a cause"
+        + (" or as already explained (once re-checked)" if settled else "")
+        + " has one, \"not_found\" when one does not, and \"na\" only when step 1 lists no such "
         "session (near misses, market-wide moves and older sessions do not count "
         "here) — the app marks a "
-        "note INVALID when a 2σ session in its window is left without "
-        "\"found\". `review_by` is a date written "
+        "note Don't use when a 2σ session in its window is left without "
+        "\"found\". `verdict`, `value_grade` and `risk_grade` take one of the values "
+        "in the template, set in step 5; `value_basis` and `verdict_note` are one line "
+        "each; each item in `hard_flags`, `soft_signals` and `watch_items` carries its "
+        "source and date. `review_by` is a date written "
         "YYYY-MM-DD. `proposed_triggers` holds only the triggers you set in step 3, "
         "not the user's own rules. Optional "
         "keys, deleted when unused: `decision` (only a decision the user stated), "
         "`plan_triggers_met` (when a trigger is MET), `plan_triggers_unknown` (when "
-        "one could not be checked), `supersedes`.",
+        "one could not be checked), `hard_flags`, `soft_signals` and `watch_items` "
+        "(when empty), `owner_note` (only when the user's notes hold rules), "
+        "`downgrade_if` (on an unrated verdict only), `supersedes`.",
         "",
         "```markdown",
         frontmatter_template(sym, now, a["context_hash"],
@@ -1848,11 +2377,12 @@ def build_claude_prompt(a: dict) -> str:
         "```",
         "",
         "Three filled examples of the form — the tickers, dates and numbers are "
-        "fictional. The first is a name the user owns, with one trigger met; the "
-        "second is a name they do not own; the third is what "
+        "fictional. The first is a name the user owns, where two soft signals drop a "
+        "fair value grade one step to stretched; the second is a name they do not "
+        "own, where a watch-only item leaves the verdict at fair; the third is what "
         "to write when the research could not be done (no web search tool): "
-        "research_status \"failed\", stance \"watch\", stance_note starting "
-        "\"research incomplete\":"
+        "research_status \"failed\", verdict \"unrated\", verdict_note starting "
+        "\"research incomplete\", no `downgrade_if`:"
         + ("" if fx["owned"] is not None or fx["linked"] else
            " (the examples carry `owned` because the app knew the position there; "
            "yours leaves it out unless the user said)"),

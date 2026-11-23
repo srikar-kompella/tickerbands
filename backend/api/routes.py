@@ -14,7 +14,7 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 import config
-from analysis import composer
+from analysis import composer, research_quality
 from api.research_prompt import build_claude_prompt  # prompt v5; tests import it from here too
 from cache.store import invalidate
 from db import connect
@@ -884,6 +884,13 @@ def get_discussions(ticker: str | None = None, limit: int = Query(100, le=500)):
         r["status"] = st.get("status")
         r["status_reason"] = st.get("reason") or None
         r["status_as_of"] = st.get("as_of")
+        # docs/VERDICT_SPEC.md §9: current / out_of_date / dont_use / replaced
+        r["trust"] = research_quality.trust(r["status"])
+        # the verdict (prompt v6) per note — format "v6" / "earlier"
+        vf = research_quality.verdict_fields(r)
+        r["format"] = vf.get("format")
+        for k in ("verdict", "value_grade", "risk_grade", "verdict_label"):
+            r[k] = vf.get(k)
     return rows
 
 

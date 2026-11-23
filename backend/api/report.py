@@ -296,6 +296,9 @@ def build_report_html(a: dict, discussions: list[dict],
         fund_html = _fcard("Fundamentals (at the report price)", F, FUNDAMENTAL_ROWS)
     opt_html = _fcard("Options positioning", F,
                       ["put_call", "atm_iv", "implied_move", "implied_vs_band"])
+    # the main measure now vs its last five fiscal year-ends (valuation_range)
+    val_html = _fcard("Valuation vs its own history", F,
+                      ["valuation_now", "valuation_points", "valuation_range"])
 
     hf = F.get("headlines") or {}
     items = hf.get("items") or []
@@ -327,6 +330,10 @@ def build_report_html(a: dict, discussions: list[dict],
             when = (d.get('created_ts') or '')[:10]
             note = (f"<div class='dated'>Written {esc(when)} — figures and facts in this note "
                     "are as of that date, not the report date.</div>")
+            # the trust label (docs/VERDICT_SPEC.md §9) beside the status chip
+            t_lbl = research_quality.TRUST_LABEL.get(research_quality.trust(st["status"]) or "")
+            if t_lbl:
+                note += f"<span class='mut'>{esc(t_lbl)}</span> "
             if st["status"] == research_quality.INVALID:
                 note += (f"<span class='chip bad'>⚠ INVALID — {esc(st['reason'])}; "
                          "do not build on this note</span>")
@@ -375,8 +382,33 @@ def build_report_html(a: dict, discussions: list[dict],
             line = " · ".join(m for m in meta if m)
             cond.append(line[0].upper() + line[1:])
         cond_html = "".join(f"<div class='cond'>{esc(c)}</div>" for c in cond)
-        stance_html = (f"<div><b>Research stance ({esc(str(stance_f.get('as_of') or '')[:10])})</b>"
-                       f"{esc(stance_f['display'])}{_chips(stance_f)}{cond_html}</div>")
+        when = esc(str(stance_f.get('as_of') or '')[:10])
+        trust_lbl = research_quality.TRUST_LABEL.get(stance_f.get("trust") or "")
+        trust_html = f" <span class='mut'>· {esc(trust_lbl)}</span>" if trust_lbl else ""
+        if stance_f.get("format") == "v6":
+            # the verdict strip (docs/VERDICT_SPEC.md): the verdict, what it
+            # means for the user, and the three kinds of risk items as written
+            lists = ""
+            for key, title in (("hard_flags", "Hard flags"), ("soft_signals", "Soft signals"),
+                               ("watch_items", "Watch items")):
+                xs = stance_f.get(key) or []
+                if xs:
+                    lists += (f"<div class='cond'><b class='inl'>{title}:</b> "
+                              + "; ".join(esc(x) for x in xs) + "</div>")
+            # the derived line, then the user's own rules (owner_note) once
+            owner_txt = " — ".join(str(x) for x in (stance_f.get("owner_line"),
+                                                     stance_f.get("owner_note")) if x)
+            owner = f"<div class='cond'>{esc(owner_txt)}</div>" if owner_txt else ""
+            basis_v = (f"<div class='cond'>Value basis: {esc(stance_f['value_basis'])}</div>"
+                       if stance_f.get("value_basis") else "")
+            stance_html = (f"<div><b>Research verdict ({when}){trust_html}</b>"
+                           f"{esc(stance_f['display'])}{_chips(stance_f)}{owner}{basis_v}"
+                           f"{lists}{cond_html}</div>")
+        else:
+            earlier = (" <span class='mut'>· earlier format</span>"
+                       if stance_f.get("format") == "earlier" else "")
+            stance_html = (f"<div><b>Research stance ({when}){earlier}{trust_html}</b>"
+                           f"{esc(stance_f['display'])}{_chips(stance_f)}{cond_html}</div>")
     elif stance_f.get("warnings"):
         # no stance to show, but something about it needs saying (for example
         # the newest note's stance could not be read)
@@ -412,6 +444,7 @@ def build_report_html(a: dict, discussions: list[dict],
            border:1px solid #fcd34d; border-radius:6px; padding:1px 6px; margin:2px 4px 2px 0; }}
   .chip.bad {{ color:#991b1b; background:#fee2e2; border-color:#fca5a5; }}
   .cond {{ font-size:11.5px; color:var(--mut); }}
+  .strip b.inl {{ display:inline; text-transform:none; font-size:11.5px; }}
   .chiprow td {{ border-bottom:1px solid var(--line); padding-top:0; }}
   .dated {{ font-size:11.5px; color:var(--mut); font-style:italic; }}
   .grid {{ display:grid; grid-template-columns:1fr 1fr; gap:14px; }}
@@ -472,7 +505,7 @@ def build_report_html(a: dict, discussions: list[dict],
 
 {score_html}
 <div class="grid">
-{fund_html}{opt_html}{news_html}{ctx_html}
+{fund_html}{val_html}{opt_html}{news_html}{ctx_html}
 </div>
 {dec_html}
 {disc_html}
