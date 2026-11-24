@@ -638,8 +638,16 @@ def test_v5_step4_no_story_for_an_ordinary_move_and_no_trailing_space(client):
     p = client.get("/api/analysis/AAPL/prompt").json()["prompt"]
     step = p[p.index("4. Analyze"):p.index("5. Set the verdict")]
     assert a["big_move_sessions"] == []
-    assert "No session in the window still needs a cause, so no move needs a story." in step
-    assert "Explain a move only where your research found material news behind it" in step
+    # the mock's bars follow today's date, so on some days a near miss (1.5–2σ
+    # with a large move net of the market) is listed in step 1 — then step 4
+    # asks for its explanation instead of saying nothing needs one
+    step1 = p[p.index("1. Research first"):p.index("2. Reconcile the data")]
+    if "Near misses" in step1:
+        assert "For each session listed in step 1, give the competing explanations" in step
+        assert "No session in the window still needs a cause" not in step
+    else:
+        assert "No session in the window still needs a cause, so no move needs a story." in step
+        assert "Explain a move only where your research found material news behind it" in step
     assert "For each 2σ session listed in step 1" not in step
     # no prior notes → the step ends cleanly, and no line anywhere ends in a space
     assert "<prior_notes>\nNo earlier discussions on this ticker." in p
