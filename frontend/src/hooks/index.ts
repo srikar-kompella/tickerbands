@@ -2,11 +2,18 @@
 import {
   keepPreviousData, useMutation, useQuery, useQueryClient,
 } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { api } from '@/lib/api'
 import { fmtAge, staleIsSerious } from '@/lib/format'
 import type { ScreenerRow, StreamEvent } from '@/types'
+
+/** In-page signal that a ticker's research notes changed ('*' = any/all).
+ *  The Watchlist keeps its rows in component state, not in the query cache,
+ *  so query invalidation alone never reached its Verdict column. */
+const NOTES_CHANGED = 'tb:notes-changed'
+const announceNotesChanged = (ticker: string) =>
+  window.dispatchEvent(new CustomEvent(NOTES_CHANGED, { detail: { ticker } }))
 
 export function useAnalysis(symbol: string | null) {
   return useQuery({
@@ -207,6 +214,28 @@ export function useProgressiveScreener() {
     return () => { cancelled = true }
   }, [symbolsKey, nonce])
 
+  // a research note landed, changed or was removed → re-read just those rows
+  // (stance/verdict come from the notes; the price sections are cache hits)
+  useEffect(() => {
+    const onChange = (e: Event) => {
+      const t = (e as CustomEvent<{ ticker: string }>).detail?.ticker
+      const all = symbolsKey ? symbolsKey.split(',') : []
+      const want = t === '*' ? all : all.filter((x) => x === t)
+      ;(async () => {
+        for (let i = 0; i < want.length; i += 6) {
+          try {
+            const rows = await api.screener(false, want.slice(i, i + 6))
+            setEnriched((prev) => ({
+              ...prev, ...Object.fromEntries(rows.map((r) => [r.symbol, r])),
+            }))
+          } catch { /* keep the old row; the next event or reload retries */ }
+        }
+      })()
+    }
+    window.addEventListener(NOTES_CHANGED, onChange)
+    return () => window.removeEventListener(NOTES_CHANGED, onChange)
+  }, [symbolsKey])
+
   return {
     base, baseLoading, baseError,
     quotes, enriched, progress,
@@ -265,10 +294,32 @@ export function useActionMutations() {
 }
 
 export function useDiscussions(ticker?: string) {
-  return useQuery({
+  const qc = useQueryClient()
+  const q = useQuery({
     queryKey: ['discussions', ticker ?? '__all__'],
     queryFn: () => api.discussions(ticker),
+    // safety net under the live stream: if the stream is down (backend
+    // restart, sleeping laptop, a proxy that dropped it), a new or edited
+    // note still shows up within half a minute
+    refetchInterval: 30_000,
+    refetchIntervalInBackground: false,
   })
+  // when the notes themselves changed (a new one, an edit, a removal), the
+  // verdict in the header and on the Watchlist is out of date too
+  const seen = useRef<string | null>(null)
+  const sig = q.data
+    ? q.data.map((d) => `${d.id}:${d.file_mtime}`).join('|')
+    : null
+  useEffect(() => {
+    if (sig == null) return
+    if (seen.current != null && seen.current !== sig) {
+      qc.invalidateQueries({ queryKey: ticker ? ['analysis', ticker] : ['analysis'] })
+      qc.invalidateQueries({ queryKey: ['decisions'] })
+      announceNotesChanged(ticker ?? '*')
+    }
+    seen.current = sig
+  }, [sig, ticker, qc])
+  return q
 }
 
 export function useGlossary() {
@@ -297,6 +348,7 @@ export function useDiscussionStream() {
     let es: EventSource | null = null
     let retryMs = 1000
     let closed = false
+    let everOpened = false
     let timer: ReturnType<typeof setTimeout> | null = null
 
     const connect = () => {
@@ -308,6 +360,13 @@ export function useDiscussionStream() {
         // the stream is responsible for
         qc.invalidateQueries({ queryKey: ['discussions'] })
         qc.invalidateQueries({ queryKey: ['decisions'] })
+        // …including the verdict on an open analysis page and the Watchlist:
+        // a note written while the stream was down changed those too
+        if (everOpened) {
+          qc.invalidateQueries({ queryKey: ['analysis'] })
+          announceNotesChanged('*')
+        }
+        everOpened = true
       }
       es.onerror = () => {
         es?.close()
@@ -327,12 +386,16 @@ export function useDiscussionStream() {
         // the header chip updates the moment the discussion lands
         qc.invalidateQueries({ queryKey: ['analysis', event.ticker] })
         qc.invalidateQueries({ queryKey: ['decisions'] })
+        qc.invalidateQueries({ queryKey: ['stance-scorecard'] })
+        announceNotesChanged(event.ticker)
         toast.success(`New Claude discussion saved for ${event.ticker}`)
       } else if (event.type === 'deleted') {
         qc.invalidateQueries({ queryKey: ['discussions', event.ticker] })
         qc.invalidateQueries({ queryKey: ['discussions', '__all__'] })
         qc.invalidateQueries({ queryKey: ['analysis', event.ticker] })
         qc.invalidateQueries({ queryKey: ['decisions'] })
+        qc.invalidateQueries({ queryKey: ['stance-scorecard'] })
+        announceNotesChanged(event.ticker)
       } else if (event.type === 'discovery') {
         // a sweep file landed in ~/.tickerbands/discoveries/ — refresh the tab
         qc.invalidateQueries({ queryKey: ['discovery'] })

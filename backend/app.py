@@ -113,6 +113,8 @@ async def lifespan(app: FastAPI):
     if not env("NO_AUTOREFRESH"):
         refresh_task = asyncio.create_task(_auto_refresh_loop())
     scanned = catch_up_scan()
+    from discussions_svc.watcher import prime_seen
+    prime_seen()
     from discussions_svc.parser import dedupe_linked_paths
     dd = dedupe_linked_paths()
     if dd["removed"]:
@@ -122,6 +124,7 @@ async def lifespan(app: FastAPI):
     yield
     if refresh_task:
         refresh_task.cancel()
+    getattr(observer, "sweep_stop", None) and observer.sweep_stop.set()
     observer.stop()
     observer.join(timeout=3)
 

@@ -43,6 +43,9 @@ PARSE_RETRIES = 3
 # the startup scan leaves a file touched this recently to the live watcher
 # (already running): it may still be mid-write
 RECENT_WRITE_SECONDS = 5.0
+# safety net under the file-system observer (see sweep_once)
+SWEEP_SECONDS = 20.0
+_SEEN: dict[str, float] = {}          # path → mtime of the version last ingested
 
 
 def _is_discussion_md(path: str) -> bool:
@@ -105,6 +108,10 @@ def _ingest(path: str) -> None:
     for attempt in range(PARSE_RETRIES):
         try:
             row_id = upsert_discussion(row)
+            try:
+                _SEEN[path] = os.path.getmtime(path)
+            except OSError:
+                pass
             broadcaster.publish_threadsafe(
                 {"type": "created", "ticker": row["ticker"], "id": row_id})
             return
@@ -245,6 +252,68 @@ def catch_up_scan() -> int:
     return count
 
 
+def _note_files() -> list[str]:
+    out = []
+    for root, _dirs, files in os.walk(DISCUSSIONS_DIR):
+        if os.sep + "_failed" in root:
+            continue
+        out += [os.path.join(root, f) for f in files
+                if _is_discussion_md(os.path.join(root, f))]
+    return out
+
+
+def prime_seen() -> None:
+    """Record every note file as it stands now (startup: catch_up_scan has
+    just reconciled them), so the sweep only acts on later changes."""
+    for path in _note_files():
+        try:
+            _SEEN[path] = os.path.getmtime(path)
+        except OSError:
+            pass
+
+
+def sweep_once(now: float | None = None) -> list[str]:
+    """Ingest note files the observer never reported. File-system events can
+    be dropped — a sleeping laptop, a synced or network folder, an editor that
+    replaces the file in a way the observer misses — and then a finished
+    research note sat on disk while the app showed the old one until a
+    restart. Every SWEEP_SECONDS this compares each file's mtime with the
+    version last ingested and runs the normal ingest (store + live event) for
+    any that differ. Files touched in the last few seconds are left to the
+    observer's own debounce. Returns the paths it ingested."""
+    now = time.time() if now is None else now
+    done = []
+    for path in _note_files():
+        try:
+            m = os.path.getmtime(path)
+        except OSError:
+            continue
+        if _SEEN.get(path) == m or now - m < RECENT_WRITE_SECONDS:
+            continue
+        _ingest(path)
+        _SEEN.setdefault(path, m)       # a file that failed to store is not retried forever
+        done.append(path)
+    # a file removed while the observer was not looking: drop its row too
+    for path in [p for p in list(_SEEN) if not os.path.exists(p)]:
+        _SEEN.pop(path, None)
+        try:
+            row = delete_discussion(path)
+        except Exception:  # noqa: BLE001
+            row = None
+        if row:
+            broadcaster.publish_threadsafe(
+                {"type": "deleted", "ticker": row.get("ticker"), "id": row.get("id")})
+    return done
+
+
+def _sweep_loop(stop: threading.Event) -> None:
+    while not stop.wait(SWEEP_SECONDS):
+        try:
+            sweep_once()
+        except Exception as e:  # noqa: BLE001 — the safety net must not die
+            print(f"[tickerbands] note sweep failed: {e}")
+
+
 def start_watcher() -> Observer:
     """Start observing discussions/ (created if missing). Called from lifespan;
     returns the observer so shutdown can stop it cleanly."""
@@ -255,4 +324,9 @@ def start_watcher() -> Observer:
     observer.schedule(DiscoveryHandler(), DISCOVERIES_DIR, recursive=False)
     observer.daemon = True
     observer.start()
+    # the sweep thread stops with the process (daemon) or via observer.sweep_stop
+    stop = threading.Event()
+    t = threading.Thread(target=_sweep_loop, args=(stop,), daemon=True, name="note-sweep")
+    t.start()
+    observer.sweep_stop = stop          # type: ignore[attr-defined]
     return observer
