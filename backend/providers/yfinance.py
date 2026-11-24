@@ -16,9 +16,29 @@ from providers.base import ProviderError
 name = "yfinance"
 
 
+_INPLACE = r".*inplace keyword.*"
+_YF_MODULE = r"yfinance(\..*)?"
+
+
+def _quiet_inplace_warnings() -> None:
+    """Keep yfinance's pandas `inplace=True` deprecation warnings off the
+    terminal. app.py sets the same filter at startup, but importing yfinance
+    then puts its own "show DeprecationWarning from ^yfinance" filter in front
+    of it (yfinance/__init__.py), so the flood came back — one warning per
+    pandas call, on every fetch. Re-assert ours at the front whenever it is
+    not already there; only this message, only from yfinance."""
+    import warnings
+    f = warnings.filters[0] if warnings.filters else None
+    if (f and f[0] == "ignore" and getattr(f[1], "pattern", None) == _INPLACE
+            and getattr(f[3], "pattern", None) == _YF_MODULE):
+        return
+    warnings.filterwarnings("ignore", message=_INPLACE, module=_YF_MODULE)
+
+
 def _yf():
     try:
         import yfinance  # lazy: tier-0 only, not a core dependency
+        _quiet_inplace_warnings()
         return yfinance
     except ImportError:
         raise ProviderError(
